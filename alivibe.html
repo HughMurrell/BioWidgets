@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,6 +8,10 @@
     <script src="https://murrellgroup.github.io/WebWidgets/nw.js"></script>
     <!-- Included the Phylogenetic Tools Library -->
     <script src="https://murrellgroup.github.io/WebWidgets/phylotools.js"></script>
+    <!-- Included the Frame Cleaning Library -->
+    <script src="https://murrellgroup.github.io/WebWidgets/frameclean.js"></script>
+    <!-- Included Aioli for bioWASM -->
+    <script src="https://biowasm.com/cdn/v3/aioli.js"></script>
     <style>
         :root {
             --bg-color: #f8f9fa;
@@ -30,6 +33,7 @@
             background-color: var(--bg-color);
             overflow: hidden;
             user-select: none;
+            overscroll-behavior-x: none;
         }
 
         #app {
@@ -180,6 +184,7 @@
                 <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
                 <input type="file" id="inp-tree">
                 <button id="btn-export-tree" title="Export current tree as Newick">Export</button>
+                <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
             </div>
         </div>
         <div class="control-group">
@@ -225,12 +230,14 @@
                 <button id="btn-align">Align</button>
                 <select id="sel-align-mode">
                     <option value="msa">MSA</option>
+                    <option value="kalign">Kalign</option>
                     <option value="polish">Polish</option>
                     <option value="left">Left Pile</option>
                     <option value="discard">Discard Ins</option>
                 </select>
                 <button id="btn-realign-sel" title="Realign within selection">Align Sel</button>
                 <button id="btn-strip" title="Strip all gaps from alignment">Strip Gaps</button>
+                <button id="btn-clean-frame" title="Clean out-of-frame insertions">Clean Frame</button>
             </div>
         </div>
 
@@ -267,6 +274,94 @@
     <div class="spinner"></div>
     <div id="overlay-msg" style="margin-top:10px; font-weight:500;">Processing...</div>
     <div id="overlay-sub" style="margin-top:5px; font-size:12px; color:#666;"></div>
+</div>
+
+<div id="clean-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 450px;">
+        <h2>Clean Reading Frame</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Reference Mode</label>
+            <select id="sel-clean-ref-mode" style="width: 100%;">
+                <option value="no">No reference (occupancy only)</option>
+                <option value="hard" selected>Trusted Reference (Hard: mod 3)</option>
+                <option value="soft">Trusted Reference (Soft: penalized)</option>
+            </select>
+        </div>
+        <div class="help-row">
+            <span style="font-size: 13px; color: #374151;">Using current reference:</span>
+            <span id="txt-clean-ref-name" style="font-style: italic; font-size: 13px; color: #2563eb;">None</span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+            <div class="control-group">
+                <label>pBackbone</label>
+                <input type="number" id="inp-clean-pback" value="0.9" step="0.05" min="0" max="1">
+            </div>
+            <div class="control-group">
+                <label>pInsertion</label>
+                <input type="number" id="inp-clean-pins" value="0.05" step="0.01" min="0" max="1">
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="control-group">
+                <label>Start Penalty</label>
+                <input type="number" id="inp-clean-start" value="-2.0" step="0.1">
+            </div>
+            <div class="control-group">
+                <label>Extend Penalty</label>
+                <input type="number" id="inp-clean-extend" value="-0.2" step="0.1">
+            </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('clean-overlay').style.display='none'">Cancel</button>
+            <button id="btn-run-clean" class="active">Clean Alignment</button>
+        </div>
+    </div>
+</div>
+
+<div id="infer-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 450px;">
+        <h2>Infer Phylogeny</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Method</label>
+            <select id="sel-infer-method" style="width: 100%;">
+                <option value="nj">Neighbor-Joining (Internal)</option>
+                <option value="fasttree">FastTree (bioWASM)</option>
+            </select>
+        </div>
+        
+        <div id="fasttree-options" style="display: none; flex-direction: column; gap: 10px; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px;">
+            <div class="help-row">
+                <span style="font-size: 13px; color: #374151;">Model (NT):</span>
+                <select id="sel-ft-nt-model">
+                    <option value="-gtr">-gtr (GTR+CAT)</option>
+                    <option value="">Default (Jukes-Cantor)</option>
+                </select>
+            </div>
+            <div class="help-row">
+                <span style="font-size: 13px; color: #374151;">Model (AA):</span>
+                <select id="sel-ft-aa-model">
+                    <option value="-lg">-lg (Le-Gascuel)</option>
+                    <option value="-wag">-wag (Whelan-And-Goldman)</option>
+                    <option value="">Default (JTT)</option>
+                </select>
+            </div>
+            <div class="help-row">
+                <span style="font-size: 13px; color: #374151;">Speed:</span>
+                <select id="sel-ft-speed">
+                    <option value="">Default</option>
+                    <option value="-fastest">-fastest</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('infer-overlay').style.display='none'">Cancel</button>
+            <button id="btn-run-infer" class="active">Run Inference</button>
+        </div>
+    </div>
 </div>
 
 <div id="help-overlay">
@@ -344,7 +439,8 @@ const state = {
     refMap: [], 
     mouse: { isDown: false, target: null, startR: 0, startC: 0, lastHoverC: 0 },
     ctxTargetRow: null,
-    pastedNameCounter: 1
+    pastedNameCounter: 1,
+    aioliCLI: null
 };
 
 // --- DOM ---
@@ -353,6 +449,7 @@ const dom = {
     fileTree: document.getElementById('inp-tree'),
     btnInferTree: document.getElementById('btn-infer-tree'),
     btnExportTree: document.getElementById('btn-export-tree'),
+    btnLadderizeTree: document.getElementById('btn-ladderize-tree'),
     btnClearAlignment: document.getElementById('btn-clear-aln'),
     btnClearTree: document.getElementById('btn-clear-tree'),
     btnUndo: document.getElementById('btn-undo'),
@@ -362,6 +459,7 @@ const dom = {
     btnAlign: document.getElementById('btn-align'),
     btnRealignSel: document.getElementById('btn-realign-sel'),
     btnStrip: document.getElementById('btn-strip'),
+    btnCleanFrame: document.getElementById('btn-clean-frame'),
     btnDownload: document.getElementById('btn-download'),
     btnCopy: document.getElementById('btn-copy'),
     btnHelp: document.getElementById('btn-help'),
@@ -394,11 +492,19 @@ const ctxRuler = dom.cvsRuler.getContext('2d');
 const ctxTree = dom.cvsTree.getContext('2d');
 
 // --- Init ---
-function init() {
+async function init() {
+    // Initialize Aioli
+    try {
+        state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11"]);
+    } catch (err) {
+        console.error("Failed to initialize Aioli:", err);
+    }
+
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
     dom.fileTree.addEventListener('change', e => loadTreeFile(e.target.files[0]));
-    dom.btnInferTree.addEventListener('click', inferTree);
+    dom.btnInferTree.addEventListener('click', showInferModal);
     dom.btnExportTree.addEventListener('click', exportTree);
+    dom.btnLadderizeTree.addEventListener('click', ladderizeTree);
     dom.btnClearAlignment.addEventListener('click', clearAlignment);
     dom.btnClearTree.addEventListener('click', clearTreeOnly);
     dom.btnUndo.addEventListener('click', undo);
@@ -414,6 +520,14 @@ function init() {
     dom.btnAlign.addEventListener('click', runAlignmentTask);
     dom.btnRealignSel.addEventListener('click', realignSelection);
     dom.btnStrip.addEventListener('click', stripGapsGlobal);
+    dom.btnCleanFrame.addEventListener('click', showCleanModal);
+    document.getElementById('btn-run-clean').addEventListener('click', runFrameCleanTask);
+    
+    document.getElementById('sel-infer-method').addEventListener('change', (e) => {
+        document.getElementById('fasttree-options').style.display = (e.target.value === 'fasttree') ? 'flex' : 'none';
+    });
+    document.getElementById('btn-run-infer').addEventListener('click', runInferTask);
+
     dom.btnDownload.addEventListener('click', () => exportAlignment('download'));
     dom.btnCopy.addEventListener('click', handleCopyButton);
     dom.btnHelp.addEventListener('click', () => dom.helpOverlay.classList.add('active'));
@@ -676,6 +790,70 @@ function stripGapsGlobal() {
     recalc();
 }
 
+// --- FrameClean Integration ---
+function showCleanModal() {
+    if (!state.rawSequences.length) return;
+    const refName = state.rawSequences[state.refIndex] ? state.rawSequences[state.refIndex].name : "None";
+    document.getElementById('txt-clean-ref-name').textContent = refName;
+    document.getElementById('clean-overlay').style.display = 'flex';
+}
+
+function runFrameCleanTask() {
+    if (!state.rawSequences.length) return;
+    document.getElementById('clean-overlay').style.display = 'none';
+    saveState();
+    showOverlay(true);
+    dom.overlayMsg.textContent = "Cleaning reading frame...";
+    dom.overlaySub.textContent = "Inferring frame with FrameClean.js";
+
+    setTimeout(() => {
+        try {
+            const aln = state.rawSequences.map((s, i) => ({
+                id: i.toString(),
+                seq: s.seq.join('')
+            }));
+
+            const refMode = document.getElementById('sel-clean-ref-mode').value;
+            const options = {
+                columnModelOptions: {
+                    pBackbone: parseFloat(document.getElementById('inp-clean-pback').value),
+                    pInsertion: parseFloat(document.getElementById('inp-clean-pins').value)
+                },
+                priorModelOptions: {
+                    insertionStartPenalty: parseFloat(document.getElementById('inp-clean-start').value),
+                    insertionExtendPenalty: parseFloat(document.getElementById('inp-clean-extend').value),
+                    insertionEndResidPenalty: [0, -6, -6]
+                }
+            };
+
+            if (refMode !== 'no') {
+                options.reference = {
+                    index: state.refIndex,
+                    mode: refMode,
+                    frameOffset: (state.frame - 1)
+                };
+            }
+
+            const inferred = FrameClean.inferFrame(aln, options);
+            const cleanedObj = FrameClean.cleanInFrame(aln, inferred);
+
+            // Apply cleaned sequences back
+            cleanedObj.alignment.forEach((s) => {
+                const originalIdx = parseInt(s.id);
+                state.rawSequences[originalIdx].seq = s.seq.split('');
+            });
+
+            state.selection = null;
+            recalc();
+            showOverlay(false);
+        } catch (err) {
+            console.error("FrameClean error:", err);
+            alert("FrameClean failed: " + err.message);
+            showOverlay(false);
+        }
+    }, 50);
+}
+
 function clearAlignment() {
     if(!state.rawSequences.length) return;
     if(!confirm("Clear all sequences and the current tree?")) return;
@@ -712,8 +890,114 @@ function runAlignmentTask() {
     const alignMode = dom.selAlignMode.value;
     if (alignMode === 'msa') {
         setTimeout(runMSAAlignment, 50);
+    } else if (alignMode === 'kalign') {
+        setTimeout(runKalignAlignment, 50);
     } else {
         setTimeout(startAsyncAlignment, 50);
+    }
+}
+
+// --- Kalign Alignment using bioWASM ---
+async function runKalignAlignment() {
+    if (!state.aioliCLI) {
+        alert("Kalign (bioWASM) is not yet initialized. Please wait or refresh.");
+        showOverlay(false);
+        return;
+    }
+
+    const isAA = (state.mode === 'AA');
+    dom.overlayMsg.textContent = "Running Kalign alignment...";
+    dom.overlaySub.textContent = "via bioWASM";
+
+    try {
+        // Use indices as temporary names to avoid truncation/special character issues in Kalign
+        const fastaInput = state.rawSequences.map((s, idx) => {
+            const seqArr = isAA ? state.viewSequences[idx].seq : s.seq;
+            const seqStr = seqArr.join('').replace(/-/g, '');
+            return `>${idx}\n${seqStr}`;
+        }).join('\n');
+        
+        if (!fastaInput.trim()) {
+            throw new Error("No sequences to align.");
+        }
+
+        await state.aioliCLI.mount({
+            name: "input.fa",
+            data: fastaInput
+        });
+
+        const command = `kalign input.fa -f fasta`;
+        const resultFasta = await state.aioliCLI.exec(command);
+        
+        if (!resultFasta || !resultFasta.includes('>')) {
+            throw new Error("Kalign failed to return a valid FASTA alignment.");
+        }
+        
+        // Parse result fasta
+        const lines = resultFasta.split(/\r?\n/);
+        const indexToSeq = new Map();
+        let currentIndex = null;
+        let buf = [];
+        for (let line of lines) {
+            line = line.trim();
+            if (!line) continue;
+            if (line.startsWith('>')) {
+                if (currentIndex !== null) indexToSeq.set(currentIndex, buf.join(''));
+                currentIndex = line.substring(1).trim();
+                buf = [];
+            } else if (currentIndex !== null) {
+                buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+            }
+        }
+        if (currentIndex !== null) indexToSeq.set(currentIndex, buf.join(''));
+
+        if (isAA) {
+            // Map AA alignment back to DNA
+            for (let i = 0; i < state.rawSequences.length; i++) {
+                const s = state.rawSequences[i];
+                const alignedAA = indexToSeq.get(i.toString());
+                if (!alignedAA) continue;
+                
+                const cleanDNA = s.seq.join('').replace(/-/g, '');
+                const offset = state.frame - 1;
+                const finalSeq = [];
+                
+                // 5' Padding
+                for (let p = 0; p < offset; p++) finalSeq.push(cleanDNA[p] || '-');
+                
+                let dnaIdx = offset;
+                for (const char of alignedAA) {
+                    if (char === '-') {
+                        finalSeq.push('-', '-', '-');
+                    } else {
+                        if (dnaIdx + 3 <= cleanDNA.length) {
+                            finalSeq.push(cleanDNA[dnaIdx], cleanDNA[dnaIdx + 1], cleanDNA[dnaIdx + 2]);
+                            dnaIdx += 3;
+                        } else {
+                            finalSeq.push('-', '-', '-');
+                        }
+                    }
+                }
+                // Trailing DNA
+                while (dnaIdx < cleanDNA.length) finalSeq.push(cleanDNA[dnaIdx++]);
+                s.seq = finalSeq;
+            }
+        } else {
+            // NT mode - directly use aligned sequences
+            state.rawSequences.forEach((s, idx) => {
+                const alignedNT = indexToSeq.get(idx.toString());
+                if (alignedNT) {
+                    s.seq = alignedNT.split('');
+                }
+            });
+        }
+
+        recalc();
+        showOverlay(false);
+    } catch (err) {
+        console.error("Kalign error:", err);
+        alert("Kalign alignment failed: " + err.message);
+        showOverlay(false);
     }
 }
 
@@ -1285,13 +1569,27 @@ function loadTreeFromURL(url) {
         });
 }
 
-// --- Infer Tree using PhyloTools ---
-function inferTree() {
+// --- Infer Tree Logic ---
+function showInferModal() {
     if (!state.rawSequences || state.rawSequences.length < 2) {
         alert("Need at least 2 sequences to infer a tree.");
         return;
     }
-    
+    document.getElementById('infer-overlay').style.display = 'flex';
+}
+
+function runInferTask() {
+    const method = document.getElementById('sel-infer-method').value;
+    document.getElementById('infer-overlay').style.display = 'none';
+
+    if (method === 'nj') {
+        inferTreeNJ();
+    } else {
+        runFastTreeTask();
+    }
+}
+
+function inferTreeNJ() {
     showOverlay(true);
     dom.overlayMsg.textContent = "Inferring phylogeny...";
     dom.overlaySub.textContent = "Calculating distances and building NJ tree";
@@ -1313,6 +1611,54 @@ function inferTree() {
             showOverlay(false);
         }
     }, 50);
+}
+
+async function runFastTreeTask() {
+    if (!state.aioliCLI) {
+        alert("FastTree (bioWASM) is not yet initialized. Please wait or refresh.");
+        return;
+    }
+
+    showOverlay(true);
+    dom.overlayMsg.textContent = "Inferring phylogeny with FastTree...";
+    dom.overlaySub.textContent = "via bioWASM";
+
+    try {
+        // Use indices as temporary names to avoid truncation/special character issues
+        const fastaInput = state.rawSequences.map((s, idx) => {
+            return `>${idx}\n${s.seq.join('')}`;
+        }).join('\n');
+        
+        await state.aioliCLI.mount({
+            name: "input_tree.fa",
+            data: fastaInput
+        });
+
+        const isAA = (state.mode === 'AA');
+        let flags = isAA ? "" : "-nt";
+        
+        if (isAA) {
+            flags += " " + document.getElementById('sel-ft-aa-model').value;
+        } else {
+            flags += " " + document.getElementById('sel-ft-nt-model').value;
+        }
+        
+        flags += " " + document.getElementById('sel-ft-speed').value;
+
+        const command = `fasttree ${flags.trim()} input_tree.fa`;
+        const newick = await state.aioliCLI.exec(command);
+        
+        if (newick && newick.includes('(')) {
+            state.tempNameMap = state.rawSequences.map(s => s.name);
+            parseTree(newick, true);
+        } else {
+            throw new Error("Invalid Newick output from FastTree.");
+        }
+    } catch (err) {
+        console.error("FastTree error:", err);
+        alert("FastTree failed: " + err.message);
+        showOverlay(false);
+    }
 }
 
 // --- Export Tree as Newick ---
@@ -1402,7 +1748,7 @@ function finalizeLoad(seqs) {
 }
 
 // --- Newick Parser ---
-function parseTree(newick) {
+function parseTree(newick, isIndexed = false) {
     if(!state.rawSequences.length) {
         alert("Please load sequences first.");
         showOverlay(false);
@@ -1411,14 +1757,19 @@ function parseTree(newick) {
     
     saveState();
 
-    let s = newick.replace(/[\r\n]/g, '').trim();
+    // FastTree output might contain multiple lines; the tree is usually the last line
+    let lines = newick.trim().split(/\r?\n/);
+    let s = lines[lines.length - 1].trim();
     if(s.endsWith(';')) s = s.slice(0, -1);
+
+    // Remove Newick comments like [ ... ]
+    s = s.replace(/\[[^\]]*\]/g, '');
 
     const tokens = s.split(/([(),:;])/).map(t => t.trim()).filter(t => t !== '');
     
     let stack = [];
-    let current = { children: [], name: null, len: 0 };
-    let root = current;
+    let root = { children: [], name: null, len: 0 };
+    let current = root;
 
     for(let i=0; i<tokens.length; i++) {
         let t = tokens[i];
@@ -1428,47 +1779,47 @@ function parseTree(newick) {
             stack.push(current);
             current = node;
         } else if (t === ',') {
-            current = stack[stack.length-1]; 
+            if (stack.length > 0) {
+                current = stack[stack.length - 1];
+            } else {
+                current = root;
+            }
             let node = { children: [], name: null, len: 0, parent: current };
             current.children.push(node);
             current = node;
         } else if (t === ')') {
-            current = stack.pop();
+            if (stack.length > 0) {
+                current = stack.pop();
+            } else {
+                current = root;
+            }
         } else if (t === ':') {
             i++;
             let lenStr = tokens[i];
             let val = parseFloat(lenStr);
-            if(!isNaN(val)) current.len = val;
+            if(current && !isNaN(val)) current.len = val;
         } else {
-            current.name = t.replace(/^['"]|['"]$/g, '');
+            if (!current) continue;
+            let name = t.replace(/^['"]|['"]$/g, '');
+            if (isIndexed && state.tempNameMap) {
+                const idx = parseInt(name);
+                if (!isNaN(idx) && idx >= 0 && idx < state.tempNameMap.length) {
+                    name = state.tempNameMap[idx];
+                }
+            }
+            current.name = name;
         }
     }
+    delete state.tempNameMap;
 
-    const leafOrder = [];
-    function traverse(node) {
-        if(!node.children || node.children.length === 0) {
-            if(node.name) leafOrder.push(node.name);
-        } else {
-            node.children.forEach(traverse);
-        }
+    // If root has only one child and no name/length, that child is likely the real root
+    if (root.children.length === 1 && !root.name) {
+        root = root.children[0];
+        delete root.parent;
     }
-    traverse(root);
 
-    const seqMap = new Map();
-    state.rawSequences.forEach(s => seqMap.set(s.name, s));
+    applyTreeOrder(root);
     
-    const newSeqList = [];
-    leafOrder.forEach(name => {
-        if(seqMap.has(name)) {
-            newSeqList.push(seqMap.get(name));
-            seqMap.delete(name);
-        }
-    });
-    for(let s of seqMap.values()) newSeqList.push(s);
-    state.rawSequences = newSeqList;
-    
-    state.refIndex = 0;
-
     let totalLen = 0;
     function checkLen(n) { totalLen += (n.len || 0); n.children.forEach(checkLen); }
     checkLen(root);
@@ -1490,6 +1841,75 @@ function parseTree(newick) {
     setTreeWidth(200);
     recalc();
     showOverlay(false);
+}
+
+function applyTreeOrder(root) {
+    const leafOrder = [];
+    function traverse(node) {
+        if(!node.children || node.children.length === 0) {
+            if(node.name) leafOrder.push(node.name);
+        } else {
+            node.children.forEach(traverse);
+        }
+    }
+    traverse(root);
+
+    const seqMap = new Map();
+    state.rawSequences.forEach(s => seqMap.set(s.name, s));
+    
+    const oldRefName = state.rawSequences[state.refIndex]?.name;
+    const newSeqList = [];
+    leafOrder.forEach(name => {
+        if(seqMap.has(name)) {
+            newSeqList.push(seqMap.get(name));
+            seqMap.delete(name);
+        }
+    });
+    for(let s of seqMap.values()) newSeqList.push(s);
+    state.rawSequences = newSeqList;
+    
+    if (oldRefName) {
+        const newIdx = state.rawSequences.findIndex(s => s.name === oldRefName);
+        state.refIndex = (newIdx !== -1) ? newIdx : 0;
+    } else {
+        state.refIndex = 0;
+    }
+}
+
+function ladderizeTree() {
+    if (!state.tree || !state.tree.root) {
+        alert("Please load or infer a tree first.");
+        return;
+    }
+    
+    saveState();
+    
+    function countLeaves(node) {
+        if (!node.children || node.children.length === 0) {
+            node.leafCount = 1;
+            return 1;
+        }
+        let count = 0;
+        for (const child of node.children) {
+            count += countLeaves(child);
+        }
+        node.leafCount = count;
+        return count;
+    }
+    
+    function sortChildren(node) {
+        if (!node.children || node.children.length <= 1) return;
+        node.children.sort((a, b) => a.leafCount - b.leafCount);
+        for (const child of node.children) {
+            sortChildren(child);
+        }
+    }
+    
+    countLeaves(state.tree.root);
+    sortChildren(state.tree.root);
+    
+    applyTreeOrder(state.tree.root);
+    recalc();
 }
 
 function setTreeWidth(w) {
