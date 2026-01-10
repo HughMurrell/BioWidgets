@@ -467,7 +467,8 @@ const state = {
     namesWidth: 200,
     refIndex: 0, 
     founderIndex: 1, // Second sequence (index 1) is the founder
-    refMap: [], 
+    refMap: [],
+    founderMap: [], 
     mouse: { isDown: false, target: null, startR: 0, startC: 0, lastHoverC: 0 },
     ctxTargetRow: null,
     pastedNameCounter: 1,
@@ -925,6 +926,7 @@ function clearAlignment() {
     state.refIndex = 0;
     state.maxLength = 0;
     state.refMap = [];
+    state.founderMap = [];
     state.pastedNameCounter = 1;
     dom.sizer.style.width = '1px';
     dom.sizer.style.height = '1px';
@@ -2344,7 +2346,12 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
             i++;
             let lenStr = tokens[i];
             let val = parseFloat(lenStr);
-            if(current && !isNaN(val)) current.len = val;
+            if(current && !isNaN(val)) {
+                current.len = val;
+            } else if(current) {
+                // Invalid length value, default to 0
+                current.len = 0;
+            }
         } else {
             if (!current) continue;
             let name = t.replace(/^['"]|['"]$/g, '');
@@ -2364,6 +2371,12 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
                 }
             }
             current.name = name;
+            
+            // Check if next token is a colon - if not, ensure branch length is 0
+            // (nodes are initialized with len: 0, but explicitly set it for clarity)
+            if (i + 1 < tokens.length && tokens[i + 1] !== ':') {
+                current.len = 0;
+            }
         }
     }
     delete state.tempNameMap;
@@ -2512,8 +2525,12 @@ function ladderizeTree(mode) {
         }
         
         function sortChildren(node) {
-            if (!node.children || node.children.length <= 1) return;
-            node.children.sort((a, b) => a.leafCount - b.leafCount);
+            // Only terminate recursion when there are zero children (leaf node)
+            if (!node.children || node.children.length === 0) return;
+            // If there's only one child, still recurse into it (don't sort, but recurse)
+            if (node.children.length > 1) {
+                node.children.sort((a, b) => a.leafCount - b.leafCount);
+            }
             for (const child of node.children) {
                 sortChildren(child);
             }
@@ -2548,13 +2565,17 @@ function ladderizeTree(mode) {
         }
         
         function sortChildren(node) {
-            if (!node.children || node.children.length <= 1) return;
+            // Only terminate recursion when there are zero children (leaf node)
+            if (!node.children || node.children.length === 0) return;
             
-            // Sort in ascending order: shallowest subtrees first, deepest subtrees last in array
-            // In depth-first traversal, we visit children in array order [shallow, deep]
-            // Shallow subtrees processed first → their leaves collected first → appear at top
-            // Deep subtrees processed last → their leaves collected last → appear at bottom
-            node.children.sort((a, b) => a.subtreeMaxDepth - b.subtreeMaxDepth);
+            // If there's only one child, still recurse into it (don't sort, but recurse)
+            if (node.children.length > 1) {
+                // Sort in ascending order: shallowest subtrees first, deepest subtrees last in array
+                // In depth-first traversal, we visit children in array order [shallow, deep]
+                // Shallow subtrees processed first → their leaves collected first → appear at top
+                // Deep subtrees processed last → their leaves collected last → appear at bottom
+                node.children.sort((a, b) => a.subtreeMaxDepth - b.subtreeMaxDepth);
+            }
             
             // Recursively sort children of each child
             for (const child of node.children) {
@@ -2700,7 +2721,7 @@ function recalc() {
     // Reference is always at index 0 in viewSequences
     state.refIndex = 0;
     
-    // Find founder index in viewSequences
+    // Find founder index in viewSequences (for highlighting and bottom ruler)
     const founderName = state.rawSequences[state.founderIndex]?.name;
     const founderViewIndex = state.viewSequences.findIndex(s => s.name === founderName);
     state.founderViewIndex = founderViewIndex >= 0 ? founderViewIndex : -1;
@@ -2709,16 +2730,27 @@ function recalc() {
     state.viewSequences.forEach(s => max = Math.max(max, s.seq.length));
     state.maxLength = max;
     
-    // Use founder sequence for coordinate mapping (instead of reference)
+    // Use reference sequence for top ruler coordinate mapping
     state.refMap = new Int32Array(max + 1);
-    const coordSeq = (state.founderViewIndex >= 0) ? state.viewSequences[state.founderViewIndex] : state.viewSequences[state.refIndex];
-    if(coordSeq) {
-        const seq = coordSeq.seq;
+    if(state.viewSequences[state.refIndex]) {
+        const refSeq = state.viewSequences[state.refIndex].seq;
         let count = 0;
         for(let i=0; i<max; i++) {
-            const char = (i < seq.length) ? seq[i] : '-';
+            const char = (i < refSeq.length) ? refSeq[i] : '-';
             if(char !== '-') count++;
             state.refMap[i] = count;
+        }
+    }
+    
+    // Use founder sequence for bottom ruler coordinate mapping
+    state.founderMap = new Int32Array(max + 1);
+    if(state.founderViewIndex >= 0 && state.viewSequences[state.founderViewIndex]) {
+        const founderSeq = state.viewSequences[state.founderViewIndex].seq;
+        let count = 0;
+        for(let i=0; i<max; i++) {
+            const char = (i < founderSeq.length) ? founderSeq[i] : '-';
+            if(char !== '-') count++;
+            state.founderMap[i] = count;
         }
     }
 
@@ -3156,35 +3188,40 @@ function render() {
             ctxRuler.fillRect((c*CONFIG.charWidth)-scrollLeft, 0, CONFIG.charWidth, h);
         }
 
-        const alnIdx = c + 1;
-        ctxRuler.fillStyle = "#6b7280";
-        if(alnIdx===1 || alnIdx % CONFIG.rulerTickStep === 0) {
-            ctxRuler.moveTo(x, mid + 15); ctxRuler.lineTo(x, h);
-            ctxRuler.fillText(alnIdx, x, mid + 12);
-        } else if(alnIdx % (CONFIG.rulerTickStep/2)===0) {
-            ctxRuler.moveTo(x, mid + 22); ctxRuler.lineTo(x, h);
-        }
-
-        // Use founder coordinates (refMap now contains founder coordinates)
-        const founderIdx = state.refMap[c];
-        const prevFounderIdx = (c > 0) ? state.refMap[c-1] : 0;
+        // Top ruler: Reference coordinates (for defining epitopes)
+        const refIdx = state.refMap[c];
+        const prevRefIdx = (c > 0) ? state.refMap[c-1] : 0;
         
-        if(founderIdx !== prevFounderIdx) {
-            ctxRuler.fillStyle = "#d97706"; // Orange color for founder coordinates
-            if(founderIdx===1 || founderIdx % CONFIG.rulerTickStep === 0) {
+        if(refIdx !== prevRefIdx) {
+            ctxRuler.fillStyle = "#2563eb"; 
+            if(refIdx===1 || refIdx % CONFIG.rulerTickStep === 0) {
                 ctxRuler.moveTo(x, 0); ctxRuler.lineTo(x, 15);
-                ctxRuler.fillText(founderIdx, x, 25);
-            } else if(founderIdx % (CONFIG.rulerTickStep/2)===0) {
+                ctxRuler.fillText(refIdx, x, 25);
+            } else if(refIdx % (CONFIG.rulerTickStep/2)===0) {
                 ctxRuler.moveTo(x, 0); ctxRuler.lineTo(x, 8);
+            }
+        }
+        
+        // Bottom ruler: Founder coordinates
+        const founderIdx = state.founderMap ? state.founderMap[c] : 0;
+        const prevFounderIdx = (c > 0 && state.founderMap) ? state.founderMap[c-1] : 0;
+        
+        if(founderIdx !== prevFounderIdx && state.founderMap) {
+            ctxRuler.fillStyle = "#d97706"; // Orange color for founder
+            if(founderIdx===1 || founderIdx % CONFIG.rulerTickStep === 0) {
+                ctxRuler.moveTo(x, mid + 15); ctxRuler.lineTo(x, h);
+                ctxRuler.fillText(founderIdx, x, mid + 12);
+            } else if(founderIdx % (CONFIG.rulerTickStep/2)===0) {
+                ctxRuler.moveTo(x, mid + 22); ctxRuler.lineTo(x, h);
             }
         }
     }
     ctxRuler.stroke();
     
-    ctxRuler.fillStyle = "#d97706"; ctxRuler.font = "9px sans-serif"; ctxRuler.textAlign = "left";
-    ctxRuler.fillText("Founder", 2, 12);
-    ctxRuler.fillStyle = "#6b7280";
-    ctxRuler.fillText("Aln", 2, mid + 12);
+    ctxRuler.fillStyle = "#2563eb"; ctxRuler.font = "9px sans-serif"; ctxRuler.textAlign = "left";
+    ctxRuler.fillText("Ref", 2, 12);
+    ctxRuler.fillStyle = "#d97706"; // Orange color for founder
+    ctxRuler.fillText("Founder", 2, mid + 12);
 
     // Tree
     if(state.treeWidth > 0 && state.tree) {
