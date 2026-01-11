@@ -233,6 +233,14 @@
             <label>Highlighter</label>
             <button id="btn-highlight">Highlighter</button>
         </div>
+        <div class="control-group">
+            <label>Epitopes</label>
+            <div style="display:flex; gap:5px; align-items:center;">
+                <input type="file" id="inp-epitopes" accept=".csv" style="display: none;">
+                <button id="btn-load-epitopes" title="Load epitope descriptions from CSV file">Load Epitopes</button>
+                <button id="btn-select-epitope" title="Select an epitope to restrict display">Select Epitope</button>
+            </div>
+        </div>
         
         <div class="control-group">
             <label>Alignment</label>
@@ -468,7 +476,9 @@ const state = {
     refIndex: 0, 
     founderIndex: 1, // Second sequence (index 1) is the founder
     refMap: [],
-    founderMap: [], 
+    epitopes: [], // Array of {name: string, regions: [{start: number, end: number}]}
+    selectedEpitope: null, // Selected epitope name or null
+    epitopeColumns: null, // Set of allowed alignment column indices for selected epitope 
     mouse: { isDown: false, target: null, startR: 0, startC: 0, lastHoverC: 0 },
     ctxTargetRow: null,
     pastedNameCounter: 1,
@@ -497,6 +507,9 @@ const dom = {
     btnDownload: document.getElementById('btn-download'),
     btnCopy: document.getElementById('btn-copy'),
     btnHelp: document.getElementById('btn-help'),
+    inpEpitopes: document.getElementById('inp-epitopes'),
+    btnLoadEpitopes: document.getElementById('btn-load-epitopes'),
+    btnSelectEpitope: document.getElementById('btn-select-epitope'),
     selAlignMode: document.getElementById('sel-align-mode'),
     selFrame: document.getElementById('sel-frame'),
     grpFrame: document.getElementById('grp-frame'),
@@ -548,6 +561,15 @@ async function init() {
 
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
     dom.fileTree.addEventListener('change', e => loadTreeFile(e.target.files[0]));
+    if (dom.btnLoadEpitopes) {
+        dom.btnLoadEpitopes.addEventListener('click', () => dom.inpEpitopes.click());
+    }
+    if (dom.inpEpitopes) {
+        dom.inpEpitopes.addEventListener('change', e => loadEpitopes(e.target.files[0]));
+    }
+    if (dom.btnSelectEpitope) {
+        dom.btnSelectEpitope.addEventListener('click', showEpitopeSelector);
+    }
     dom.btnInferTree.addEventListener('click', showInferModal);
     dom.btnExportTree.addEventListener('click', exportTree);
     dom.btnLadderizeTree.addEventListener('click', showLadderizeModal);
@@ -926,7 +948,6 @@ function clearAlignment() {
     state.refIndex = 0;
     state.maxLength = 0;
     state.refMap = [];
-    state.founderMap = [];
     state.pastedNameCounter = 1;
     dom.sizer.style.width = '1px';
     dom.sizer.style.height = '1px';
@@ -2591,6 +2612,197 @@ function ladderizeTree(mode) {
     recalc();
 }
 
+// --- Epitope Loading and Selection ---
+function loadEpitopes(file) {
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const text = e.target.result;
+            const lines = text.split(/\r?\n/).filter(line => line.trim());
+            const epitopes = [];
+            
+            for (const line of lines) {
+                const parts = line.split(',').map(p => p.trim());
+                if (parts.length < 2) continue;
+                
+                const name = parts[0];
+                const regions = [];
+                
+                // Parse coordinate pairs from remaining parts
+                for (let i = 1; i < parts.length; i++) {
+                    const coordStr = parts[i];
+                    if (!coordStr) continue;
+                    
+                    if (coordStr.includes(':')) {
+                        // Format: start:stop
+                        const [startStr, endStr] = coordStr.split(':').map(s => parseInt(s.trim()));
+                        if (!isNaN(startStr) && !isNaN(endStr)) {
+                            regions.push({ start: startStr, end: endStr });
+                        }
+                    } else {
+                        // Format: single coordinate (both start and stop)
+                        const coord = parseInt(coordStr.trim());
+                        if (!isNaN(coord)) {
+                            regions.push({ start: coord, end: coord });
+                        }
+                    }
+                }
+                
+                if (regions.length > 0) {
+                    epitopes.push({ name, regions });
+                }
+            }
+            
+            state.epitopes = epitopes;
+            
+            alert(`Loaded ${epitopes.length} epitope(s). Use "Select Epitope" to choose one.`);
+        } catch (err) {
+            console.error("Error loading epitopes:", err);
+            alert("Error loading epitopes: " + err.message);
+        }
+    };
+    reader.readAsText(file);
+}
+
+function showEpitopeSelector() {
+    if (state.epitopes.length === 0) {
+        alert("No epitopes loaded. Please load epitopes first.");
+        return;
+    }
+    
+    // Create a simple selector dialog
+    const selector = document.createElement('div');
+    selector.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 10000; min-width: 300px;';
+    
+    const title = document.createElement('h3');
+    title.textContent = 'Select Epitope';
+    title.style.margin = '0 0 15px 0';
+    selector.appendChild(title);
+    
+    const list = document.createElement('select');
+    list.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 15px; font-size: 14px;';
+    
+    // Add "None" option to clear selection
+    const noneOption = document.createElement('option');
+    noneOption.value = '';
+    noneOption.textContent = 'None (show all)';
+    if (!state.selectedEpitope) noneOption.selected = true;
+    list.appendChild(noneOption);
+    
+    for (const epitope of state.epitopes) {
+        const option = document.createElement('option');
+        option.value = epitope.name;
+        option.textContent = epitope.name;
+        if (state.selectedEpitope === epitope.name) option.selected = true;
+        list.appendChild(option);
+    }
+    selector.appendChild(list);
+    
+    const buttonDiv = document.createElement('div');
+    buttonDiv.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer;';
+    cancelBtn.onclick = () => selector.remove();
+    buttonDiv.appendChild(cancelBtn);
+    
+    const selectBtn = document.createElement('button');
+    selectBtn.textContent = 'Select';
+    selectBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer;';
+    selectBtn.onclick = () => {
+        const selectedName = list.value;
+        selectEpitope(selectedName || null);
+        selector.remove();
+    };
+    buttonDiv.appendChild(selectBtn);
+    
+    selector.appendChild(buttonDiv);
+    document.body.appendChild(selector);
+}
+
+function selectEpitope(epitopeName) {
+    state.selectedEpitope = epitopeName;
+    
+    if (!epitopeName) {
+        // Clear epitope selection - show all
+        state.epitopeColumns = null;
+        recalc();
+        return;
+    }
+    
+    // Find the epitope
+    const epitope = state.epitopes.find(e => e.name === epitopeName);
+    if (!epitope) {
+        alert(`Epitope "${epitopeName}" not found.`);
+        return;
+    }
+    
+    // Create a set of allowed alignment columns
+    // For each region, find all alignment columns from start to end (including gaps)
+    const allowedColumns = new Set();
+    
+    for (const region of epitope.regions) {
+        // Find all columns where the reference coordinate is within [start, end]
+        // This includes gaps within the region (where refCoord stays the same between region coordinates)
+        // but excludes gaps after the region ends (where refCoord equals end but the reference has a gap)
+        
+        // Get the reference sequence to check for gaps
+        const refSeq = state.viewSequences[state.refIndex]?.seq;
+        
+        // Find the last column where refCoord === region.end AND the reference has an actual character (not a gap)
+        // This is the true end of the region (before any trailing gaps)
+        let lastEndCol = null;
+        for (let i = 0; i < state.refMap.length; i++) {
+            const refCoord = state.refMap[i];
+            if (refCoord === region.end) {
+                // Check if this column has an actual character in the reference (not a gap)
+                if (refSeq && i < refSeq.length && refSeq[i] !== '-') {
+                    lastEndCol = i;
+                }
+            } else if (refCoord > region.end) {
+                // We've passed the end, stop searching
+                break;
+            }
+        }
+        
+        // If we didn't find a non-gap column at region.end, find the last column where refCoord === region.end
+        // (This handles edge cases where region.end might be at a gap)
+        if (lastEndCol === null) {
+            for (let i = state.refMap.length - 1; i >= 0; i--) {
+                if (state.refMap[i] === region.end) {
+                    lastEndCol = i;
+                    break;
+                } else if (state.refMap[i] < region.end) {
+                    break;
+                }
+            }
+        }
+        
+        // Now include all columns where refCoord is within [start, end] AND we haven't passed the last end column
+        // This ensures we include gaps within the region but exclude gaps after the region
+        for (let i = 0; i < state.refMap.length; i++) {
+            const refCoord = state.refMap[i];
+            
+            // Only include if:
+            // 1. Reference coordinate is within the region range [start, end]
+            // 2. We haven't passed the last column where refCoord equals end and has a non-gap character
+            //    (This excludes gaps after the region that have refCoord = end)
+            if (refCoord >= region.start && refCoord <= region.end) {
+                if (lastEndCol === null || i <= lastEndCol) {
+                    allowedColumns.add(i);
+                }
+            }
+        }
+    }
+    
+    state.epitopeColumns = allowedColumns;
+    
+    recalc();
+}
+
 function setTreeWidth(w) {
     state.treeWidth = Math.max(0, w);
     document.documentElement.style.setProperty('--tree-width', state.treeWidth + 'px');
@@ -2742,17 +2954,7 @@ function recalc() {
         }
     }
     
-    // Use founder sequence for bottom ruler coordinate mapping
-    state.founderMap = new Int32Array(max + 1);
-    if(state.founderViewIndex >= 0 && state.viewSequences[state.founderViewIndex]) {
-        const founderSeq = state.viewSequences[state.founderViewIndex].seq;
-        let count = 0;
-        for(let i=0; i<max; i++) {
-            const char = (i < founderSeq.length) ? founderSeq[i] : '-';
-            if(char !== '-') count++;
-            state.founderMap[i] = count;
-        }
-    }
+    
 
     dom.sizer.style.width = (max * CONFIG.charWidth + 200) + 'px';
     dom.sizer.style.height = (state.viewSequences.length * CONFIG.rowHeight) + 'px';
@@ -3078,6 +3280,7 @@ function render() {
 
     const startRow = Math.floor(scrollTop / CONFIG.rowHeight);
     const endRow = Math.min(state.viewSequences.length, Math.ceil((scrollTop + vH) / CONFIG.rowHeight));
+    
     const startCol = Math.floor(scrollLeft / CONFIG.charWidth);
     const endCol = Math.ceil((scrollLeft + vW) / CONFIG.charWidth);
 
@@ -3090,22 +3293,37 @@ function render() {
         ? state.viewSequences[state.founderViewIndex].seq 
         : null;
 
+    // If epitope is selected, only show columns in the epitopeColumns set
+    const showColumn = (c) => {
+        if (state.epitopeColumns === null) return true; // No epitope selected, show all
+        return state.epitopeColumns.has(c);
+    };
+    
     for(let r=startRow; r<endRow; r++) {
         const seq = state.viewSequences[r].seq;
         const y = (r * CONFIG.rowHeight) - scrollTop;
         for(let c=startCol; c<endCol; c++) {
             if(c >= seq.length) break;
+            
+            // Skip columns not in the epitope
+            if (!showColumn(c)) continue;
+            
             const char = seq[c];
             const x = (c * CONFIG.charWidth) - scrollLeft;
-            let fillColor = colors[char] || colors['default'];
-
-            if(state.highlightMatches && founderSeq) {
-                const founderChar = (c < founderSeq.length) ? founderSeq[c] : '-';
-                if(founderChar !== '-') {
-                    if(char === founderChar) {
-                        fillColor = CONFIG.highlightMatchColor;
-                    } else if (char === '-') {
-                        fillColor = CONFIG.highlightGapColor;
+            let fillColor;
+            
+            // Use light grey for gap characters to distinguish from suppressed columns (white)
+            if (char === '-') {
+                fillColor = '#e5e7eb'; // Light grey for gaps
+            } else {
+                fillColor = colors[char] || colors['default'];
+                
+                if(state.highlightMatches && founderSeq) {
+                    const founderChar = (c < founderSeq.length) ? founderSeq[c] : '-';
+                    if(founderChar !== '-') {
+                        if(char === founderChar) {
+                            fillColor = CONFIG.highlightMatchColor;
+                        }
                     }
                 }
             }
@@ -3180,6 +3398,9 @@ function render() {
     ctxRuler.strokeStyle = "#9ca3af";
 
     for(let c=startCol; c<endCol; c++) {
+        // Skip columns not in the epitope
+        if (!showColumn(c)) continue;
+        
         const x = (c * CONFIG.charWidth) - scrollLeft + (CONFIG.charWidth/2);
         let isSel = state.selection && (c >= state.selection.c1 && c <= state.selection.c2);
         
@@ -3202,26 +3423,46 @@ function render() {
             }
         }
         
-        // Bottom ruler: Founder coordinates
-        const founderIdx = state.founderMap ? state.founderMap[c] : 0;
-        const prevFounderIdx = (c > 0 && state.founderMap) ? state.founderMap[c-1] : 0;
-        
-        if(founderIdx !== prevFounderIdx && state.founderMap) {
-            ctxRuler.fillStyle = "#d97706"; // Orange color for founder
-            if(founderIdx===1 || founderIdx % CONFIG.rulerTickStep === 0) {
-                ctxRuler.moveTo(x, mid + 15); ctxRuler.lineTo(x, h);
-                ctxRuler.fillText(founderIdx, x, mid + 12);
-            } else if(founderIdx % (CONFIG.rulerTickStep/2)===0) {
-                ctxRuler.moveTo(x, mid + 22); ctxRuler.lineTo(x, h);
+        // Show epitope region boundaries on reference ruler
+        if (state.selectedEpitope && state.epitopes.length > 0) {
+            const epitope = state.epitopes.find(e => e.name === state.selectedEpitope);
+            if (epitope) {
+                for (const region of epitope.regions) {
+                    // Check if this column corresponds to the start or end of a region
+                    if (refIdx === region.start && refIdx !== prevRefIdx) {
+                        // Start coordinate at the top
+                        ctxRuler.fillStyle = "#dc2626"; // Red color for start
+                        ctxRuler.font = "9px sans-serif";
+                        ctxRuler.textAlign = "center";
+                        ctxRuler.fillText(region.start.toString(), x, 10);
+                    }
+                    if (refIdx === region.end && refIdx !== prevRefIdx) {
+                        // End coordinate at the bottom (just above the divider line)
+                        ctxRuler.fillStyle = "#dc2626"; // Red color for end
+                        ctxRuler.font = "9px sans-serif";
+                        ctxRuler.textAlign = "center";
+                        ctxRuler.fillText(region.end.toString(), x, mid - 5);
+                    }
+                }
             }
+        }
+        
+        // Bottom ruler: Alignment positions (every 10th position, counting all positions including gaps)
+        const alnIdx = c + 1;
+        ctxRuler.fillStyle = "#6b7280";
+        if(alnIdx===1 || alnIdx % CONFIG.rulerTickStep === 0) {
+            ctxRuler.moveTo(x, mid + 15); ctxRuler.lineTo(x, h);
+            ctxRuler.fillText(alnIdx, x, mid + 12);
+        } else if(alnIdx % (CONFIG.rulerTickStep/2)===0) {
+            ctxRuler.moveTo(x, mid + 22); ctxRuler.lineTo(x, h);
         }
     }
     ctxRuler.stroke();
     
     ctxRuler.fillStyle = "#2563eb"; ctxRuler.font = "9px sans-serif"; ctxRuler.textAlign = "left";
     ctxRuler.fillText("Ref", 2, 12);
-    ctxRuler.fillStyle = "#d97706"; // Orange color for founder
-    ctxRuler.fillText("Founder", 2, mid + 12);
+    ctxRuler.fillStyle = "#6b7280";
+    ctxRuler.fillText("Aln", 2, mid + 12);
 
     // Tree
     if(state.treeWidth > 0 && state.tree) {
