@@ -200,6 +200,13 @@
             </div>
         </div>
         <div class="control-group">
+            <label>Sort</label>
+            <div style="display:flex; gap:5px; align-items:center;">
+                <button id="btn-sort-sequences" title="Sort sequences by name (REF and FOUNDER remain first)">Sort</button>
+                <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+            </div>
+        </div>
+        <div class="control-group">
             <label>Reset</label>
             <div style="display:flex; gap:5px;">
                 <button id="btn-clear-aln" title="Remove all sequences">Clear Alignment</button>
@@ -441,6 +448,24 @@
     </div>
 </div>
 
+<div id="group-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 450px;">
+        <h2>Group Sequences</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Delimiter Character</label>
+            <input type="text" id="inp-group-delimiter" value="_" maxlength="1" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Field Number (1-indexed, after splitting by delimiter)</label>
+            <input type="number" id="inp-group-field" value="1" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
+            <button id="btn-run-group" class="active">Group</button>
+        </div>
+    </div>
+</div>
+
 <div id="help-overlay">
     <div class="help-box">
         <h2>FastAlign Help</h2>
@@ -524,7 +549,8 @@ const state = {
     pastedNameCounter: 1,
     aioliCLI: null,
     isAASequence: false, // Flag to track if sequences are already amino acids (not DNA to be translated)
-    leafClusters: null // Map from leaf name to cluster ID (from MDS clustering)
+    leafClusters: null, // Map from leaf name to cluster ID (from MDS clustering)
+    sequenceGroups: null // Map from sequence name to group ID (from grouping by name field)
 };
 
 // --- DOM ---
@@ -537,6 +563,8 @@ const dom = {
     btnRerootTree: document.getElementById('btn-reroot-tree'),
     btnHistogram: document.getElementById('btn-histogram'),
     btnMds: document.getElementById('btn-mds'),
+    btnSortSequences: document.getElementById('btn-sort-sequences'),
+    btnGroupSequences: document.getElementById('btn-group-sequences'),
     btnClearAlignment: document.getElementById('btn-clear-aln'),
     btnClearTree: document.getElementById('btn-clear-tree'),
     btnUndo: document.getElementById('btn-undo'),
@@ -604,6 +632,16 @@ async function init() {
 
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
     dom.fileTree.addEventListener('change', e => loadTreeFile(e.target.files[0]));
+    if (dom.btnSortSequences) {
+        dom.btnSortSequences.addEventListener('click', sortSequencesByName);
+    }
+    if (dom.btnGroupSequences) {
+        dom.btnGroupSequences.addEventListener('click', showGroupModal);
+    }
+    const btnRunGroup = document.getElementById('btn-run-group');
+    if (btnRunGroup) {
+        btnRunGroup.addEventListener('click', runGroupTask);
+    }
     if (dom.btnLoadEpitopes) {
         dom.btnLoadEpitopes.addEventListener('click', () => dom.inpEpitopes.click());
     }
@@ -1139,6 +1177,7 @@ async function runKalignAlignment() {
     }
 }
 
+// --- Profile Alignment for Founder Sequence ---
 // --- MSA Alignment using multiSequenceAlign ---
 function runMSAAlignment() {
     const isAA = (state.mode === 'AA');
@@ -1655,6 +1694,176 @@ function loadTreeFile(file) {
     reader.readAsText(file);
 }
 
+// --- Sort Sequences by Name ---
+function sortSequencesByName() {
+    if (state.rawSequences.length === 0) {
+        alert("No sequences to sort.");
+        return;
+    }
+    
+    saveState();
+    
+    // Get REF and FOUNDER sequences (they stay in positions 0 and 1)
+    const refSeq = state.rawSequences[state.refIndex];
+    const founderSeq = state.founderIndex >= 0 && state.founderIndex < state.rawSequences.length 
+        ? state.rawSequences[state.founderIndex] 
+        : null;
+    
+    // Get all other sequences (excluding REF and FOUNDER)
+    const otherSeqs = [];
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i !== state.refIndex && i !== state.founderIndex) {
+            otherSeqs.push({
+                index: i,
+                seq: state.rawSequences[i]
+            });
+        }
+    }
+    
+    // Sort other sequences by name
+    otherSeqs.sort((a, b) => {
+        const nameA = a.seq.name || '';
+        const nameB = b.seq.name || '';
+        return nameA.localeCompare(nameB);
+    });
+    
+    // Rebuild sequence list: REF at 0, FOUNDER at 1, then sorted others
+    const newSequences = [refSeq];
+    if (founderSeq && founderSeq !== refSeq) {
+        newSequences.push(founderSeq);
+    }
+    otherSeqs.forEach(item => {
+        if (item.seq !== refSeq && item.seq !== founderSeq) {
+            newSequences.push(item.seq);
+        }
+    });
+    
+    state.rawSequences = newSequences;
+    
+    // Update indices
+    state.refIndex = 0;
+    if (founderSeq && founderSeq !== refSeq) {
+        state.founderIndex = 1;
+    } else {
+        // If founder was the same as ref, find it in the new list
+        const founderName = founderSeq ? founderSeq.name : null;
+        if (founderName) {
+            const newFounderIdx = state.rawSequences.findIndex(s => s.name === founderName);
+            state.founderIndex = newFounderIdx >= 0 ? newFounderIdx : 1;
+        } else {
+            state.founderIndex = newSequences.length > 1 ? 1 : 0;
+        }
+    }
+    
+    // Recalculate view sequences
+    state.viewSequences = [...state.rawSequences];
+    
+    // Recalculate names width
+    calculateNamesWidth();
+    
+    // Re-render
+    recalc();
+}
+
+// --- Group Sequences by Name Field ---
+function showGroupModal() {
+    if (state.rawSequences.length === 0) {
+        alert("No sequences to group.");
+        return;
+    }
+    document.getElementById('group-overlay').style.display = 'flex';
+}
+
+function runGroupTask() {
+    const delimiter = document.getElementById('inp-group-delimiter').value || '_';
+    const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 1;
+    
+    if (delimiter.length === 0) {
+        alert("Please specify a delimiter character.");
+        return;
+    }
+    
+    if (fieldNumOneBased < 1) {
+        alert("Field number must be at least 1.");
+        return;
+    }
+    
+    // Convert 1-based field number to 0-based array index
+    const fieldNum = fieldNumOneBased - 1;
+    
+    document.getElementById('group-overlay').style.display = 'none';
+    
+    // Save state for undo
+    saveState();
+    
+    // Remove tree if it exists
+    state.tree = null;
+    setTreeWidth(0);
+    if (dom.btnHistogram) {
+        dom.btnHistogram.disabled = true;
+    }
+    if (dom.btnMds) {
+        dom.btnMds.disabled = true;
+    }
+    
+    // Group sequences by the specified field
+    const nameToGroup = new Map();
+    const groupToColor = new Map();
+    const groupColors = [
+        '#3b82f6', // Blue
+        '#10b981', // Green
+        '#f59e0b', // Amber
+        '#8b5cf6', // Purple
+        '#ec4899', // Pink
+        '#06b6d4', // Cyan
+        '#84cc16', // Lime
+        '#f97316', // Orange
+        '#6366f1', // Indigo
+        '#14b8a6', // Teal
+        '#ef4444', // Red
+        '#fbbf24', // Yellow
+        '#a855f7', // Violet
+        '#22c55e', // Emerald
+        '#06b6d4', // Sky
+    ];
+    
+    let groupId = 0;
+    const groupNames = new Map(); // Map from group value to group ID
+    
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        // Exclude REF and FOUNDER
+        if (i === state.refIndex || i === state.founderIndex) {
+            continue;
+        }
+        
+        const seq = state.rawSequences[i];
+        const name = seq.name || '';
+        
+        // Split by delimiter
+        const fields = name.split(delimiter);
+        
+        if (fields.length > fieldNum) {
+            const groupValue = fields[fieldNum];
+            
+            // Get or create group ID for this group value
+            if (!groupNames.has(groupValue)) {
+                groupNames.set(groupValue, groupId);
+                groupToColor.set(groupId, groupColors[groupId % groupColors.length]);
+                groupId++;
+            }
+            
+            const gId = groupNames.get(groupValue);
+            nameToGroup.set(name, gId);
+        }
+    }
+    
+    // Store grouping in state
+    state.sequenceGroups = nameToGroup;
+    
+    // Re-render
+    recalc();
+}
+
 // --- URL Parameter Loading ---
 function loadFromURLParams() {
     const params = new URLSearchParams(window.location.search);
@@ -2127,8 +2336,9 @@ function rerootTreeOnFounder() {
         const otherChildren = state.tree.root.children.filter(c => c !== founderNode);
         
         if (otherChildren.length > 0 && founderBranchLength > 0) {
-            // Distribute founder's branch length evenly among other children
-            const lengthPerChild = founderBranchLength / otherChildren.length;
+            // Distribute 1% of founder's branch length evenly among other children
+            const lengthToDistribute = founderBranchLength * 0.01;
+            const lengthPerChild = lengthToDistribute / otherChildren.length;
             otherChildren.forEach(child => {
                 child.len = (child.len || 0) + lengthPerChild;
             });
@@ -2350,8 +2560,9 @@ function rerootTree(root, targetNode) {
             const otherChildren = targetNode.children.filter(c => c !== founderNode);
             
             if (otherChildren.length > 0 && founderBranchLength > 0) {
-                // Distribute founder's branch length evenly among other children
-                const lengthPerChild = founderBranchLength / otherChildren.length;
+                // Distribute 1% of founder's branch length evenly among other children
+                const lengthToDistribute = founderBranchLength * 0.01;
+                const lengthPerChild = lengthToDistribute / otherChildren.length;
                 
                 otherChildren.forEach(child => {
                     const oldLength = child.len || 0;
@@ -2822,6 +3033,19 @@ function showMdsModal() {
     // Perform classical MDS
     const mdsCoords = performClassicalMDS(distanceMatrix);
     
+    // Calculate MDS coordinate ranges to set appropriate slider bounds
+    const xs = mdsCoords.map(c => c.x);
+    const ys = mdsCoords.map(c => c.y);
+    const rangeX = Math.max(...xs) - Math.min(...xs);
+    const rangeY = Math.max(...ys) - Math.min(...ys);
+    const minRange = Math.min(rangeX, rangeY);
+    
+    // Set epsilon slider step to 0.01 of the minimum range
+    const epsStep = minRange * 0.01;
+    const epsMin = epsStep; // Minimum should be at least one step
+    const epsMax = minRange * 2; // Maximum should cover a reasonable range (2x the minimum range)
+    const epsDefault = minRange * 0.1; // Default to 10% of minimum range
+    
     // Store data for DBSCAN updates
     window.mdsData = { leaves, coords: mdsCoords, founderName };
     
@@ -2831,21 +3055,31 @@ function showMdsModal() {
     const epsValue = document.getElementById('mds-eps-value');
     const minPtsValue = document.getElementById('mds-minpts-value');
     
+    // Update epsilon slider attributes based on MDS data
+    epsSlider.min = epsMin.toString();
+    epsSlider.max = epsMax.toString();
+    epsSlider.step = epsStep.toString();
+    epsSlider.value = epsDefault.toString();
+    
+    // Calculate decimal places for display based on step size
+    const decimalPlaces = Math.max(0, -Math.floor(Math.log10(epsStep)) + 1);
+    
     // Store current clusters for apply button
     let currentClusters = null;
     
     const updatePlot = () => {
         const eps = parseFloat(epsSlider.value);
         const minPts = parseInt(minPtsSlider.value);
-        epsValue.textContent = eps.toFixed(2);
+        // Format epsilon with appropriate decimal places based on step size
+        epsValue.textContent = eps.toFixed(decimalPlaces);
         minPtsValue.textContent = minPts.toString();
         
         // Perform DBSCAN clustering
         const clusters = performDBSCAN(mdsCoords, eps, minPts);
         currentClusters = clusters; // Store for apply button
         
-        // Draw MDS plot with clusters
-        drawMdsPlot(leaves, mdsCoords, founderName, clusters);
+        // Draw MDS plot with clusters and epsilon circles
+        drawMdsPlot(leaves, mdsCoords, founderName, clusters, eps);
     };
     
     epsSlider.addEventListener('input', updatePlot);
@@ -2878,6 +3112,9 @@ function showMdsModal() {
         // Close modal
         document.getElementById('mds-overlay').style.display = 'none';
     });
+    
+    // Update initial value display
+    epsValue.textContent = epsDefault.toFixed(decimalPlaces);
     
     // Initial draw
     updatePlot();
@@ -3139,7 +3376,7 @@ function performDBSCAN(coords, eps, minPts) {
     return clusters;
 }
 
-function drawMdsPlot(leaves, coords, founderName, clusters = null) {
+function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = null) {
     const canvas = document.getElementById('mds-canvas');
     if (!canvas) return;
     
@@ -3222,6 +3459,40 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null) {
         '#14b8a6', // Teal
     ];
     const noiseColor = '#9ca3af'; // Grey for noise
+    
+    // Calculate epsilon radius in plot coordinates (if epsilon is provided)
+    // Epsilon is in data space, need to convert to pixels
+    // Use average of scaleX and scaleY to convert distance to pixels
+    const avgScale = (Math.abs(scaleX) + Math.abs(scaleY)) / 2;
+    const epsilonRadius = epsilon !== null ? epsilon * avgScale : 0;
+    
+    // Draw epsilon circles first (behind points)
+    if (epsilon !== null && epsilonRadius > 0) {
+        leaves.forEach((leaf, i) => {
+            const x = toPlotX(coords[i].x);
+            const y = toPlotY(coords[i].y);
+            const isFounder = founderName && leaf.name === founderName;
+            const clusterId = clusters ? clusters[i] : -1;
+            
+            // Determine color based on clustering
+            let circleColor;
+            if (isFounder) {
+                circleColor = '#dc2626'; // Red for founder
+            } else if (clusterId === -1) {
+                circleColor = noiseColor; // Grey for noise
+            } else {
+                circleColor = clusterColors[clusterId % clusterColors.length];
+            }
+            
+            // Draw light circle with cluster color
+            ctx.beginPath();
+            ctx.arc(x, y, epsilonRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = circleColor;
+            ctx.globalAlpha = 0.2; // Light/transparent
+            ctx.fill();
+            ctx.globalAlpha = 1.0; // Reset alpha
+        });
+    }
     
     // Draw points
     leaves.forEach((leaf, i) => {
@@ -4172,9 +4443,10 @@ function render() {
         // Check if this is the founder sequence in viewSequences
         const isFounder = state.viewSequences[r].name === state.rawSequences[state.founderIndex]?.name;
         
-        // Determine background and text colors based on clustering
+        // Determine background and text colors based on grouping or clustering
         let bgColor, textColor;
         const seqName = state.viewSequences[r].name;
+        const groupId = state.sequenceGroups ? state.sequenceGroups.get(seqName) : undefined;
         const clusterId = state.leafClusters ? state.leafClusters.get(seqName) : undefined;
         
         if(r === state.refIndex) {
@@ -4183,6 +4455,46 @@ function render() {
         } else if(isFounder) {
             bgColor = '#fef3c7'; // Light yellow background for founder
             textColor = '#d97706'; // Orange color for founder
+        } else if (groupId !== undefined) {
+            // Use group color (priority over clustering)
+            const groupColors = [
+                '#3b82f6', // Blue
+                '#10b981', // Green
+                '#f59e0b', // Amber
+                '#8b5cf6', // Purple
+                '#ec4899', // Pink
+                '#06b6d4', // Cyan
+                '#84cc16', // Lime
+                '#f97316', // Orange
+                '#6366f1', // Indigo
+                '#14b8a6', // Teal
+                '#ef4444', // Red
+                '#fbbf24', // Yellow
+                '#a855f7', // Violet
+                '#22c55e', // Emerald
+                '#06b6d4', // Sky
+            ];
+            const groupLightBg = [
+                '#dbeafe', // Light blue
+                '#d1fae5', // Light green
+                '#fef3c7', // Light amber
+                '#ede9fe', // Light purple
+                '#fce7f3', // Light pink
+                '#cffafe', // Light cyan
+                '#ecfccb', // Light lime
+                '#fed7aa', // Light orange
+                '#e0e7ff', // Light indigo
+                '#ccfbf1', // Light teal
+                '#fee2e2', // Light red
+                '#fef3c7', // Light yellow
+                '#f3e8ff', // Light violet
+                '#d1fae5', // Light emerald
+                '#cffafe', // Light sky
+            ];
+            const groupColor = groupColors[groupId % groupColors.length];
+            const lightBgColor = groupLightBg[groupId % groupLightBg.length];
+            bgColor = isSel ? '#eff6ff' : lightBgColor;
+            textColor = groupColor;
         } else if (clusterId !== undefined && clusterId !== -1) {
             // Use cluster color for background (lightened) and text
             const clusterColors = [
@@ -4218,7 +4530,7 @@ function render() {
             bgColor = isSel ? '#eff6ff' : (r%2===0 ? '#f9fafb' : '#fff');
             textColor = '#9ca3af';
         } else {
-            // No clustering applied
+            // No grouping or clustering applied
             bgColor = isSel ? '#eff6ff' : (r%2===0 ? '#f9fafb' : '#fff');
             textColor = isSel ? '#1e40af' : '#374151';
         }
