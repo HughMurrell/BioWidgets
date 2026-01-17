@@ -188,22 +188,22 @@
             <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
         </div>
         <div class="control-group">
-            <label>Phylogeny</label>
-            <div style="display:flex; gap:5px; align-items:center;">
-                <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
-                <input type="file" id="inp-tree">
-                <button id="btn-export-tree" title="Export current tree as Newick">Export</button>
-                <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
-                <button id="btn-reroot-tree" title="Reroot tree on founder sequence">Reroot</button>
-                <button id="btn-histogram" title="Show histogram of root-to-leaf distances" disabled>Histogram</button>
-                <button id="btn-mds" title="Show MDS plot of pairwise leaf distances" disabled>MDS</button>
-            </div>
-        </div>
-        <div class="control-group">
             <label>Sort</label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-sort-sequences" title="Sort sequences by name (REF and FOUNDER remain first)">Sort</button>
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <label>Phylogeny</label>
+            <div style="display:flex; gap:5px; align-items:center;">
+                <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
+                <input type="file" id="inp-tree">
+                <button id="btn-reroot-tree" title="Reroot tree on founder sequence">Reroot</button>
+                <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
+                <button id="btn-histogram" title="Show histogram of root-to-leaf distances" disabled>Histogram</button>
+                <button id="btn-mds" title="Show MDS plot of pairwise leaf distances" disabled>MDS</button>
+                <button id="btn-export-tree" title="Export current tree as Newick">Export</button>
             </div>
         </div>
         <div class="control-group">
