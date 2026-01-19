@@ -192,6 +192,7 @@
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-sort-sequences" title="Sort sequences by name (REF and FOUNDER remain first)">Sort</button>
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+                <button id="btn-founder" title="Add consensus sequence from selected group">Add Consensus</button>
             </div>
         </div>
         <div class="control-group">
@@ -466,6 +467,37 @@
     </div>
 </div>
 
+<div id="color-legend" style="position: fixed; top: 100px; right: 20px; background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 5000; display: none; max-width: 250px; font-size: 12px;">
+    <div id="legend-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: move; user-select: none;">
+        <h3 style="margin: 0; font-size: 14px; color: #374151;">Color Legend</h3>
+        <button onclick="document.getElementById('color-legend').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #6b7280;">×</button>
+    </div>
+    <div id="legend-groups" style="margin-bottom: 15px;">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 8px;">Groups:</div>
+        <div id="legend-groups-content"></div>
+    </div>
+    <div id="legend-clusters">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 8px;">Clusters:</div>
+        <div id="legend-clusters-content"></div>
+    </div>
+</div>
+
+<div id="founder-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 450px;">
+        <h2>Add Consensus Sequence</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Select Group</label>
+            <select id="sel-founder-group" style="width: 100%;">
+                <option value="">-- Select a group --</option>
+            </select>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('founder-overlay').style.display='none'">Cancel</button>
+            <button id="btn-apply-founder" class="active">Add Consensus</button>
+        </div>
+    </div>
+</div>
+
 <div id="help-overlay">
     <div class="help-box">
         <h2>FastAlign Help</h2>
@@ -512,6 +544,69 @@ const CONFIG = {
     }
 };
 
+// Color palettes for groups and clusters
+const GROUP_COLORS = [
+    '#3b82f6', // Blue
+    '#10b981', // Green
+    '#f59e0b', // Amber
+    '#8b5cf6', // Purple
+    '#ec4899', // Pink
+    '#06b6d4', // Cyan
+    '#84cc16', // Lime
+    '#f97316', // Orange
+    '#6366f1', // Indigo
+    '#14b8a6', // Teal
+    '#ef4444', // Red
+    '#fbbf24', // Yellow
+    '#a855f7', // Violet
+    '#22c55e', // Emerald
+    '#06b6d4', // Sky
+];
+
+const GROUP_LIGHT_BG = [
+    '#dbeafe', // Light blue
+    '#d1fae5', // Light green
+    '#fef3c7', // Light amber
+    '#ede9fe', // Light purple
+    '#fce7f3', // Light pink
+    '#cffafe', // Light cyan
+    '#ecfccb', // Light lime
+    '#fed7aa', // Light orange
+    '#e0e7ff', // Light indigo
+    '#ccfbf1', // Light teal
+    '#fee2e2', // Light red
+    '#fef3c7', // Light yellow
+    '#f3e8ff', // Light violet
+    '#d1fae5', // Light emerald
+    '#cffafe', // Light sky
+];
+
+const CLUSTER_COLORS = [
+    '#e11d48', // Rose
+    '#059669', // Emerald
+    '#dc2626', // Red
+    '#7c3aed', // Violet
+    '#ea580c', // Orange
+    '#0284c7', // Sky
+    '#16a34a', // Green
+    '#ca8a04', // Yellow
+    '#be185d', // Pink
+    '#0891b2', // Cyan
+];
+
+const CLUSTER_LIGHT_BG = [
+    '#ffe4e6', // Light rose
+    '#d1fae5', // Light emerald
+    '#fee2e2', // Light red
+    '#ede9fe', // Light violet
+    '#fed7aa', // Light orange
+    '#e0f2fe', // Light sky
+    '#dcfce7', // Light green
+    '#fef3c7', // Light yellow
+    '#fce7f3', // Light pink
+    '#cffafe', // Light cyan
+];
+
 const CODON_TABLE = {
     'ATA':'I', 'ATC':'I', 'ATT':'I', 'ATG':'M', 'ACA':'T', 'ACC':'T', 'ACG':'T', 'ACT':'T',
     'AAC':'N', 'AAT':'N', 'AAA':'K', 'AAG':'K', 'AGC':'S', 'AGT':'S', 'AGA':'R', 'AGG':'R',
@@ -550,7 +645,11 @@ const state = {
     aioliCLI: null,
     isAASequence: false, // Flag to track if sequences are already amino acids (not DNA to be translated)
     leafClusters: null, // Map from leaf name to cluster ID (from MDS clustering)
-    sequenceGroups: null // Map from sequence name to group ID (from grouping by name field)
+    sequenceGroups: null, // Map from sequence name to group ID (from grouping by name field)
+    groupDelimiter: null, // Delimiter used for grouping
+    groupFieldNum: null, // Field number (1-based) used for grouping
+    groupNames: null, // Map from group ID to group value (for legend)
+    originalFounder: null // Store original founder sequence for reverting
 };
 
 // --- DOM ---
@@ -565,6 +664,7 @@ const dom = {
     btnMds: document.getElementById('btn-mds'),
     btnSortSequences: document.getElementById('btn-sort-sequences'),
     btnGroupSequences: document.getElementById('btn-group-sequences'),
+    btnFounder: document.getElementById('btn-founder'),
     btnClearAlignment: document.getElementById('btn-clear-aln'),
     btnClearTree: document.getElementById('btn-clear-tree'),
     btnUndo: document.getElementById('btn-undo'),
@@ -638,6 +738,10 @@ async function init() {
     if (dom.btnGroupSequences) {
         dom.btnGroupSequences.addEventListener('click', showGroupModal);
     }
+    if (dom.btnFounder) {
+        dom.btnFounder.addEventListener('click', showFounderModal);
+    }
+    document.getElementById('btn-apply-founder').addEventListener('click', applyFounderConsensus);
     const btnRunGroup = document.getElementById('btn-run-group');
     if (btnRunGroup) {
         btnRunGroup.addEventListener('click', runGroupTask);
@@ -1036,15 +1140,22 @@ function clearAlignment() {
     state.maxLength = 0;
     state.refMap = [];
     state.pastedNameCounter = 1;
+    state.sequenceGroups = null;
+    state.groupDelimiter = null;
+    state.groupFieldNum = null;
+    state.groupNames = null;
+    state.leafClusters = null;
     dom.sizer.style.width = '1px';
     dom.sizer.style.height = '1px';
     setTreeWidth(0);
+    updateColorLegend();
     recalc();
     render();
 }
 
 function clearTreeOnly() {
     state.tree = null;
+    state.leafClusters = null; // Clear clusters when tree is cleared
     setTreeWidth(0);
     if (dom.btnHistogram) {
         dom.btnHistogram.disabled = true;
@@ -1052,6 +1163,7 @@ function clearTreeOnly() {
     if (dom.btnMds) {
         dom.btnMds.disabled = true;
     }
+    updateColorLegend();
     render();
 }
 
@@ -1809,26 +1921,10 @@ function runGroupTask() {
     // Group sequences by the specified field
     const nameToGroup = new Map();
     const groupToColor = new Map();
-    const groupColors = [
-        '#3b82f6', // Blue
-        '#10b981', // Green
-        '#f59e0b', // Amber
-        '#8b5cf6', // Purple
-        '#ec4899', // Pink
-        '#06b6d4', // Cyan
-        '#84cc16', // Lime
-        '#f97316', // Orange
-        '#6366f1', // Indigo
-        '#14b8a6', // Teal
-        '#ef4444', // Red
-        '#fbbf24', // Yellow
-        '#a855f7', // Violet
-        '#22c55e', // Emerald
-        '#06b6d4', // Sky
-    ];
     
     let groupId = 0;
     const groupNames = new Map(); // Map from group value to group ID
+    const groupIdToValue = new Map(); // Map from group ID to group value (for legend)
     
     for (let i = 0; i < state.rawSequences.length; i++) {
         // Exclude REF and FOUNDER
@@ -1848,7 +1944,8 @@ function runGroupTask() {
             // Get or create group ID for this group value
             if (!groupNames.has(groupValue)) {
                 groupNames.set(groupValue, groupId);
-                groupToColor.set(groupId, groupColors[groupId % groupColors.length]);
+                groupToColor.set(groupId, GROUP_COLORS[groupId % GROUP_COLORS.length]);
+                groupIdToValue.set(groupId, groupValue);
                 groupId++;
             }
             
@@ -1859,9 +1956,291 @@ function runGroupTask() {
     
     // Store grouping in state
     state.sequenceGroups = nameToGroup;
+    state.groupDelimiter = delimiter;
+    state.groupFieldNum = fieldNumOneBased; // Store 1-based field number
+    state.groupNames = groupIdToValue; // Store group ID to value mapping for legend
+    
+    // Update legend
+    updateColorLegend();
     
     // Re-render
     recalc();
+}
+
+// --- Add Consensus Sequence ---
+function showFounderModal() {
+    if (!state.sequenceGroups || state.groupNames.size === 0) {
+        alert("Please group sequences first before adding a consensus sequence.");
+        return;
+    }
+    
+    // Populate group selector
+    const select = document.getElementById('sel-founder-group');
+    select.innerHTML = '<option value="">-- Select a group --</option>';
+    
+    // Sort groups alphabetically by value
+    const groupEntries = Array.from(state.groupNames.entries()).sort((a, b) => {
+        const valA = a[1] || '';
+        const valB = b[1] || '';
+        return valA.localeCompare(valB);
+    });
+    
+    groupEntries.forEach(([groupId, groupValue]) => {
+        const option = document.createElement('option');
+        option.value = groupId.toString();
+        option.textContent = groupValue || `Group ${groupId}`;
+        select.appendChild(option);
+    });
+    
+    document.getElementById('founder-overlay').style.display = 'flex';
+}
+
+function calculateConsensus(sequences) {
+    if (sequences.length === 0) return null;
+    
+    const consensus = [];
+    const maxLength = Math.max(...sequences.map(s => s.length));
+    
+    for (let pos = 0; pos < maxLength; pos++) {
+        const counts = {};
+        let total = 0;
+        
+        sequences.forEach(seq => {
+            if (pos < seq.length) {
+                const char = seq[pos].toUpperCase();
+                if (char !== '-') {
+                    counts[char] = (counts[char] || 0) + 1;
+                    total++;
+                }
+            }
+        });
+        
+        if (total === 0) {
+            consensus.push('-');
+        } else {
+            // Find the most common character
+            let maxCount = 0;
+            let consensusChar = '-';
+            
+            for (const [char, count] of Object.entries(counts)) {
+                if (count > maxCount) {
+                    maxCount = count;
+                    consensusChar = char;
+                }
+            }
+            
+            // If there's a tie, prefer non-gap characters
+            if (consensusChar === '-' && Object.keys(counts).length > 0) {
+                consensusChar = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+            }
+            
+            consensus.push(consensusChar);
+        }
+    }
+    
+    return consensus;
+}
+
+function applyFounderConsensus() {
+    const select = document.getElementById('sel-founder-group');
+    const selectedGroupId = parseInt(select.value);
+    
+    if (isNaN(selectedGroupId)) {
+        alert("Please select a group.");
+        return;
+    }
+    
+    // Get group value for naming
+    const groupValue = state.groupNames.get(selectedGroupId) || `group${selectedGroupId}`;
+    
+    // Find all sequences in the selected group
+    const groupSequences = [];
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex || i === state.founderIndex) continue; // Exclude REF and founder
+        
+        const seq = state.rawSequences[i];
+        const groupId = state.sequenceGroups.get(seq.name);
+        
+        if (groupId === selectedGroupId) {
+            // Get the sequence array
+            const seqArr = state.isAASequence ? state.viewSequences[i].seq : state.rawSequences[i].seq;
+            groupSequences.push(seqArr);
+        }
+    }
+    
+    if (groupSequences.length === 0) {
+        alert("No sequences found in the selected group.");
+        return;
+    }
+    
+    // Calculate consensus
+    const consensus = calculateConsensus(groupSequences);
+    
+    if (!consensus) {
+        alert("Failed to calculate consensus sequence.");
+        return;
+    }
+    
+    // Save state for undo
+    saveState();
+    
+    // Remove tree if present (user will need to infer again)
+    if (state.tree) {
+        state.tree = null;
+        setTreeWidth(0);
+        if (dom.btnHistogram) {
+            dom.btnHistogram.disabled = true;
+        }
+        if (dom.btnMds) {
+            dom.btnMds.disabled = true;
+        }
+        state.leafClusters = null; // Clear clusters
+        updateColorLegend();
+    }
+    
+    // Create new consensus sequence
+    const consensusSeq = {
+        name: `consensus_of_${groupValue}`,
+        seq: [...consensus]
+    };
+    
+    // Insert after founder (at index founderIndex + 1)
+    const insertIndex = state.founderIndex + 1;
+    state.rawSequences.splice(insertIndex, 0, consensusSeq);
+    
+    // Update view sequences
+    state.viewSequences = [...state.rawSequences];
+    
+    // Recalculate names width
+    calculateNamesWidth();
+    
+    // Close modal
+    document.getElementById('founder-overlay').style.display = 'none';
+    
+    // Re-render
+    recalc();
+}
+
+// --- Color Legend ---
+function updateColorLegend() {
+    const legend = document.getElementById('color-legend');
+    const groupsContent = document.getElementById('legend-groups-content');
+    const clustersContent = document.getElementById('legend-clusters-content');
+    const groupsSection = document.getElementById('legend-groups');
+    const clustersSection = document.getElementById('legend-clusters');
+    
+    if (!legend || !groupsContent || !clustersContent) return;
+    
+    // Clear existing content
+    groupsContent.innerHTML = '';
+    clustersContent.innerHTML = '';
+    
+    let hasGroups = false;
+    let hasClusters = false;
+    
+    // Update groups legend
+    if (state.sequenceGroups && state.groupNames) {
+        hasGroups = true;
+        // Sort by group value alphabetically (not by group ID)
+        const groupEntries = Array.from(state.groupNames.entries()).sort((a, b) => {
+            const valA = a[1] || '';
+            const valB = b[1] || '';
+            return valA.localeCompare(valB);
+        });
+        
+        groupEntries.forEach(([groupId, groupValue]) => {
+            const color = GROUP_COLORS[groupId % GROUP_COLORS.length];
+            const item = document.createElement('div');
+            item.style.display = 'flex';
+            item.style.alignItems = 'center';
+            item.style.gap = '8px';
+            item.style.marginBottom = '4px';
+            
+            const colorBox = document.createElement('div');
+            colorBox.style.width = '16px';
+            colorBox.style.height = '16px';
+            colorBox.style.backgroundColor = color;
+            colorBox.style.border = '1px solid #d1d5db';
+            colorBox.style.borderRadius = '3px';
+            
+            const label = document.createElement('span');
+            label.textContent = groupValue || `Group ${groupId}`;
+            label.style.color = '#374151';
+            
+            item.appendChild(colorBox);
+            item.appendChild(label);
+            groupsContent.appendChild(item);
+        });
+    }
+    
+    // Update clusters legend
+    if (state.leafClusters) {
+        const clusterIds = new Set();
+        state.leafClusters.forEach(clusterId => {
+            if (clusterId !== -1) {
+                clusterIds.add(clusterId);
+            }
+        });
+        
+        if (clusterIds.size > 0) {
+            hasClusters = true;
+            const sortedClusterIds = Array.from(clusterIds).sort((a, b) => a - b);
+            
+            sortedClusterIds.forEach(clusterId => {
+                const color = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+                const item = document.createElement('div');
+                item.style.display = 'flex';
+                item.style.alignItems = 'center';
+                item.style.gap = '8px';
+                item.style.marginBottom = '4px';
+                
+                const colorBox = document.createElement('div');
+                colorBox.style.width = '16px';
+                colorBox.style.height = '16px';
+                colorBox.style.backgroundColor = color;
+                colorBox.style.border = '1px solid #d1d5db';
+                colorBox.style.borderRadius = '3px';
+                
+                const label = document.createElement('span');
+                label.textContent = `Cluster ${clusterId}`;
+                label.style.color = '#374151';
+                
+                item.appendChild(colorBox);
+                item.appendChild(label);
+                clustersContent.appendChild(item);
+            });
+            
+            // Add noise entry if present
+            const hasNoise = Array.from(state.leafClusters.values()).includes(-1);
+            if (hasNoise) {
+                const item = document.createElement('div');
+                item.style.display = 'flex';
+                item.style.alignItems = 'center';
+                item.style.gap = '8px';
+                item.style.marginBottom = '4px';
+                
+                const colorBox = document.createElement('div');
+                colorBox.style.width = '16px';
+                colorBox.style.height = '16px';
+                colorBox.style.backgroundColor = '#9ca3af';
+                colorBox.style.border = '1px solid #d1d5db';
+                colorBox.style.borderRadius = '3px';
+                
+                const label = document.createElement('span');
+                label.textContent = 'Noise';
+                label.style.color = '#374151';
+                
+                item.appendChild(colorBox);
+                item.appendChild(label);
+                clustersContent.appendChild(item);
+            }
+        }
+    }
+    
+    // Show/hide sections and legend
+    groupsSection.style.display = hasGroups ? 'block' : 'none';
+    clustersSection.style.display = hasClusters ? 'block' : 'none';
+    legend.style.display = (hasGroups || hasClusters) ? 'block' : 'none';
 }
 
 // --- URL Parameter Loading ---
@@ -2228,6 +2607,12 @@ function finalizeLoad(seqs) {
     state.tree = null;
     state.refIndex = 0; 
     state.founderIndex = (seqs.length > 1) ? 1 : 0; // Second sequence is founder, or first if only one sequence
+    
+    // Store original founder
+    if (state.founderIndex >= 0 && state.founderIndex < seqs.length) {
+        state.originalFounder = JSON.parse(JSON.stringify(seqs[state.founderIndex]));
+    }
+    
     state.pastedNameCounter = state.rawSequences.length + 1;
     
     // Detect sequence type and set mode accordingly
@@ -3062,7 +3447,12 @@ function showMdsModal() {
     epsSlider.value = epsDefault.toString();
     
     // Calculate decimal places for display based on step size
-    const decimalPlaces = Math.max(0, -Math.floor(Math.log10(epsStep)) + 1);
+    // Clamp to valid range for toFixed() (0-100)
+    let decimalPlaces = 2; // Default
+    if (epsStep > 0 && isFinite(epsStep)) {
+        const calculated = Math.max(0, -Math.floor(Math.log10(epsStep)) + 1);
+        decimalPlaces = Math.min(100, Math.max(0, calculated));
+    }
     
     // Store current clusters for apply button
     let currentClusters = null;
@@ -3074,8 +3464,32 @@ function showMdsModal() {
         epsValue.textContent = eps.toFixed(decimalPlaces);
         minPtsValue.textContent = minPts.toString();
         
-        // Perform DBSCAN clustering
-        const clusters = performDBSCAN(mdsCoords, eps, minPts);
+        // Find founder index in leaves array
+        let founderIdx = -1;
+        if (founderName) {
+            for (let i = 0; i < leaves.length; i++) {
+                if (leaves[i].name === founderName) {
+                    founderIdx = i;
+                    break;
+                }
+            }
+        }
+        
+        // Find consensus index in leaves array
+        let consensusIdx = -1;
+        for (let i = 0; i < leaves.length; i++) {
+            if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
+                consensusIdx = i;
+                break;
+            }
+        }
+        
+        // Perform DBSCAN clustering (founder and consensus will be isolated)
+        let clusters = performDBSCAN(mdsCoords, eps, minPts, founderIdx, consensusIdx);
+        
+        // Renumber clusters by distance from consensus (if present) or founder
+        clusters = renumberClustersByDistanceFromFounder(clusters, mdsCoords, founderIdx, leaves, founderName);
+        
         currentClusters = clusters; // Store for apply button
         
         // Draw MDS plot with clusters and epsilon circles
@@ -3092,7 +3506,30 @@ function showMdsModal() {
             // Perform initial clustering if not done yet
             const eps = parseFloat(epsSlider.value);
             const minPts = parseInt(minPtsSlider.value);
-            currentClusters = performDBSCAN(mdsCoords, eps, minPts);
+            
+            // Find founder index in leaves array
+            let founderIdx = -1;
+            if (founderName) {
+                for (let i = 0; i < leaves.length; i++) {
+                    if (leaves[i].name === founderName) {
+                        founderIdx = i;
+                        break;
+                    }
+                }
+            }
+            
+            // Find consensus index in leaves array
+            let consensusIdx = -1;
+            for (let i = 0; i < leaves.length; i++) {
+                if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
+                    consensusIdx = i;
+                    break;
+                }
+            }
+            
+            let clusters = performDBSCAN(mdsCoords, eps, minPts, founderIdx, consensusIdx);
+            clusters = renumberClustersByDistanceFromFounder(clusters, mdsCoords, founderIdx, leaves, founderName);
+            currentClusters = clusters;
         }
         
         // Create mapping from leaf name to cluster ID
@@ -3105,6 +3542,9 @@ function showMdsModal() {
         
         // Store in state
         state.leafClusters = leafToCluster;
+        
+        // Update legend
+        updateColorLegend();
         
         // Re-render tree
         recalc();
@@ -3120,6 +3560,55 @@ function showMdsModal() {
     updatePlot();
     
     document.getElementById('mds-overlay').style.display = 'flex';
+}
+
+// --- Legend Dragging ---
+function initLegendDragging() {
+    const legend = document.getElementById('color-legend');
+    const header = document.getElementById('legend-header');
+    if (!legend || !header) return;
+    
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+    
+    header.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+    
+    function dragStart(e) {
+        if (e.target.tagName === 'BUTTON') return; // Don't drag when clicking close button
+        
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        // Get current position
+        const rect = legend.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        
+        e.preventDefault();
+    }
+    
+    function drag(e) {
+        if (!isDragging) return;
+        
+        e.preventDefault();
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        const newLeft = initialLeft + deltaX;
+        const newTop = initialTop + deltaY;
+        
+        // Update position using left/top instead of transform
+        legend.style.left = newLeft + 'px';
+        legend.style.right = 'auto';
+        legend.style.top = newTop + 'px';
+    }
+    
+    function dragEnd(e) {
+        isDragging = false;
+    }
 }
 
 function performClassicalMDS(distanceMatrix) {
@@ -3304,7 +3793,7 @@ function computeEigenDecomposition(matrix, numComponents) {
     return { vectors, values };
 }
 
-function performDBSCAN(coords, eps, minPts) {
+function performDBSCAN(coords, eps, minPts, founderIndex = null, consensusIndex = null) {
     const n = coords.length;
     const visited = new Array(n).fill(false);
     const clusters = new Array(n).fill(-1); // -1 means noise/unassigned
@@ -3317,12 +3806,19 @@ function performDBSCAN(coords, eps, minPts) {
         return Math.sqrt(dx * dx + dy * dy);
     }
     
-    // Find all neighbors within eps radius
+    // Find all neighbors within eps radius (excluding founder and consensus)
     function getNeighbors(pointIndex) {
         const neighbors = [];
         const point = coords[pointIndex];
         for (let i = 0; i < n; i++) {
             if (i !== pointIndex && distance(point, coords[i]) <= eps) {
+                // Exclude founder and consensus from neighbor calculations
+                if (founderIndex !== null && (pointIndex === founderIndex || i === founderIndex)) {
+                    continue; // Founder is always isolated
+                }
+                if (consensusIndex !== null && (pointIndex === consensusIndex || i === consensusIndex)) {
+                    continue; // Consensus is always isolated
+                }
                 neighbors.push(i);
             }
         }
@@ -3356,9 +3852,25 @@ function performDBSCAN(coords, eps, minPts) {
         }
     }
     
-    // Main DBSCAN algorithm
+    // First, assign founder to its own cluster (cluster 0) if founder exists
+    if (founderIndex !== null && founderIndex >= 0 && founderIndex < n) {
+        clusters[founderIndex] = 0;
+        visited[founderIndex] = true;
+        clusterId = 1; // Start next cluster at 1
+    }
+    
+    // Assign consensus to its own cluster (will be renumbered later)
+    if (consensusIndex !== null && consensusIndex >= 0 && consensusIndex < n) {
+        clusters[consensusIndex] = clusterId;
+        visited[consensusIndex] = true;
+        clusterId++; // Increment for next cluster
+    }
+    
+    // Main DBSCAN algorithm (skip founder and consensus if they exist)
     for (let i = 0; i < n; i++) {
         if (visited[i]) continue;
+        if (founderIndex !== null && i === founderIndex) continue; // Skip founder
+        if (consensusIndex !== null && i === consensusIndex) continue; // Skip consensus
         
         visited[i] = true;
         const neighbors = getNeighbors(i);
@@ -3374,6 +3886,122 @@ function performDBSCAN(coords, eps, minPts) {
     }
     
     return clusters;
+}
+
+// Renumber clusters by distance from founder
+function renumberClustersByDistanceFromFounder(clusters, coords, founderIndex, leaves, founderName) {
+    if (founderIndex === null || founderIndex < 0 || founderIndex >= coords.length) {
+        return clusters; // No founder, return as-is
+    }
+    
+    // Find founder index in leaves array
+    let founderIdxInLeaves = -1;
+    for (let i = 0; i < leaves.length; i++) {
+        if (leaves[i].name === founderName) {
+            founderIdxInLeaves = i;
+            break;
+        }
+    }
+    
+    if (founderIdxInLeaves === -1) {
+        return clusters; // Founder not found in leaves
+    }
+    
+    // Check if consensus sequence exists
+    let consensusIdxInLeaves = -1;
+    let consensusClusterId = null;
+    for (let i = 0; i < leaves.length; i++) {
+        if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
+            consensusIdxInLeaves = i;
+            consensusClusterId = clusters[i];
+            break;
+        }
+    }
+    
+    // Determine reference point for renumbering
+    let referencePos;
+    let referenceClusterId;
+    let useConsensus = false;
+    
+    if (consensusIdxInLeaves >= 0 && consensusClusterId !== null && consensusClusterId !== -1) {
+        // Use consensus as reference
+        referencePos = coords[consensusIdxInLeaves];
+        referenceClusterId = consensusClusterId;
+        useConsensus = true;
+    } else {
+        // Use founder as reference
+        referencePos = coords[founderIdxInLeaves];
+        referenceClusterId = 0; // Founder's cluster
+    }
+    
+    // Calculate cluster centroids (excluding founder's cluster 0 and consensus cluster if using consensus)
+    const clusterPoints = new Map(); // clusterId -> [point indices]
+    for (let i = 0; i < clusters.length; i++) {
+        const cid = clusters[i];
+        // Exclude noise, founder cluster (0), and consensus cluster if using consensus
+        if (cid !== -1 && cid !== 0) {
+            if (useConsensus && cid === consensusClusterId) {
+                continue; // Skip consensus cluster when using consensus as reference
+            }
+            if (!clusterPoints.has(cid)) {
+                clusterPoints.set(cid, []);
+            }
+            clusterPoints.get(cid).push(i);
+        }
+    }
+    
+    // Calculate centroids and distances
+    const clusterDistances = [];
+    clusterPoints.forEach((pointIndices, clusterId) => {
+        // Calculate centroid
+        let sumX = 0, sumY = 0;
+        pointIndices.forEach(idx => {
+            sumX += coords[idx].x;
+            sumY += coords[idx].y;
+        });
+        const centroid = {
+            x: sumX / pointIndices.length,
+            y: sumY / pointIndices.length
+        };
+        
+        // Calculate distance from reference (consensus or founder) to centroid
+        const dx = referencePos.x - centroid.x;
+        const dy = referencePos.y - centroid.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        clusterDistances.push({ clusterId, distance: dist });
+    });
+    
+    // Sort by distance (closest first)
+    clusterDistances.sort((a, b) => a.distance - b.distance);
+    
+    // Create mapping: old cluster ID -> new cluster ID
+    const clusterMap = new Map();
+    clusterMap.set(0, 0); // Founder stays at 0
+    
+    if (useConsensus && consensusClusterId !== null) {
+        clusterMap.set(consensusClusterId, 1); // Consensus becomes cluster 1
+        // Other clusters start at 2
+        clusterDistances.forEach((item, index) => {
+            if (item.clusterId !== consensusClusterId) {
+                clusterMap.set(item.clusterId, index + 2);
+            }
+        });
+    } else {
+        // No consensus, use founder-based numbering
+        clusterDistances.forEach((item, index) => {
+            clusterMap.set(item.clusterId, index + 1); // Closest = 1, next = 2, etc.
+        });
+    }
+    
+    // Renumber clusters
+    const renumbered = clusters.map(cid => {
+        if (cid === -1) return -1; // Keep noise as -1
+        if (cid === 0) return 0; // Founder stays at 0
+        return clusterMap.get(cid) || cid; // Map to new ID
+    });
+    
+    return renumbered;
 }
 
 function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = null) {
@@ -3445,19 +4073,6 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = nul
     ctx.fillText('MDS Dimension 2', 0, 0);
     ctx.restore();
     
-    // Color palette for clusters (excluding red which is reserved for founder)
-    const clusterColors = [
-        '#3b82f6', // Blue
-        '#10b981', // Green
-        '#f59e0b', // Amber
-        '#8b5cf6', // Purple
-        '#ec4899', // Pink
-        '#06b6d4', // Cyan
-        '#84cc16', // Lime
-        '#f97316', // Orange
-        '#6366f1', // Indigo
-        '#14b8a6', // Teal
-    ];
     const noiseColor = '#9ca3af'; // Grey for noise
     
     // Calculate epsilon radius in plot coordinates (if epsilon is provided)
@@ -3481,7 +4096,7 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = nul
             } else if (clusterId === -1) {
                 circleColor = noiseColor; // Grey for noise
             } else {
-                circleColor = clusterColors[clusterId % clusterColors.length];
+                circleColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
             }
             
             // Draw light circle with cluster color
@@ -3510,7 +4125,7 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = nul
             fillColor = noiseColor; // Grey for noise
             strokeColor = '#6b7280';
         } else {
-            fillColor = clusterColors[clusterId % clusterColors.length];
+            fillColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
             strokeColor = fillColor;
         }
         
@@ -3919,6 +4534,9 @@ function calculateNamesWidth() {
         let text = s.name;
         if(idx === state.refIndex) text += " [Ref]";
         if(idx === state.founderIndex) text += " [Founder]";
+        if(s.name && s.name.startsWith('consensus_of_')) {
+            text += " [CONSENSUS]";
+        }
         const metrics = ctx.measureText(text);
         if (metrics.width > maxWidth) {
             maxWidth = metrics.width;
@@ -4442,6 +5060,8 @@ function render() {
         
         // Check if this is the founder sequence in viewSequences
         const isFounder = state.viewSequences[r].name === state.rawSequences[state.founderIndex]?.name;
+        // Check if this is a consensus sequence
+        const isConsensus = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('consensus_of_');
         
         // Determine background and text colors based on grouping or clustering
         let bgColor, textColor;
@@ -4457,72 +5077,14 @@ function render() {
             textColor = '#d97706'; // Orange color for founder
         } else if (groupId !== undefined) {
             // Use group color (priority over clustering)
-            const groupColors = [
-                '#3b82f6', // Blue
-                '#10b981', // Green
-                '#f59e0b', // Amber
-                '#8b5cf6', // Purple
-                '#ec4899', // Pink
-                '#06b6d4', // Cyan
-                '#84cc16', // Lime
-                '#f97316', // Orange
-                '#6366f1', // Indigo
-                '#14b8a6', // Teal
-                '#ef4444', // Red
-                '#fbbf24', // Yellow
-                '#a855f7', // Violet
-                '#22c55e', // Emerald
-                '#06b6d4', // Sky
-            ];
-            const groupLightBg = [
-                '#dbeafe', // Light blue
-                '#d1fae5', // Light green
-                '#fef3c7', // Light amber
-                '#ede9fe', // Light purple
-                '#fce7f3', // Light pink
-                '#cffafe', // Light cyan
-                '#ecfccb', // Light lime
-                '#fed7aa', // Light orange
-                '#e0e7ff', // Light indigo
-                '#ccfbf1', // Light teal
-                '#fee2e2', // Light red
-                '#fef3c7', // Light yellow
-                '#f3e8ff', // Light violet
-                '#d1fae5', // Light emerald
-                '#cffafe', // Light sky
-            ];
-            const groupColor = groupColors[groupId % groupColors.length];
-            const lightBgColor = groupLightBg[groupId % groupLightBg.length];
+            const groupColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
+            const lightBgColor = GROUP_LIGHT_BG[groupId % GROUP_LIGHT_BG.length];
             bgColor = isSel ? '#eff6ff' : lightBgColor;
             textColor = groupColor;
         } else if (clusterId !== undefined && clusterId !== -1) {
             // Use cluster color for background (lightened) and text
-            const clusterColors = [
-                '#3b82f6', // Blue
-                '#10b981', // Green
-                '#f59e0b', // Amber
-                '#8b5cf6', // Purple
-                '#ec4899', // Pink
-                '#06b6d4', // Cyan
-                '#84cc16', // Lime
-                '#f97316', // Orange
-                '#6366f1', // Indigo
-                '#14b8a6', // Teal
-            ];
-            const clusterLightBg = [
-                '#dbeafe', // Light blue
-                '#d1fae5', // Light green
-                '#fef3c7', // Light amber
-                '#ede9fe', // Light purple
-                '#fce7f3', // Light pink
-                '#cffafe', // Light cyan
-                '#ecfccb', // Light lime
-                '#fed7aa', // Light orange
-                '#e0e7ff', // Light indigo
-                '#ccfbf1', // Light teal
-            ];
-            const clusterColor = clusterColors[clusterId % clusterColors.length];
-            const lightBgColor = clusterLightBg[clusterId % clusterLightBg.length];
+            const clusterColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+            const lightBgColor = CLUSTER_LIGHT_BG[clusterId % CLUSTER_LIGHT_BG.length];
             bgColor = isSel ? '#eff6ff' : lightBgColor;
             textColor = clusterColor;
         } else if (clusterId === -1) {
@@ -4546,15 +5108,86 @@ function render() {
             ctxNames.font = CONFIG.labelFont;
         }
         
-        ctxNames.fillStyle = textColor;
-        
-        let label = state.viewSequences[r].name;
-        if(r === state.refIndex) label += " [Ref]";
-        if(isFounder && state.founderIndex < state.rawSequences.length) {
-            label += " [Founder]";
+        // Handle partial coloring if grouping is active
+        if (state.sequenceGroups && state.groupDelimiter && state.groupFieldNum && 
+            groupId !== undefined && r !== state.refIndex && !isFounder) {
+            // Split name and color different parts
+            const fullName = state.viewSequences[r].name;
+            const fields = fullName.split(state.groupDelimiter);
+            const fieldNum = state.groupFieldNum - 1; // Convert to 0-based
+            
+            if (fields.length > fieldNum) {
+                // Build prefix (up to and including group field)
+                const prefixParts = fields.slice(0, fieldNum + 1);
+                const prefix = prefixParts.join(state.groupDelimiter);
+                
+                // Build suffix (after group field)
+                const suffixParts = fields.slice(fieldNum + 1);
+                const suffix = suffixParts.length > 0 ? state.groupDelimiter + suffixParts.join(state.groupDelimiter) : '';
+                
+                // Get group color for prefix
+                const groupColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
+                
+                // Get cluster color for suffix (if clusters exist)
+                let clusterColor = textColor; // Default to regular text color
+                if (clusterId !== undefined && clusterId !== -1) {
+                    clusterColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+                } else if (clusterId === -1) {
+                    clusterColor = '#9ca3af'; // Grey for noise
+                }
+                
+                // Draw prefix with group color
+                ctxNames.fillStyle = groupColor;
+                ctxNames.fillText(prefix, 10, y + CONFIG.rowHeight/2);
+                
+                // Draw suffix with cluster color (if exists)
+                if (suffix) {
+                    const prefixWidth = ctxNames.measureText(prefix).width;
+                    ctxNames.fillStyle = clusterColor;
+                    ctxNames.fillText(suffix, 10 + prefixWidth, y + CONFIG.rowHeight/2);
+                }
+                
+                // Add [Ref], [Founder], or [CONSENSUS] suffix if needed
+                let suffixLabel = '';
+                if(r === state.refIndex) suffixLabel += " [Ref]";
+                if(isFounder && state.founderIndex < state.rawSequences.length) {
+                    suffixLabel += " [Founder]";
+                }
+                if(isConsensus) {
+                    suffixLabel += " [CONSENSUS]";
+                }
+                if (suffixLabel) {
+                    const fullNameWidth = ctxNames.measureText(prefix + suffix).width;
+                    ctxNames.fillStyle = textColor; // Use default text color for labels
+                    ctxNames.fillText(suffixLabel, 10 + fullNameWidth, y + CONFIG.rowHeight/2);
+                }
+            } else {
+                // Can't split properly, use original coloring
+                ctxNames.fillStyle = textColor;
+                let label = fullName;
+                if(r === state.refIndex) label += " [Ref]";
+                if(isFounder && state.founderIndex < state.rawSequences.length) {
+                    label += " [Founder]";
+                }
+                ctxNames.fillText(label, 10, y + CONFIG.rowHeight/2);
+            }
+        } else {
+            // No grouping or special case (REF/FOUNDER/CONSENSUS) - use original coloring
+            ctxNames.fillStyle = textColor;
+            let label = state.viewSequences[r].name;
+            if(r === state.refIndex) label += " [Ref]";
+            if(isFounder && state.founderIndex < state.rawSequences.length) {
+                label += " [Founder]";
+            }
+            if(isConsensus) {
+                label += " [CONSENSUS]";
+            }
+            ctxNames.fillText(label, 10, y + CONFIG.rowHeight/2);
         }
-        ctxNames.fillText(label, 10, y + CONFIG.rowHeight/2);
     }
+    
+    // Update color legend
+    updateColorLegend();
 
     // Ruler
     ctxRuler.fillStyle = '#f3f4f6'; ctxRuler.fillRect(0,0,dom.cvsRuler.width, dom.cvsRuler.height);
@@ -4704,20 +5337,8 @@ function render() {
                 } else if (state.leafClusters && node.name) {
                     const clusterId = state.leafClusters.get(node.name);
                     if (clusterId !== undefined && clusterId !== -1) {
-                        // Use same color palette as MDS plot
-                        const clusterColors = [
-                            '#3b82f6', // Blue
-                            '#10b981', // Green
-                            '#f59e0b', // Amber
-                            '#8b5cf6', // Purple
-                            '#ec4899', // Pink
-                            '#06b6d4', // Cyan
-                            '#84cc16', // Lime
-                            '#f97316', // Orange
-                            '#6366f1', // Indigo
-                            '#14b8a6', // Teal
-                        ];
-                        fillColor = clusterColors[clusterId % clusterColors.length];
+                        // Use CLUSTER_COLORS palette (same as MDS plot)
+                        fillColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
                     } else if (clusterId === -1) {
                         fillColor = '#9ca3af'; // Grey for noise
                     }
@@ -4732,6 +5353,9 @@ function render() {
         ctxTree.restore();
     }
 }
+
+// Initialize legend dragging
+initLegendDragging();
 
 init();
 </script>
