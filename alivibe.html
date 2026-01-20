@@ -368,6 +368,24 @@
     </div>
 </div>
 
+<div id="reroot-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 450px;">
+        <h2>Reroot Tree</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Root On</label>
+            <select id="sel-reroot-target" style="width: 100%;">
+                <option value="founder">[FOUNDER]</option>
+                <option value="consensus">[CONSENSUS]</option>
+            </select>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('reroot-overlay').style.display='none'">Cancel</button>
+            <button id="btn-run-reroot" class="active">Reroot</button>
+        </div>
+    </div>
+</div>
+
 <div id="infer-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
     <div class="help-box" style="width: 450px;">
         <h2>Infer Phylogeny</h2>
@@ -635,7 +653,7 @@ const state = {
     namesWidth: 200,
     refIndex: 0, 
     founderIndex: 1, // Second sequence (index 1) is the founder
-    refMap: [],
+    refMap: [], 
     epitopes: [], // Array of {name: string, regions: [{start: number, end: number}]}
     selectedEpitope: null, // Selected epitope name or null
     epitopeColumns: null, // Set of allowed alignment column indices for selected epitope 
@@ -759,7 +777,12 @@ async function init() {
     dom.btnExportTree.addEventListener('click', exportTree);
     dom.btnLadderizeTree.addEventListener('click', showLadderizeModal);
     if (dom.btnRerootTree) {
-        dom.btnRerootTree.addEventListener('click', rerootTreeOnFounder);
+        dom.btnRerootTree.addEventListener('click', showRerootModal);
+    }
+    
+    const btnRunReroot = document.getElementById('btn-run-reroot');
+    if (btnRunReroot) {
+        btnRunReroot.addEventListener('click', runRerootTask);
     }
     if (dom.btnHistogram) {
         dom.btnHistogram.addEventListener('click', showHistogramModal);
@@ -857,7 +880,7 @@ async function init() {
 
     // Initialize names width
     setNamesWidth(state.namesWidth);
-    
+
     onResize();
     
     // Check for URL parameters and load if present
@@ -2636,18 +2659,94 @@ function finalizeLoad(seqs) {
 }
 
 // --- Tree Rerooting ---
-function rerootTreeOnFounder() {
+function showRerootModal() {
     if (!state.tree || !state.tree.root) {
         alert("Please load or infer a tree first.");
         return;
     }
     
-    if (state.founderIndex >= state.rawSequences.length) {
-        alert("No founder sequence found. Founder should be the second sequence in the alignment.");
+    // Check if founder exists
+    const hasFounder = state.founderIndex < state.rawSequences.length;
+    
+    // Check if consensus exists
+    let hasConsensus = false;
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
+            hasConsensus = true;
+            break;
+        }
+    }
+    
+    const select = document.getElementById('sel-reroot-target');
+    select.innerHTML = '';
+    
+    if (hasFounder) {
+        const option = document.createElement('option');
+        option.value = 'founder';
+        option.textContent = '[FOUNDER]';
+        select.appendChild(option);
+    }
+    
+    if (hasConsensus) {
+        const option = document.createElement('option');
+        option.value = 'consensus';
+        option.textContent = '[CONSENSUS]';
+        select.appendChild(option);
+    }
+    
+    if (!hasFounder && !hasConsensus) {
+        alert("No founder or consensus sequence found. Please add a consensus sequence or ensure the founder is present.");
         return;
     }
     
-    const founderName = state.rawSequences[state.founderIndex].name;
+    document.getElementById('reroot-overlay').style.display = 'flex';
+}
+
+function runRerootTask() {
+    const target = document.getElementById('sel-reroot-target').value;
+    document.getElementById('reroot-overlay').style.display = 'none';
+    
+    if (target === 'founder') {
+        rerootTreeOnTarget('founder');
+    } else if (target === 'consensus') {
+        rerootTreeOnTarget('consensus');
+    }
+}
+
+function rerootTreeOnTarget(targetType) {
+    if (!state.tree || !state.tree.root) {
+        alert("Please load or infer a tree first.");
+        return;
+    }
+    
+    let targetName;
+    let targetIndex;
+    
+    if (targetType === 'founder') {
+        if (state.founderIndex >= state.rawSequences.length) {
+            alert("No founder sequence found. Founder should be the second sequence in the alignment.");
+            return;
+        }
+        targetIndex = state.founderIndex;
+        targetName = state.rawSequences[targetIndex].name;
+    } else if (targetType === 'consensus') {
+        // Find consensus sequence
+        targetIndex = -1;
+        for (let i = 0; i < state.rawSequences.length; i++) {
+            if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
+                targetIndex = i;
+                targetName = state.rawSequences[i].name;
+                break;
+            }
+        }
+        if (targetIndex === -1) {
+            alert("No consensus sequence found.");
+            return;
+        }
+    } else {
+        alert("Invalid target type.");
+        return;
+    }
     saveState();
     
     // Find the founder node first - prefer leaf nodes (actual sequences) over internal nodes with same name
@@ -2663,24 +2762,26 @@ function rerootTreeOnFounder() {
         return results;
     }
     
-    const allFounderNodes = findAllNodes(state.tree.root, founderName);
+    const allTargetNodes = findAllNodes(state.tree.root, targetName);
     
     // Prefer the leaf node (actual sequence)
-    const leafFounder = allFounderNodes.find(r => r.isLeaf);
-    const founderResult = leafFounder || allFounderNodes[0];
+    const leafTarget = allTargetNodes.find(r => r.isLeaf);
+    const targetResult = leafTarget || allTargetNodes[0];
     
-    if (!founderResult) {
-        alert(`Founder sequence "${founderName}" not found in tree.`);
+    if (!targetResult) {
+        const targetLabel = targetType === 'founder' ? 'Founder' : 'Consensus';
+        alert(`${targetLabel} sequence "${targetName}" not found in tree.`);
         return;
     }
     
-    const founderNode = founderResult.node;
-    const founderDepth = founderResult.depth;
-    const isLeaf = founderResult.isLeaf;
+    const targetNode = targetResult.node;
+    const targetDepth = targetResult.depth;
+    const isLeaf = targetResult.isLeaf;
     
     if (!isLeaf) {
-        console.warn(`WARNING: Founder "${founderName}" is an internal node, not a leaf! This may cause issues.`);
-        console.warn(`Founder node children: ${founderNode.children.map(c => `${c.name || '(unnamed)'}`).join(', ')}`);
+        const targetLabel = targetType === 'founder' ? 'Founder' : 'Consensus';
+        console.warn(`WARNING: ${targetLabel} "${targetName}" is an internal node, not a leaf! This may cause issues.`);
+        console.warn(`${targetLabel} node children: ${targetNode.children.map(c => `${c.name || '(unnamed)'}`).join(', ')}`);
     }
     
     // Find the actual parent by traversing the tree structure (don't trust parent reference)
@@ -2695,10 +2796,11 @@ function rerootTreeOnFounder() {
         return null;
     }
     
-    const actualParentResult = findActualParent(state.tree.root, founderNode);
+    const actualParentResult = findActualParent(state.tree.root, targetNode);
     if (!actualParentResult) {
-        console.error(`ERROR: Could not find actual parent of founder by tree traversal!`);
-        alert("Could not determine founder's parent in tree structure.");
+        const targetLabel = targetType === 'founder' ? 'Founder' : 'Consensus';
+        console.error(`ERROR: Could not find actual parent of ${targetLabel.toLowerCase()} by tree traversal!`);
+        alert(`Could not determine ${targetLabel.toLowerCase()}'s parent in tree structure.`);
         return;
     }
     
@@ -2707,30 +2809,30 @@ function rerootTreeOnFounder() {
     
     if (actualParent) {
         // Update parent reference to match actual structure
-        if (founderNode.parent !== actualParent) {
-            founderNode.parent = actualParent;
+        if (targetNode.parent !== actualParent) {
+            targetNode.parent = actualParent;
         }
     }
     
-    // Check if founder is actually in root's children
-    const founderInRoot = state.tree.root.children.some(c => c === founderNode);
+    // Check if target is actually in root's children
+    const targetInRoot = state.tree.root.children.some(c => c === targetNode);
     
-    if (founderInRoot) {
-        // Founder is a direct child of root - just adjust branch lengths, no rerooting needed
-        const founderBranchLength = founderNode.len || 0;
-        const otherChildren = state.tree.root.children.filter(c => c !== founderNode);
+    if (targetInRoot) {
+        // Target is a direct child of root - just adjust branch lengths, no rerooting needed
+        const targetBranchLength = targetNode.len || 0;
+        const otherChildren = state.tree.root.children.filter(c => c !== targetNode);
         
-        if (otherChildren.length > 0 && founderBranchLength > 0) {
-            // Distribute 1% of founder's branch length evenly among other children
-            const lengthToDistribute = founderBranchLength * 0.01;
+        if (otherChildren.length > 0 && targetBranchLength > 0) {
+            // Distribute 1% of target's branch length evenly among other children
+            const lengthToDistribute = targetBranchLength * 0.01;
             const lengthPerChild = lengthToDistribute / otherChildren.length;
             otherChildren.forEach(child => {
                 child.len = (child.len || 0) + lengthPerChild;
             });
         }
         
-        // Set founder's branch length to 0
-        founderNode.len = 0;
+        // Set target's branch length to 0
+        targetNode.len = 0;
         
         // Recalculate tree layout
         let totalLen = 0;
@@ -2772,7 +2874,7 @@ function rerootTreeOnFounder() {
     } else {
         // Reroot directly on the parent node object (not by name, since it may be unnamed)
         try {
-            newRoot = rerootTree(state.tree.root, parentNode);
+            newRoot = rerootTree(state.tree.root, parentNode, targetType);
             state.tree.root = newRoot;
         } catch (error) {
             console.error(`ERROR in rerootTree:`, error);
@@ -2800,10 +2902,50 @@ function rerootTreeOnFounder() {
     state.tree.maxDepth = maxDepth;
     state.tree.useCladogram = useCladogram;
     
+    // Adjust branch lengths: find target and if it's a direct child of new root,
+    // set its branch length to 0 and distribute 1% of its length to other children
+    function findTargetNodeInTree(node) {
+        if (node.name === targetName && (!node.children || node.children.length === 0)) {
+            return node; // Found leaf node with target name
+        }
+        for (const child of node.children) {
+            const found = findTargetNodeInTree(child);
+            if (found) return found;
+        }
+        return null;
+    }
+    
+    const targetNodeAfterReroot = findTargetNodeInTree(newRoot);
+    if (targetNodeAfterReroot && targetNodeAfterReroot.parent === newRoot) {
+        const targetBranchLength = targetNodeAfterReroot.len || 0;
+        const otherChildren = newRoot.children.filter(c => c !== targetNodeAfterReroot);
+        
+        if (otherChildren.length > 0 && targetBranchLength > 0) {
+            // Distribute 1% of target's branch length evenly among other children
+            const lengthToDistribute = targetBranchLength * 0.01;
+            const lengthPerChild = lengthToDistribute / otherChildren.length;
+            otherChildren.forEach(child => {
+                child.len = (child.len || 0) + lengthPerChild;
+            });
+        }
+        
+        // Set target's branch length to 0
+        targetNodeAfterReroot.len = 0;
+        
+        // Recalculate layout again after branch length adjustment
+        totalLen = 0;
+        checkLen(newRoot);
+        const useCladogram2 = (totalLen === 0);
+        maxDepth = 0;
+        layoutX(newRoot, 0);
+        state.tree.maxDepth = maxDepth;
+        state.tree.useCladogram = useCladogram2;
+    }
+    
     recalc();
 }
 
-function rerootTree(root, targetNode) {
+function rerootTree(root, targetNode, targetType = 'founder') {
     // If targetNode is a string (name), find the node first
     if (typeof targetNode === 'string') {
         function findNode(node, name) {
@@ -3036,9 +3178,9 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
                 // Check if the name is a valid integer (not a decimal)
                 // FastTree outputs support values as decimals (e.g., 0.796) which should not be mapped
                 if (/^\d+$/.test(name)) {
-                    const idx = parseInt(name);
-                    if (!isNaN(idx) && idx >= 0 && idx < state.tempNameMap.length) {
-                        name = state.tempNameMap[idx];
+                const idx = parseInt(name);
+                if (!isNaN(idx) && idx >= 0 && idx < state.tempNameMap.length) {
+                    name = state.tempNameMap[idx];
                     }
                 }
             }
@@ -3062,7 +3204,7 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
         // This prevents making leaf nodes direct children of root
         if (singleChild.children && singleChild.children.length > 0) {
             root = singleChild;
-            delete root.parent;
+        delete root.parent;
             console.log(`Collapsed root: single child with ${singleChild.children.length} children`);
         } else {
             console.log(`Keeping root: single child is a leaf, not collapsing`);
@@ -3075,7 +3217,7 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
         const founderName = state.rawSequences[state.founderIndex].name;
         root = rerootTree(root, founderName);
     }
-    
+
     applyTreeOrder(root);
     
     let totalLen = 0;
@@ -3475,17 +3617,19 @@ function showMdsModal() {
             }
         }
         
-        // Find consensus index in leaves array
+        // Find consensus index and name in leaves array
         let consensusIdx = -1;
+        let consensusName = null;
         for (let i = 0; i < leaves.length; i++) {
             if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
                 consensusIdx = i;
+                consensusName = leaves[i].name;
                 break;
             }
         }
         
-        // Perform DBSCAN clustering (founder and consensus will be isolated)
-        let clusters = performDBSCAN(mdsCoords, eps, minPts, founderIdx, consensusIdx);
+        // Perform DBSCAN clustering (founder will be isolated, consensus can cluster naturally)
+        let clusters = performDBSCAN(mdsCoords, eps, minPts, founderIdx, null);
         
         // Renumber clusters by distance from consensus (if present) or founder
         clusters = renumberClustersByDistanceFromFounder(clusters, mdsCoords, founderIdx, leaves, founderName);
@@ -3493,7 +3637,7 @@ function showMdsModal() {
         currentClusters = clusters; // Store for apply button
         
         // Draw MDS plot with clusters and epsilon circles
-        drawMdsPlot(leaves, mdsCoords, founderName, clusters, eps);
+        drawMdsPlot(leaves, mdsCoords, founderName, clusters, eps, consensusName);
     };
     
     epsSlider.addEventListener('input', updatePlot);
@@ -3518,16 +3662,18 @@ function showMdsModal() {
                 }
             }
             
-            // Find consensus index in leaves array
+            // Find consensus index and name in leaves array
             let consensusIdx = -1;
+            let consensusName = null;
             for (let i = 0; i < leaves.length; i++) {
                 if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
                     consensusIdx = i;
+                    consensusName = leaves[i].name;
                     break;
                 }
             }
             
-            let clusters = performDBSCAN(mdsCoords, eps, minPts, founderIdx, consensusIdx);
+            let clusters = performDBSCAN(mdsCoords, eps, minPts, founderIdx, null);
             clusters = renumberClustersByDistanceFromFounder(clusters, mdsCoords, founderIdx, leaves, founderName);
             currentClusters = clusters;
         }
@@ -3806,18 +3952,15 @@ function performDBSCAN(coords, eps, minPts, founderIndex = null, consensusIndex 
         return Math.sqrt(dx * dx + dy * dy);
     }
     
-    // Find all neighbors within eps radius (excluding founder and consensus)
+    // Find all neighbors within eps radius (excluding founder only)
     function getNeighbors(pointIndex) {
         const neighbors = [];
         const point = coords[pointIndex];
         for (let i = 0; i < n; i++) {
             if (i !== pointIndex && distance(point, coords[i]) <= eps) {
-                // Exclude founder and consensus from neighbor calculations
+                // Exclude founder from neighbor calculations (consensus can cluster naturally)
                 if (founderIndex !== null && (pointIndex === founderIndex || i === founderIndex)) {
                     continue; // Founder is always isolated
-                }
-                if (consensusIndex !== null && (pointIndex === consensusIndex || i === consensusIndex)) {
-                    continue; // Consensus is always isolated
                 }
                 neighbors.push(i);
             }
@@ -3859,18 +4002,10 @@ function performDBSCAN(coords, eps, minPts, founderIndex = null, consensusIndex 
         clusterId = 1; // Start next cluster at 1
     }
     
-    // Assign consensus to its own cluster (will be renumbered later)
-    if (consensusIndex !== null && consensusIndex >= 0 && consensusIndex < n) {
-        clusters[consensusIndex] = clusterId;
-        visited[consensusIndex] = true;
-        clusterId++; // Increment for next cluster
-    }
-    
-    // Main DBSCAN algorithm (skip founder and consensus if they exist)
+    // Main DBSCAN algorithm (skip founder only, consensus can cluster naturally)
     for (let i = 0; i < n; i++) {
         if (visited[i]) continue;
         if (founderIndex !== null && i === founderIndex) continue; // Skip founder
-        if (consensusIndex !== null && i === consensusIndex) continue; // Skip consensus
         
         visited[i] = true;
         const neighbors = getNeighbors(i);
@@ -4004,7 +4139,7 @@ function renumberClustersByDistanceFromFounder(clusters, coords, founderIndex, l
     return renumbered;
 }
 
-function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = null) {
+function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = null, consensusName = null) {
     const canvas = document.getElementById('mds-canvas');
     if (!canvas) return;
     
@@ -4087,6 +4222,7 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = nul
             const x = toPlotX(coords[i].x);
             const y = toPlotY(coords[i].y);
             const isFounder = founderName && leaf.name === founderName;
+            const isConsensus = consensusName && leaf.name === consensusName;
             const clusterId = clusters ? clusters[i] : -1;
             
             // Determine color based on clustering
@@ -4114,6 +4250,7 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = nul
         const x = toPlotX(coords[i].x);
         const y = toPlotY(coords[i].y);
         const isFounder = founderName && leaf.name === founderName;
+        const isConsensus = consensusName && leaf.name === consensusName;
         const clusterId = clusters ? clusters[i] : -1;
         
         // Determine color based on clustering
@@ -4153,9 +4290,16 @@ function drawMdsPlot(leaves, coords, founderName, clusters = null, epsilon = nul
             ctx.fill();
             ctx.stroke();
         }
+    });
+    
+    // Draw labels for founder and consensus AFTER all points and circles
+    leaves.forEach((leaf, i) => {
+        const x = toPlotX(coords[i].x);
+        const y = toPlotY(coords[i].y);
+        const isFounder = founderName && leaf.name === founderName;
+        const isConsensus = consensusName && leaf.name === consensusName;
         
-        // Draw label only for founder
-        if (isFounder) {
+        if (isFounder || isConsensus) {
             ctx.fillStyle = '#111827';
             ctx.font = '9px sans-serif';
             ctx.textAlign = 'left';
@@ -4230,33 +4374,33 @@ function ladderizeTree(mode) {
     
     if (mode === 'weight') {
         // Sort by number of leaves (weight)
-        function countLeaves(node) {
-            if (!node.children || node.children.length === 0) {
-                node.leafCount = 1;
-                return 1;
-            }
-            let count = 0;
-            for (const child of node.children) {
-                count += countLeaves(child);
-            }
-            node.leafCount = count;
-            return count;
+    function countLeaves(node) {
+        if (!node.children || node.children.length === 0) {
+            node.leafCount = 1;
+            return 1;
         }
-        
-        function sortChildren(node) {
+        let count = 0;
+        for (const child of node.children) {
+            count += countLeaves(child);
+        }
+        node.leafCount = count;
+        return count;
+    }
+    
+    function sortChildren(node) {
             // Only terminate recursion when there are zero children (leaf node)
             if (!node.children || node.children.length === 0) return;
             // If there's only one child, still recurse into it (don't sort, but recurse)
             if (node.children.length > 1) {
-                node.children.sort((a, b) => a.leafCount - b.leafCount);
+        node.children.sort((a, b) => a.leafCount - b.leafCount);
             }
-            for (const child of node.children) {
-                sortChildren(child);
-            }
+        for (const child of node.children) {
+            sortChildren(child);
         }
-        
-        countLeaves(state.tree.root);
-        sortChildren(state.tree.root);
+    }
+    
+    countLeaves(state.tree.root);
+    sortChildren(state.tree.root);
     } else if (mode === 'depth') {
         // For each node, calculate the maximum depth from root to deepest leaf in each child's subtree
         // Using branch lengths (sum of branch lengths from root), not node counts
@@ -4598,7 +4742,7 @@ function recalc() {
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
         } else {
             // Sequences are DNA, translate to AA
-            const offset = state.frame - 1;
+        const offset = state.frame - 1;
             const refView = refSeq ? {
                 name: refSeq.name,
                 seq: (() => {
@@ -4615,17 +4759,17 @@ function recalc() {
                 })()
             } : null;
             const nonRefViews = nonRefSequences.map(s => {
-                const dna = s.seq;
-                const aa = [];
-                for(let i=offset; i<dna.length; i+=3) {
-                    if(i+2 >= dna.length) break;
-                    const codon = dna.slice(i, i+3).join('');
-                    if(codon.includes('-')) aa.push('-');
-                    else if (/[^ACGT]/i.test(codon)) aa.push('X');
-                    else aa.push(CODON_TABLE[codon] || 'X');
-                }
-                return { name: s.name, seq: aa };
-            });
+            const dna = s.seq;
+            const aa = [];
+            for(let i=offset; i<dna.length; i+=3) {
+                if(i+2 >= dna.length) break;
+                const codon = dna.slice(i, i+3).join('');
+                if(codon.includes('-')) aa.push('-');
+                else if (/[^ACGT]/i.test(codon)) aa.push('X');
+                else aa.push(CODON_TABLE[codon] || 'X');
+            }
+            return { name: s.name, seq: aa };
+        });
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
         }
     }
@@ -4999,7 +5143,7 @@ function render() {
         if (state.epitopeColumns === null) return true; // No epitope selected, show all
         return state.epitopeColumns.has(c);
     };
-    
+
     for(let r=startRow; r<endRow; r++) {
         const seq = state.viewSequences[r].seq;
         const y = (r * CONFIG.rowHeight) - scrollTop;
@@ -5023,7 +5167,7 @@ function render() {
                     const founderChar = (c < founderSeq.length) ? founderSeq[c] : '-';
                     if(founderChar !== '-') {
                         if(char === founderChar) {
-                            fillColor = CONFIG.highlightMatchColor;
+                        fillColor = CONFIG.highlightMatchColor;
                         }
                     }
                 }
@@ -5063,37 +5207,35 @@ function render() {
         // Check if this is a consensus sequence
         const isConsensus = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('consensus_of_');
         
-        // Determine background and text colors based on grouping or clustering
+        // Determine background and text colors based on grouping only
         let bgColor, textColor;
         const seqName = state.viewSequences[r].name;
         const groupId = state.sequenceGroups ? state.sequenceGroups.get(seqName) : undefined;
-        const clusterId = state.leafClusters ? state.leafClusters.get(seqName) : undefined;
         
+        // Set background color: use group color if grouping exists, otherwise default
         if(r === state.refIndex) {
             bgColor = '#eff6ff';
-            textColor = '#2563eb';
         } else if(isFounder) {
             bgColor = '#fef3c7'; // Light yellow background for founder
-            textColor = '#d97706'; // Orange color for founder
         } else if (groupId !== undefined) {
-            // Use group color (priority over clustering)
-            const groupColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
+            // Use group color for background
             const lightBgColor = GROUP_LIGHT_BG[groupId % GROUP_LIGHT_BG.length];
             bgColor = isSel ? '#eff6ff' : lightBgColor;
-            textColor = groupColor;
-        } else if (clusterId !== undefined && clusterId !== -1) {
-            // Use cluster color for background (lightened) and text
-            const clusterColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
-            const lightBgColor = CLUSTER_LIGHT_BG[clusterId % CLUSTER_LIGHT_BG.length];
-            bgColor = isSel ? '#eff6ff' : lightBgColor;
-            textColor = clusterColor;
-        } else if (clusterId === -1) {
-            // Noise points - grey
-            bgColor = isSel ? '#eff6ff' : (r%2===0 ? '#f9fafb' : '#fff');
-            textColor = '#9ca3af';
         } else {
-            // No grouping or clustering applied
+            // Default background
             bgColor = isSel ? '#eff6ff' : (r%2===0 ? '#f9fafb' : '#fff');
+        }
+        
+        // Set text color: use group color if grouping exists, otherwise default
+        if(r === state.refIndex) {
+            textColor = '#2563eb';
+        } else if(isFounder) {
+            textColor = '#d97706'; // Orange color for founder
+        } else if (groupId !== undefined) {
+            // Use group color for text
+            textColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
+        } else {
+            // Default text color
             textColor = isSel ? '#1e40af' : '#374151';
         }
         
@@ -5108,82 +5250,17 @@ function render() {
             ctxNames.font = CONFIG.labelFont;
         }
         
-        // Handle partial coloring if grouping is active
-        if (state.sequenceGroups && state.groupDelimiter && state.groupFieldNum && 
-            groupId !== undefined && r !== state.refIndex && !isFounder) {
-            // Split name and color different parts
-            const fullName = state.viewSequences[r].name;
-            const fields = fullName.split(state.groupDelimiter);
-            const fieldNum = state.groupFieldNum - 1; // Convert to 0-based
-            
-            if (fields.length > fieldNum) {
-                // Build prefix (up to and including group field)
-                const prefixParts = fields.slice(0, fieldNum + 1);
-                const prefix = prefixParts.join(state.groupDelimiter);
-                
-                // Build suffix (after group field)
-                const suffixParts = fields.slice(fieldNum + 1);
-                const suffix = suffixParts.length > 0 ? state.groupDelimiter + suffixParts.join(state.groupDelimiter) : '';
-                
-                // Get group color for prefix
-                const groupColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
-                
-                // Get cluster color for suffix (if clusters exist)
-                let clusterColor = textColor; // Default to regular text color
-                if (clusterId !== undefined && clusterId !== -1) {
-                    clusterColor = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
-                } else if (clusterId === -1) {
-                    clusterColor = '#9ca3af'; // Grey for noise
-                }
-                
-                // Draw prefix with group color
-                ctxNames.fillStyle = groupColor;
-                ctxNames.fillText(prefix, 10, y + CONFIG.rowHeight/2);
-                
-                // Draw suffix with cluster color (if exists)
-                if (suffix) {
-                    const prefixWidth = ctxNames.measureText(prefix).width;
-                    ctxNames.fillStyle = clusterColor;
-                    ctxNames.fillText(suffix, 10 + prefixWidth, y + CONFIG.rowHeight/2);
-                }
-                
-                // Add [Ref], [Founder], or [CONSENSUS] suffix if needed
-                let suffixLabel = '';
-                if(r === state.refIndex) suffixLabel += " [Ref]";
-                if(isFounder && state.founderIndex < state.rawSequences.length) {
-                    suffixLabel += " [Founder]";
-                }
-                if(isConsensus) {
-                    suffixLabel += " [CONSENSUS]";
-                }
-                if (suffixLabel) {
-                    const fullNameWidth = ctxNames.measureText(prefix + suffix).width;
-                    ctxNames.fillStyle = textColor; // Use default text color for labels
-                    ctxNames.fillText(suffixLabel, 10 + fullNameWidth, y + CONFIG.rowHeight/2);
-                }
-            } else {
-                // Can't split properly, use original coloring
-                ctxNames.fillStyle = textColor;
-                let label = fullName;
-                if(r === state.refIndex) label += " [Ref]";
-                if(isFounder && state.founderIndex < state.rawSequences.length) {
-                    label += " [Founder]";
-                }
-                ctxNames.fillText(label, 10, y + CONFIG.rowHeight/2);
-            }
-        } else {
-            // No grouping or special case (REF/FOUNDER/CONSENSUS) - use original coloring
-            ctxNames.fillStyle = textColor;
-            let label = state.viewSequences[r].name;
-            if(r === state.refIndex) label += " [Ref]";
-            if(isFounder && state.founderIndex < state.rawSequences.length) {
-                label += " [Founder]";
-            }
-            if(isConsensus) {
-                label += " [CONSENSUS]";
-            }
-            ctxNames.fillText(label, 10, y + CONFIG.rowHeight/2);
+        // Draw sequence name with labels
+        ctxNames.fillStyle = textColor;
+        let label = state.viewSequences[r].name;
+        if(r === state.refIndex) label += " [Ref]";
+        if(isFounder && state.founderIndex < state.rawSequences.length) {
+            label += " [Founder]";
         }
+        if(isConsensus) {
+            label += " [CONSENSUS]";
+        }
+        ctxNames.fillText(label, 10, y + CONFIG.rowHeight/2);
     }
     
     // Update color legend
@@ -5345,7 +5422,7 @@ function render() {
                 }
                 
                 ctxTree.fillStyle = fillColor;
-                drawDiamond(ctxTree, x, y, 5); // Increased from 3 to 5
+                drawDiamond(ctxTree, x, y, 10); // Doubled from 5 to 10
             }
         };
 
