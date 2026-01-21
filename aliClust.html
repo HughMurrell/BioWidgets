@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FastAlign: Ultimate Editor</title>
+    <title>AliView: View and Cluster Alignments in the browser</title>
     <!-- Included the NW Alignment Library -->
     <script src="https://murrellgroup.github.io/WebWidgets/nw.js"></script>
     <!-- Included the Phylogenetic Tools Library -->
@@ -173,10 +173,16 @@
         #ctx-menu .item {
             padding: 8px 12px;
             font-size: 13px;
-            cursor: pointer;
+            cursor: default;
             color: #374151;
+            white-space: nowrap;
         }
-        #ctx-menu .item:hover { background-color: #f3f4f6; color: var(--primary); }
+        #ctx-menu .item:hover { background-color: transparent; }
+        #ctx-menu .item:first-child {
+            border-bottom: 1px solid #e5e7eb;
+            margin-bottom: 4px;
+            padding-bottom: 8px;
+        }
     </style>
 </head>
 <body>
@@ -241,7 +247,12 @@
 
         <div class="control-group">
             <label>Highlighter</label>
-            <button id="btn-highlight">Highlighter</button>
+            <select id="sel-highlight" style="min-width: 120px;">
+                <option value="" selected>Off</option>
+                <option value="founder">Founder</option>
+                <option value="subtype">SubType</option>
+                <option value="reference">Reference</option>
+            </select>
         </div>
         <div class="control-group">
             <label>Epitopes</label>
@@ -297,7 +308,7 @@
             <label style="text-transform: none; font-size: 13px; color: #374151;">Sorting Method</label>
             <select id="sel-ladderize-mode" style="width: 100%;">
                 <option value="weight">By Weight (number of leaves)</option>
-                <option value="depth">By Depth (branch lengths)</option>
+                <option value="depth" selected>By Depth (branch lengths)</option>
             </select>
         </div>
 
@@ -333,7 +344,7 @@
             <label style="text-transform: none; font-size: 13px; color: #374151;">Method</label>
             <select id="sel-infer-method" style="width: 100%;">
                 <option value="nj">Neighbor-Joining (Internal)</option>
-                <option value="fasttree">FastTree (bioWASM)</option>
+                <option value="fasttree" selected>FastTree (bioWASM)</option>
             </select>
         </div>
         
@@ -416,7 +427,7 @@
         </div>
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;">Field Number (1-indexed, after splitting by delimiter)</label>
-            <input type="number" id="inp-group-field" value="1" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
+            <input type="number" id="inp-group-field" value="3" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
@@ -459,8 +470,10 @@
 <div id="help-overlay">
     <div class="help-box">
         <h2>FastAlign Help</h2>
-        <div class="help-row"><span class="help-key">Selection</span> <span>Click to select. Shift+Click to extend selection.</span></div>
-        <div class="help-row"><span class="help-key">Editing</span> <span>Type [A-Z] to overwrite. Space to insert gap. Backspace to delete.</span></div>
+        <div class="help-row"><span class="help-key">Choose File</span> <span>Load an Alignment with Ref as first seq and SubType as second seq.</span></div>
+        <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
+        <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
+        <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny using FastTree of Neighbor Joining</span></div>
         <div class="help-row"><span class="help-key">Set Reference</span> <span>Right-click a sequence name.</span></div>
         <div class="help-row"><span class="help-key">Move Block</span> <span>Drag selection horizontally to shift sequences.</span></div>
         <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view.</span></div>
@@ -470,7 +483,8 @@
 </div>
 
 <div id="ctx-menu">
-    <div class="item" id="ctx-btn-ref">Set as Reference</div>
+    <div class="item" id="ctx-info-group">Group: Not assigned</div>
+    <div class="item" id="ctx-info-cluster">Cluster: Not assigned</div>
 </div>
 
 <script>
@@ -581,7 +595,7 @@ const state = {
     history: [],
     dragSaved: false,
     mode: 'NT',
-    highlightMatches: false,
+    highlightMatches: '', // 'founder', 'subtype', 'reference', or '' (off)
     frame: 1,
     maxLength: 0,
     selection: null,
@@ -626,7 +640,7 @@ const dom = {
     btnUndo: document.getElementById('btn-undo'),
     btnNt: document.getElementById('btn-nt'),
     btnAa: document.getElementById('btn-aa'),
-    btnHighlight: document.getElementById('btn-highlight'),
+    selHighlight: document.getElementById('sel-highlight'),
     btnDownload: document.getElementById('btn-download'),
     btnCopy: document.getElementById('btn-copy'),
     btnHelp: document.getElementById('btn-help'),
@@ -640,7 +654,8 @@ const dom = {
     overlaySub: document.getElementById('overlay-sub'),
     helpOverlay: document.getElementById('help-overlay'),
     ctxMenu: document.getElementById('ctx-menu'),
-    ctxBtnRef: document.getElementById('ctx-btn-ref'),
+    ctxInfoGroup: document.getElementById('ctx-info-group'),
+    ctxInfoCluster: document.getElementById('ctx-info-cluster'),
     
     areaSeq: document.getElementById('area-seq'),
     areaNames: document.getElementById('area-names'),
@@ -674,59 +689,14 @@ function drawDiamond(ctx, x, y, size) {
 
 // --- Init ---
 async function init() {
-    // Initialize Aioli
-    state.muscleAvailable = false; // Default to false
-    state.mafftAvailable = false; // Default to false
+    // Initialize Aioli with FastTree only
     try {
-        // Try to initialize with MUSCLE 5.1.0 and MAFFT, wait for them to load
-        // MAFFT requires two subprograms: tbfast and dvtditr
-        console.log("Attempting to load MUSCLE 5.1.0 and MAFFT...");
-        try {
-            state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11", "muscle/5.1.0", "mafft/tbfast/7.520", "mafft/dvtditr/7.520"]);
-            state.muscleAvailable = true;
-            state.mafftAvailable = true;
-            console.log("MUSCLE 5.1.0 and MAFFT successfully loaded");
-        } catch (err) {
-            // If MUSCLE or MAFFT fails, wait a bit and try again
-            console.warn("MUSCLE/MAFFT initial load failed, waiting and retrying...", err.message);
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-            
-            try {
-                console.log("Retrying MUSCLE/MAFFT load...");
-                state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11", "muscle/5.1.0", "mafft/tbfast/7.520", "mafft/dvtditr/7.520"]);
-                state.muscleAvailable = true;
-                state.mafftAvailable = true;
-                console.log("MUSCLE 5.1.0 and MAFFT successfully loaded on retry");
-            } catch (retryErr) {
-                // If retry also fails, try without MUSCLE and MAFFT
-                console.warn("MUSCLE/MAFFT not available in bioWASM after retry, initializing without them:", retryErr.message);
-                state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11"]);
-                state.muscleAvailable = false;
-                state.mafftAvailable = false;
-                // Hide MUSCLE and MAFFT options from dropdown since they're not available
-                const muscleOption = document.querySelector('#sel-align-mode option[value="muscle"]');
-                if (muscleOption) {
-                    muscleOption.style.display = 'none';
-                }
-                const mafftOption = document.querySelector('#sel-align-mode option[value="mafft"]');
-                if (mafftOption) {
-                    mafftOption.style.display = 'none';
-                }
-            }
-        }
+        console.log("Loading FastTree from bioWASM...");
+        state.aioliCLI = await new Aioli(["fasttree/2.1.11"]);
+        console.log("FastTree successfully loaded");
     } catch (err) {
-        console.error("Failed to initialize Aioli:", err);
-        state.muscleAvailable = false;
-        state.mafftAvailable = false;
-        // Hide MUSCLE and MAFFT options from dropdown since they're not available
-        const muscleOption = document.querySelector('#sel-align-mode option[value="muscle"]');
-        if (muscleOption) {
-            muscleOption.style.display = 'none';
-        }
-        const mafftOption = document.querySelector('#sel-align-mode option[value="mafft"]');
-        if (mafftOption) {
-            mafftOption.style.display = 'none';
-        }
+        console.error("Failed to initialize FastTree:", err);
+        state.aioliCLI = null;
     }
 
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
@@ -777,9 +747,8 @@ async function init() {
     dom.btnUndo.addEventListener('click', undo);
     dom.btnNt.addEventListener('click', () => setMode('NT'));
     dom.btnAa.addEventListener('click', () => setMode('AA'));
-    dom.btnHighlight.addEventListener('click', () => {
-        state.highlightMatches = !state.highlightMatches;
-        dom.btnHighlight.classList.toggle('active', state.highlightMatches);
+    dom.selHighlight.addEventListener('change', () => {
+        state.highlightMatches = dom.selHighlight.value;
         render();
     });
     dom.selFrame.addEventListener('change', () => { state.frame = +dom.selFrame.value; recalc(); });
@@ -809,18 +778,37 @@ async function init() {
         const { r } = getCoords(e, 'NAMES');
         if(r >= 0 && r < state.viewSequences.length) {
             state.ctxTargetRow = r;
+            const seqName = state.viewSequences[r].name;
+            
+            // Get group info
+            let groupText = 'Not assigned';
+            if (state.sequenceGroups && state.groupNames) {
+                const groupId = state.sequenceGroups.get(seqName);
+                if (groupId !== undefined && state.groupNames.has(groupId)) {
+                    const groupValue = state.groupNames.get(groupId);
+                    groupText = groupValue || `Group ${groupId}`;
+                }
+            }
+            dom.ctxInfoGroup.textContent = `Group: ${groupText}`;
+            
+            // Get cluster info
+            let clusterText = 'Not assigned';
+            if (state.leafClusters) {
+                const clusterId = state.leafClusters.get(seqName);
+                if (clusterId !== undefined) {
+                    if (clusterId === -1) {
+                        clusterText = 'Noise';
+                    } else {
+                        clusterText = `Cluster ${clusterId}`;
+                    }
+                }
+            }
+            dom.ctxInfoCluster.textContent = `Cluster: ${clusterText}`;
+            
             dom.ctxMenu.style.display = 'block';
             dom.ctxMenu.style.left = e.clientX + 'px';
             dom.ctxMenu.style.top = e.clientY + 'px';
         }
-    });
-
-    dom.ctxBtnRef.addEventListener('click', () => {
-        if(state.ctxTargetRow !== null) {
-            state.refIndex = state.ctxTargetRow;
-            recalc();
-        }
-        dom.ctxMenu.style.display = 'none';
     });
 
     window.addEventListener('mousedown', (e) => {
@@ -856,6 +844,11 @@ async function init() {
 
     // Initialize names width
     setNamesWidth(state.namesWidth);
+    
+    // Initialize highlighter select to match state
+    if (dom.selHighlight) {
+        dom.selHighlight.value = state.highlightMatches || '';
+    }
 
     onResize();
     
@@ -1220,7 +1213,7 @@ function showGroupModal() {
 
 function runGroupTask() {
     const delimiter = document.getElementById('inp-group-delimiter').value || '_';
-    const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 1;
+    const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 3;
     
     if (delimiter.length === 0) {
         alert("Please specify a delimiter character.");
@@ -1432,7 +1425,7 @@ function applySubtypeFounder() {
     
     // Create new founder sequence
     const founderSeq = {
-        name: `founder_of_${groupValue}`,
+        name: `consensus_of_${groupValue}`,
         seq: [...founder]
     };
     
@@ -1648,6 +1641,7 @@ function runInferTask() {
 }
 
 function inferTreeNJ() {
+    const startTime = performance.now();
     showOverlay(true);
     dom.overlayMsg.textContent = "Inferring phylogeny...";
     dom.overlaySub.textContent = "Calculating distances and building NJ tree";
@@ -1673,6 +1667,10 @@ function inferTreeNJ() {
             
             // Parse the generated tree (don't auto-reroot)
             parseTree(newick, false, false);
+            
+            const endTime = performance.now();
+            const executionTime = ((endTime - startTime) / 1000).toFixed(2);
+            console.log(`NJ Tree Inference completed in ${executionTime} seconds`);
         } catch (err) {
             console.error("Error inferring tree:", err);
             alert("Failed to infer tree: " + err.message);
@@ -1682,6 +1680,8 @@ function inferTreeNJ() {
 }
 
 async function runFastTreeTask() {
+    const startTime = performance.now();
+    
     if (!state.aioliCLI) {
         alert("FastTree (bioWASM) is not yet initialized. Please wait or refresh.");
         return;
@@ -1792,6 +1792,10 @@ async function runFastTreeTask() {
             // Map back to original sequence names (excluding ref)
             state.tempNameMap = nonRefSequences.map(s => s.name);
             parseTree(newick, true, false); // isIndexed=true, shouldReroot=false
+            
+            const endTime = performance.now();
+            const executionTime = ((endTime - startTime) / 1000).toFixed(2);
+            console.log(`FastTree Inference completed in ${executionTime} seconds`);
         } else {
             throw new Error("Invalid Newick output from FastTree.");
         }
@@ -1980,7 +1984,7 @@ function showRerootModal() {
     // Check if founder exists
     let hasFounder = false;
     for (let i = 0; i < state.rawSequences.length; i++) {
-        if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('founder_of_')) {
+        if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
             hasFounder = true;
             break;
         }
@@ -1989,17 +1993,20 @@ function showRerootModal() {
     const select = document.getElementById('sel-reroot-target');
     select.innerHTML = '';
     
-    if (hasSubtype) {
-        const option = document.createElement('option');
-        option.value = 'subtype';
-        option.textContent = '[SUBTYPE]';
-        select.appendChild(option);
-    }
-    
+    // Add founder first (default selection)
     if (hasFounder) {
         const option = document.createElement('option');
         option.value = 'founder';
         option.textContent = '[Founder]';
+        option.selected = true; // Make founder the default
+        select.appendChild(option);
+    }
+    
+    // Add subtype second
+    if (hasSubtype) {
+        const option = document.createElement('option');
+        option.value = 'subtype';
+        option.textContent = '[SUBTYPE]';
         select.appendChild(option);
     }
     
@@ -2042,7 +2049,7 @@ function rerootTreeOnTarget(targetType) {
         // Find founder sequence
         targetIndex = -1;
         for (let i = 0; i < state.rawSequences.length; i++) {
-            if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('founder_of_')) {
+            if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
                 targetIndex = i;
                 targetName = state.rawSequences[i].name;
                 break;
@@ -2280,27 +2287,59 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
         return root;
     }
     
-    // Build path from target to root
-    const path = [];
-    let current = targetNode;
-    let pathDepth = 0;
-    while (current && current !== root && pathDepth < 100) {
-        path.push(current);
-        if (!current.parent) {
-            console.error(`ERROR: Node in path has no parent! Node: ${current.name || '(unnamed)'}`);
-            return root; // Can't reroot if parent chain is broken
+    // Ensure parent references are set correctly by traversing the tree
+    function setParentReferences(node, parent = null) {
+        node.parent = parent;
+        if (node.children) {
+            for (const child of node.children) {
+                setParentReferences(child, node);
+            }
         }
-        current = current.parent;
-        pathDepth++;
     }
-    if (pathDepth >= 100) {
-        console.error(`ERROR: Path too long, possible circular reference!`);
+    setParentReferences(root, null);
+    
+    // Build path from target to root using tree traversal (more reliable than parent chain)
+    function findPathToRoot(target, rootNode) {
+        // First, find the path by traversing from root to target
+        function findPathFromRoot(node, targetNode, currentPath = []) {
+            if (node === targetNode) {
+                return [...currentPath, node];
+            }
+            if (node.children) {
+                for (const child of node.children) {
+                    const result = findPathFromRoot(child, targetNode, [...currentPath, node]);
+                    if (result) {
+                        return result;
+                    }
+                }
+            }
+            return null;
+        }
+        
+        const pathFromRoot = findPathFromRoot(rootNode, target);
+        if (!pathFromRoot) {
+            console.error(`ERROR: Could not find path from root to target node: ${target.name || '(unnamed)'}`);
+            return null;
+        }
+        
+        // Reverse the path to get path from target to root
+        return pathFromRoot.reverse();
+    }
+    
+    const path = findPathToRoot(targetNode, root);
+    if (!path) {
+        return root; // Can't reroot if path not found
+    }
+    
+    // Verify path is valid (target should be first, root should be last)
+    if (path[0] !== targetNode || path[path.length - 1] !== root) {
+        console.error(`ERROR: Invalid path structure! Path length: ${path.length}`);
         return root;
     }
-    path.push(root);
     
     // Reverse the path to reroot, preserving branch lengths and all connections
     // We need to reverse each edge in the path while preserving all other children
+    // Process from target (path[0]) to root (path[path.length-1])
     for (let i = 0; i < path.length - 1; i++) {
         const node = path[i];        // Current node in path
         const parent = path[i + 1]; // Parent of current node
@@ -2308,10 +2347,12 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
         // Store the branch length from node to parent
         const branchLength = node.len || 0;
         
-        // Remove node from parent's children array
-        const parentChildIndex = parent.children.indexOf(node);
-        if (parentChildIndex !== -1) {
-            parent.children.splice(parentChildIndex, 1);
+        // Remove node from parent's children array (if it's there)
+        if (parent.children) {
+            const parentChildIndex = parent.children.indexOf(node);
+            if (parentChildIndex !== -1) {
+                parent.children.splice(parentChildIndex, 1);
+            }
         }
         
         // Initialize node.children if it doesn't exist (for leaf nodes)
@@ -2320,6 +2361,7 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
         }
         
         // Add parent to node's children (this reverses the edge)
+        // But only if parent is not already a child (avoid duplicates)
         if (!node.children.includes(parent)) {
             node.children.push(parent);
         }
@@ -2332,10 +2374,10 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
     }
     
     // Now update all parent references in one pass
-    // The new root has no parent
+    // The new root (targetNode) has no parent
     targetNode.parent = null;
     
-    // For each node in the path (except the last one which becomes root's child),
+    // For each node in the path (except the first which is the new root),
     // set its parent to be the previous node in the path
     for (let i = 1; i < path.length; i++) {
         const node = path[i];
@@ -2343,10 +2385,23 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
         node.parent = newParent;
     }
     
-    // Verify tree structure after rerooting
+    // Rebuild parent references for the entire tree to ensure consistency
+    function rebuildAllParentReferences(node, parent = null) {
+        node.parent = parent;
+        if (node.children) {
+            for (const child of node.children) {
+                rebuildAllParentReferences(child, node);
+            }
+        }
+    }
+    rebuildAllParentReferences(targetNode, null);
+    
+    // Verify tree structure after rerooting (simplified - just check parent-child consistency)
+    // Note: We don't check for cycles here as the tree structure should be valid after rerooting
+    // The depth limit is just a safety check
     function verifyTreeStructure(node, depth = 0, issues = []) {
-        if (depth > 100) {
-            issues.push(`Max depth reached - possible circular reference`);
+        if (depth > 1000) {
+            // This is a very deep tree, but not necessarily an error
             return issues;
         }
         
@@ -2356,9 +2411,7 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
                 if (child.parent !== node) {
                     issues.push(`Child "${child.name || '(unnamed)'}" parent mismatch at depth ${depth}`);
                 }
-                if (node.parent === child) {
-                    issues.push(`Circular reference detected at depth ${depth}`);
-                }
+                // Recursively verify child
                 verifyTreeStructure(child, depth + 1, issues);
             }
         }
@@ -2368,7 +2421,8 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
     
     const structureIssues = verifyTreeStructure(targetNode);
     if (structureIssues.length > 0) {
-        console.error(`Tree structure issues after rerooting:`, structureIssues);
+        console.warn(`Tree structure issues after rerooting:`, structureIssues);
+        // Don't fail - just warn, as the tree might still be usable
     }
     
     // Move root closer to subtype by adjusting branch lengths
@@ -2513,13 +2567,33 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
         // This prevents making leaf nodes direct children of root
         if (singleChild.children && singleChild.children.length > 0) {
             root = singleChild;
-        delete root.parent;
+            delete root.parent;
+            // Rebuild parent references after collapsing root
+            function rebuildParents(node, parent = null) {
+                node.parent = parent;
+                if (node.children) {
+                    for (const child of node.children) {
+                        rebuildParents(child, node);
+                    }
+                }
+            }
+            rebuildParents(root, null);
             console.log(`Collapsed root: single child with ${singleChild.children.length} children`);
         } else {
             console.log(`Keeping root: single child is a leaf, not collapsing`);
         }
     }
     
+    // Ensure all parent references are set correctly before rerooting
+    function ensureParentReferences(node, parent = null) {
+        node.parent = parent;
+        if (node.children) {
+            for (const child of node.children) {
+                ensureParentReferences(child, node);
+            }
+        }
+    }
+    ensureParentReferences(root, null);
 
     // Reroot tree on subtype sequence if it exists and shouldReroot is true
     if (shouldReroot && state.subtypeIndex < state.rawSequences.length) {
@@ -2930,7 +3004,7 @@ function showMdsModal() {
         let founderIdx = -1;
         let founderName = null;
         for (let i = 0; i < leaves.length; i++) {
-            if (leaves[i].name && leaves[i].name.startsWith('founder_of_')) {
+            if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
                 founderIdx = i;
                 founderName = leaves[i].name;
                 break;
@@ -2975,7 +3049,7 @@ function showMdsModal() {
             let founderIdx = -1;
             let founderName = null;
             for (let i = 0; i < leaves.length; i++) {
-                if (leaves[i].name && leaves[i].name.startsWith('founder_of_')) {
+                if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
                     founderIdx = i;
                     founderName = leaves[i].name;
                     break;
@@ -3355,7 +3429,7 @@ function renumberClustersByDistanceFromSubtype(clusters, coords, subtypeIndex, l
     let founderIdxInLeaves = -1;
     let founderClusterId = null;
     for (let i = 0; i < leaves.length; i++) {
-        if (leaves[i].name && leaves[i].name.startsWith('founder_of_')) {
+        if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
             founderIdxInLeaves = i;
             founderClusterId = clusters[i];
             break;
@@ -3987,7 +4061,7 @@ function calculateNamesWidth() {
         let text = s.name;
         if(idx === state.refIndex) text += " [Reference]";
         if(idx === state.subtypeIndex) text += " [Subtype]";
-        if(s.name && s.name.startsWith('founder_of_')) {
+        if(s.name && s.name.startsWith('consensus_of_')) {
             text += " [Founder]";
         }
         const metrics = ctx.measureText(text);
@@ -4442,10 +4516,30 @@ function render() {
     ctxSeq.fillStyle = '#ffffff'; ctxSeq.fillRect(0,0,vW,vH);
     ctxSeq.font = CONFIG.font; ctxSeq.textBaseline = 'middle'; ctxSeq.textAlign = 'center';
     const colors = state.mode === 'NT' ? CONFIG.colors.NT : CONFIG.colors.AA;
-    // Use subtype sequence for highlighting (instead of reference)
-    const subtypeSeq = (state.subtypeViewIndex >= 0 && state.viewSequences[state.subtypeViewIndex]) 
-        ? state.viewSequences[state.subtypeViewIndex].seq 
-        : null;
+    
+    // Get the sequence to use for highlighting based on user selection
+    let highlightSeq = null;
+    if (state.highlightMatches) {
+        if (state.highlightMatches === 'founder') {
+            // Find founder sequence (consensus_of_ prefix)
+            const founderIndex = state.viewSequences.findIndex(s => 
+                s.name && s.name.startsWith('consensus_of_')
+            );
+            if (founderIndex >= 0) {
+                highlightSeq = state.viewSequences[founderIndex].seq;
+            }
+        } else if (state.highlightMatches === 'subtype') {
+            // Use subtype sequence
+            if (state.subtypeViewIndex >= 0 && state.viewSequences[state.subtypeViewIndex]) {
+                highlightSeq = state.viewSequences[state.subtypeViewIndex].seq;
+            }
+        } else if (state.highlightMatches === 'reference') {
+            // Use reference sequence
+            if (state.refIndex >= 0 && state.viewSequences[state.refIndex]) {
+                highlightSeq = state.viewSequences[state.refIndex].seq;
+            }
+        }
+    }
 
     // If epitope is selected, only show columns in the epitopeColumns set
     const showColumn = (c) => {
@@ -4472,11 +4566,11 @@ function render() {
             } else {
                 fillColor = colors[char] || colors['default'];
                 
-                if(state.highlightMatches && subtypeSeq) {
-                    const subtypeChar = (c < subtypeSeq.length) ? subtypeSeq[c] : '-';
-                    if(subtypeChar !== '-') {
-                        if(char === subtypeChar) {
-                        fillColor = CONFIG.highlightMatchColor;
+                if(state.highlightMatches && highlightSeq) {
+                    const highlightChar = (c < highlightSeq.length) ? highlightSeq[c] : '-';
+                    if(highlightChar !== '-') {
+                        if(char === highlightChar) {
+                            fillColor = CONFIG.highlightMatchColor;
                         }
                     }
                 }
@@ -4514,7 +4608,7 @@ function render() {
         // Check if this is the subtype sequence in viewSequences
         const isSubtype = state.viewSequences[r].name === state.rawSequences[state.subtypeIndex]?.name;
         // Check if this is a founder sequence
-        const isFounder = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('founder_of_');
+        const isFounder = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('consensus_of_');
         
         // Determine background and text colors based on grouping only
         let bgColor, textColor;
