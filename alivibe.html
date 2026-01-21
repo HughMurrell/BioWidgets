@@ -259,6 +259,8 @@
                 <select id="sel-align-mode">
                     <option value="msa">MSA</option>
                     <option value="kalign">Kalign</option>
+                    <option value="muscle">MUSCLE</option>
+                    <option value="mafft">MAFFT</option>
                     <option value="polish">Polish</option>
                     <option value="left">Left Pile</option>
                     <option value="discard">Discard Ins</option>
@@ -742,10 +744,58 @@ function drawDiamond(ctx, x, y, size) {
 // --- Init ---
 async function init() {
     // Initialize Aioli
+    state.muscleAvailable = false; // Default to false
+    state.mafftAvailable = false; // Default to false
     try {
-        state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11"]);
+        // Try to initialize with MUSCLE 5.1.0 and MAFFT, wait for them to load
+        // MAFFT requires two subprograms: tbfast and dvtditr
+        console.log("Attempting to load MUSCLE 5.1.0 and MAFFT...");
+        try {
+            state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11", "muscle/5.1.0", "mafft/tbfast/7.520", "mafft/dvtditr/7.520"]);
+            state.muscleAvailable = true;
+            state.mafftAvailable = true;
+            console.log("MUSCLE 5.1.0 and MAFFT successfully loaded");
+        } catch (err) {
+            // If MUSCLE or MAFFT fails, wait a bit and try again
+            console.warn("MUSCLE/MAFFT initial load failed, waiting and retrying...", err.message);
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+            
+            try {
+                console.log("Retrying MUSCLE/MAFFT load...");
+                state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11", "muscle/5.1.0", "mafft/tbfast/7.520", "mafft/dvtditr/7.520"]);
+                state.muscleAvailable = true;
+                state.mafftAvailable = true;
+                console.log("MUSCLE 5.1.0 and MAFFT successfully loaded on retry");
+            } catch (retryErr) {
+                // If retry also fails, try without MUSCLE and MAFFT
+                console.warn("MUSCLE/MAFFT not available in bioWASM after retry, initializing without them:", retryErr.message);
+                state.aioliCLI = await new Aioli(["kalign/3.3.1", "fasttree/2.1.11"]);
+                state.muscleAvailable = false;
+                state.mafftAvailable = false;
+                // Hide MUSCLE and MAFFT options from dropdown since they're not available
+                const muscleOption = document.querySelector('#sel-align-mode option[value="muscle"]');
+                if (muscleOption) {
+                    muscleOption.style.display = 'none';
+                }
+                const mafftOption = document.querySelector('#sel-align-mode option[value="mafft"]');
+                if (mafftOption) {
+                    mafftOption.style.display = 'none';
+                }
+            }
+        }
     } catch (err) {
         console.error("Failed to initialize Aioli:", err);
+        state.muscleAvailable = false;
+        state.mafftAvailable = false;
+        // Hide MUSCLE and MAFFT options from dropdown since they're not available
+        const muscleOption = document.querySelector('#sel-align-mode option[value="muscle"]');
+        if (muscleOption) {
+            muscleOption.style.display = 'none';
+        }
+        const mafftOption = document.querySelector('#sel-align-mode option[value="mafft"]');
+        if (mafftOption) {
+            mafftOption.style.display = 'none';
+        }
     }
 
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
@@ -1203,6 +1253,10 @@ function runAlignmentTask() {
         setTimeout(runMSAAlignment, 50);
     } else if (alignMode === 'kalign') {
         setTimeout(runKalignAlignment, 50);
+    } else if (alignMode === 'muscle') {
+        setTimeout(runMuscleAlignment, 50);
+    } else if (alignMode === 'mafft') {
+        setTimeout(runMafftAlignment, 50);
     } else {
         setTimeout(startAsyncAlignment, 50);
     }
@@ -1210,6 +1264,8 @@ function runAlignmentTask() {
 
 // --- Kalign Alignment using bioWASM ---
 async function runKalignAlignment() {
+    const startTime = performance.now();
+    
     if (!state.aioliCLI) {
         alert("Kalign (bioWASM) is not yet initialized. Please wait or refresh.");
         showOverlay(false);
@@ -1303,6 +1359,12 @@ async function runKalignAlignment() {
             });
         }
 
+        const endTime = performance.now();
+        const timeTaken = ((endTime - startTime) / 1000).toFixed(2);
+        console.log(`=== Kalign Alignment Complete ===`);
+        console.log(`Time taken: ${timeTaken} seconds`);
+        console.log(`==================================`);
+
         recalc();
         showOverlay(false);
     } catch (err) {
@@ -1312,9 +1374,311 @@ async function runKalignAlignment() {
     }
 }
 
+// --- MUSCLE Alignment using bioWASM ---
+async function runMuscleAlignment() {
+    const startTime = performance.now();
+    
+    if (!state.aioliCLI) {
+        alert("bioWASM is not yet initialized. Please wait or refresh.");
+        showOverlay(false);
+        return;
+    }
+    
+    if (state.muscleAvailable === false) {
+        alert("MUSCLE is not available in this bioWASM installation. The MUSCLE module failed to load. Please use Kalign or MSA alignment instead.");
+        showOverlay(false);
+        return;
+    }
+
+    const isAA = (state.mode === 'AA');
+    dom.overlayMsg.textContent = "Running MUSCLE alignment...";
+    dom.overlaySub.textContent = "via bioWASM";
+
+    try {
+        // Use indices as temporary names to avoid truncation/special character issues in MUSCLE
+        const fastaInput = state.rawSequences.map((s, idx) => {
+            const seqArr = isAA ? state.viewSequences[idx].seq : s.seq;
+            const seqStr = seqArr.join('').replace(/-/g, '');
+            return `>${idx}\n${seqStr}`;
+        }).join('\n');
+        
+        if (!fastaInput.trim()) {
+            throw new Error("No sequences to align.");
+        }
+
+        await state.aioliCLI.mount({
+            name: "input.fa",
+            data: fastaInput
+        });
+
+        // MUSCLE command with parameters
+        // MUSCLE syntax: muscle -align input.fa -output output.fa
+        const command = `muscle -align input.fa -output output.fa`;
+        
+        // Log the MUSCLE call with parameters
+        console.log("=== MUSCLE Parameters ===");
+        console.log("Sequences:", state.rawSequences.length);
+        console.log("Mode:", isAA ? "AA" : "NT");
+        console.log("Input file: input.fa");
+        console.log("Output file: output.fa");
+        console.log("Full Command:", command);
+        console.log("==========================");
+        
+        // Execute MUSCLE command and capture output
+        const muscleOutput = await state.aioliCLI.exec(command);
+        
+        // Use the exec output if available, otherwise try to read the file
+        let outputContent = muscleOutput;
+        
+        // If exec output is empty or doesn't contain FASTA, try reading the file
+        if (!outputContent || !outputContent.includes('>')) {
+            try {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const outputFileContent = await state.aioliCLI.cat("output.fa");
+                outputContent = outputFileContent;
+            } catch (readErr) {
+                console.warn("Could not read output.fa file:", readErr);
+                // Use exec output as fallback
+                outputContent = muscleOutput;
+            }
+        }
+        
+        if (!outputContent || !outputContent.includes('>')) {
+            console.error("MUSCLE output does not contain FASTA format. Full output:", outputContent);
+            throw new Error("MUSCLE failed to return a valid FASTA alignment. Output: " + (outputContent ? outputContent.substring(0, 200) : "null"));
+        }
+        
+        // Parse result fasta
+        const lines = outputContent.split(/\r?\n/);
+        const indexToSeq = new Map();
+        let currentIndex = null;
+        let buf = [];
+        for (let line of lines) {
+            line = line.trim();
+            if (!line) continue;
+            if (line.startsWith('>')) {
+                if (currentIndex !== null) indexToSeq.set(currentIndex, buf.join(''));
+                currentIndex = line.substring(1).trim();
+                buf = [];
+            } else if (currentIndex !== null) {
+                buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+            }
+        }
+        if (currentIndex !== null) indexToSeq.set(currentIndex, buf.join(''));
+
+        if (isAA) {
+            // Map AA alignment back to DNA
+            for (let i = 0; i < state.rawSequences.length; i++) {
+                const s = state.rawSequences[i];
+                const alignedAA = indexToSeq.get(i.toString());
+                if (!alignedAA) continue;
+                
+                const cleanDNA = s.seq.join('').replace(/-/g, '');
+                const offset = state.frame - 1;
+                const finalSeq = [];
+                
+                // 5' Padding
+                for (let p = 0; p < offset; p++) finalSeq.push(cleanDNA[p] || '-');
+                
+                let dnaIdx = offset;
+                for (const char of alignedAA) {
+                    if (char === '-') {
+                        finalSeq.push('-', '-', '-');
+                    } else {
+                        if (dnaIdx + 3 <= cleanDNA.length) {
+                            finalSeq.push(cleanDNA[dnaIdx], cleanDNA[dnaIdx + 1], cleanDNA[dnaIdx + 2]);
+                            dnaIdx += 3;
+                        } else {
+                            finalSeq.push('-', '-', '-');
+                        }
+                    }
+                }
+                // Trailing DNA
+                while (dnaIdx < cleanDNA.length) finalSeq.push(cleanDNA[dnaIdx++]);
+                s.seq = finalSeq;
+            }
+        } else {
+            // NT mode - directly use aligned sequences
+            state.rawSequences.forEach((s, idx) => {
+                const alignedNT = indexToSeq.get(idx.toString());
+                if (alignedNT) {
+                    s.seq = alignedNT.split('');
+                }
+            });
+        }
+
+        const endTime = performance.now();
+        const timeTaken = ((endTime - startTime) / 1000).toFixed(2);
+        console.log(`=== MUSCLE Alignment Complete ===`);
+        console.log(`Time taken: ${timeTaken} seconds`);
+        console.log(`==================================`);
+
+        recalc();
+        showOverlay(false);
+    } catch (err) {
+        console.error("MUSCLE error:", err);
+        alert("MUSCLE alignment failed: " + err.message);
+        showOverlay(false);
+    }
+}
+
+// --- MAFFT Alignment using bioWASM ---
+async function runMafftAlignment() {
+    const startTime = performance.now();
+    
+    if (!state.aioliCLI) {
+        alert("bioWASM is not yet initialized. Please wait or refresh.");
+        showOverlay(false);
+        return;
+    }
+    
+    if (state.mafftAvailable === false) {
+        alert("MAFFT is not available in this bioWASM installation. The MAFFT module failed to load. Please use Kalign, MUSCLE, or MSA alignment instead.");
+        showOverlay(false);
+        return;
+    }
+
+    const isAA = (state.mode === 'AA');
+    dom.overlayMsg.textContent = "Running MAFFT alignment...";
+    dom.overlaySub.textContent = "via bioWASM";
+
+    try {
+        // Use indices as temporary names to avoid truncation/special character issues in MAFFT
+        const fastaInput = state.rawSequences.map((s, idx) => {
+            const seqArr = isAA ? state.viewSequences[idx].seq : s.seq;
+            const seqStr = seqArr.join('').replace(/-/g, '');
+            return `>${idx}\n${seqStr}`;
+        }).join('\n');
+        
+        if (!fastaInput.trim()) {
+            throw new Error("No sequences to align.");
+        }
+
+        await state.aioliCLI.mount({
+            name: "input.fa",
+            data: fastaInput
+        });
+
+        // MAFFT uses two subprograms: tbfast and dvtditr
+        // Step 1: Run tbfast
+        const tbfastCommand = `tbfast _ -u 0.0 -l 2.7 -C 0 -b 62 -g 0.0 -f -2.00 -Q 100.0 -h 0.0 -O -6.00 -E -0.000 -N -Z _ -+ 16 -W 0.00001 -V -1.53 -s 0.0 -O -C 0 -b 62 -f -1.53 -Q 100.0 -h 0.000 -l 2.7 -X 0.1 -i input.fa`;
+        
+        // Step 2: Run dvtditr (uses /shared/data/pre from tbfast output)
+        const dvtditrCommand = `dvtditr -W 0.00001 -E 0.0 -s 0.0 -C 0 -t 0 -F -l 2.7 -z 50 -b 62 -f -1.53 -Q 100.0 -h 0.000 -I 16 -X 0.1 -p BAATARI2 -K 0 -i /shared/data/pre`;
+        
+        // Log the MAFFT calls with parameters
+        console.log("=== MAFFT Parameters ===");
+        console.log("Sequences:", state.rawSequences.length);
+        console.log("Mode:", isAA ? "AA" : "NT");
+        console.log("Input file: input.fa");
+        console.log("Step 1 - tbfast Command:", tbfastCommand);
+        console.log("Step 2 - dvtditr Command:", dvtditrCommand);
+        console.log("==========================");
+        
+        // Execute tbfast
+        const tbfastStartTime = performance.now();
+        await state.aioliCLI.exec(tbfastCommand);
+        const tbfastEndTime = performance.now();
+        const tbfastTimeTaken = ((tbfastEndTime - tbfastStartTime) / 1000).toFixed(2);
+        console.log(`=== MAFFT tbfast Complete ===`);
+        console.log(`Time taken: ${tbfastTimeTaken} seconds`);
+        console.log(`==============================`);
+        
+        // Execute dvtditr
+        const dvtditrStartTime = performance.now();
+        await state.aioliCLI.exec(dvtditrCommand);
+        const dvtditrEndTime = performance.now();
+        const dvtditrTimeTaken = ((dvtditrEndTime - dvtditrStartTime) / 1000).toFixed(2);
+        console.log(`=== MAFFT dvtditr Complete ===`);
+        console.log(`Time taken: ${dvtditrTimeTaken} seconds`);
+        console.log(`===============================`);
+        
+        // Read the output from /shared/data/pre
+        let outputContent;
+        try {
+            outputContent = await state.aioliCLI.cat("/shared/data/pre");
+        } catch (readErr) {
+            console.warn("Could not read /shared/data/pre file:", readErr);
+            throw new Error("MAFFT failed to produce output file");
+        }
+        
+        if (!outputContent || !outputContent.includes('>')) {
+            console.error("MAFFT output does not contain FASTA format. Full output:", outputContent);
+            throw new Error("MAFFT failed to return a valid FASTA alignment. Output: " + (outputContent ? outputContent.substring(0, 200) : "null"));
+        }
+        
+        // Parse result fasta
+        const lines = outputContent.split(/\r?\n/);
+        const indexToSeq = new Map();
+        let currentIndex = null;
+        let buf = [];
+        for (let line of lines) {
+            line = line.trim();
+            if (!line) continue;
+            if (line.startsWith('>')) {
+                if (currentIndex !== null) indexToSeq.set(currentIndex, buf.join(''));
+                currentIndex = line.substring(1).trim();
+                buf = [];
+            } else if (currentIndex !== null) {
+                buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+            }
+        }
+        if (currentIndex !== null) indexToSeq.set(currentIndex, buf.join(''));
+
+        if (isAA) {
+            // Map AA alignment back to DNA
+            for (let i = 0; i < state.rawSequences.length; i++) {
+                const s = state.rawSequences[i];
+                const alignedAA = indexToSeq.get(i.toString());
+                if (!alignedAA) continue;
+                
+                const cleanDNA = s.seq.join('').replace(/-/g, '');
+                const offset = state.frame - 1;
+                const finalSeq = [];
+                
+                // 5' Padding
+                for (let p = 0; p < offset; p++) finalSeq.push(cleanDNA[p] || '-');
+                
+                let dnaIdx = offset;
+                for (const char of alignedAA) {
+                    if (char === '-') {
+                        finalSeq.push('-', '-', '-');
+                    } else {
+                        if (dnaIdx + 3 <= cleanDNA.length) {
+                            finalSeq.push(cleanDNA[dnaIdx], cleanDNA[dnaIdx + 1], cleanDNA[dnaIdx + 2]);
+                            dnaIdx += 3;
+                        } else {
+                            finalSeq.push('-', '-', '-');
+                        }
+                    }
+                }
+                // Trailing DNA
+                while (dnaIdx < cleanDNA.length) finalSeq.push(cleanDNA[dnaIdx++]);
+                s.seq = finalSeq;
+            }
+        } else {
+            // NT mode - directly use aligned sequences
+            state.rawSequences.forEach((s, idx) => {
+                const alignedNT = indexToSeq.get(idx.toString());
+                if (alignedNT) {
+                    s.seq = alignedNT.split('');
+                }
+            });
+        }
+
+        recalc();
+        showOverlay(false);
+    } catch (err) {
+        console.error("MAFFT error:", err);
+        alert("MAFFT alignment failed: " + err.message);
+        showOverlay(false);
+    }
+}
+
 // --- Profile Alignment for Founder Sequence ---
 // --- MSA Alignment using multiSequenceAlign ---
 function runMSAAlignment() {
+    const startTime = performance.now();
     const isAA = (state.mode === 'AA');
     
     dom.overlayMsg.textContent = "Running multiple sequence alignment...";
@@ -1383,6 +1747,12 @@ function runMSAAlignment() {
                 state.rawSequences[i].seq = alignedSeqs[i].split('');
             }
         }
+        
+        const endTime = performance.now();
+        const timeTaken = ((endTime - startTime) / 1000).toFixed(2);
+        console.log(`=== MSA Alignment Complete ===`);
+        console.log(`Time taken: ${timeTaken} seconds`);
+        console.log(`===============================`);
         
         recalc();
         showOverlay(false);
