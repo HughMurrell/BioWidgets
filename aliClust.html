@@ -5925,31 +5925,33 @@ function showSequenceLogo() {
         const modal = document.createElement('div');
         modal.style.cssText = 'background: white; padding: 20px; border-radius: 8px; max-width: 90vw; max-height: 90vh; overflow: auto;';
         
-        // Create title container with two lines
-        const titleContainer = document.createElement('div');
-        titleContainer.style.cssText = 'margin: 0 0 15px 0;';
-        
-        const titleLine1 = document.createElement('div');
-        titleLine1.style.cssText = 'font-size: 18px; font-weight: bold; margin-bottom: 5px;';
-        titleLine1.textContent = `Epitope: ${epitope.name}`;
-        titleContainer.appendChild(titleLine1);
-        
-        // Get file name from state or file input
+        // Get file name and epitope name from state (needed for export)
         const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
-        const titleLine2 = document.createElement('div');
-        titleLine2.style.cssText = 'font-size: 9px; font-weight: bold;';
-        titleLine2.textContent = `Alignment: ${fileName}`;
-        titleContainer.appendChild(titleLine2);
-        
-        modal.appendChild(titleContainer);
+        const epitopeName = epitope.name; // Capture epitope name for export closure
         
         modal.appendChild(svg);
         
+        // Create button container
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px;';
+        
+        // Export SVG button
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = 'Export SVG';
+        exportBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
+        exportBtn.onclick = () => {
+            exportLogoAsSVG(svg, epitopeName, fileName);
+        };
+        
+        // Close button
         const closeBtn = document.createElement('button');
         closeBtn.textContent = 'Close';
-        closeBtn.style.cssText = 'margin-top: 15px; padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer;';
+        closeBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 4px;';
         closeBtn.onclick = () => overlay.remove();
-        modal.appendChild(closeBtn);
+        
+        buttonContainer.appendChild(exportBtn);
+        buttonContainer.appendChild(closeBtn);
+        modal.appendChild(buttonContainer);
         
         overlay.appendChild(modal);
         overlay.onclick = (e) => {
@@ -5983,39 +5985,61 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         return document.createElement('div');
     }
     
-    // Collect all epitope positions (coordinates)
-    const positions = [];
+    // For each region, convert start and end coordinates to alignment column indices
+    // Then collect all alignment columns from start to end (inclusive), including gaps
+    const regionColumnRanges = [];
+    const allColumns = new Set();
+    const coordToCol = new Map(); // Map from reference coordinate to alignment column(s)
+    
     for (const region of epitope.regions) {
-        for (let coord = region.start; coord <= region.end; coord++) {
-            if (!positions.includes(coord)) {
-                positions.push(coord);
+        // Find first alignment column where refCoord == region.start
+        let startCol = null;
+        for (let col = 0; col < state.refMap.length; col++) {
+            if (state.refMap[col] === region.start) {
+                startCol = col;
+                break;
+            }
+        }
+        
+        // Find last alignment column where refCoord == region.end
+        let endCol = null;
+        for (let col = state.refMap.length - 1; col >= 0; col--) {
+            if (state.refMap[col] === region.end) {
+                endCol = col;
+                break;
+            }
+        }
+        
+        if (startCol !== null && endCol !== null && startCol <= endCol) {
+            regionColumnRanges.push({ start: startCol, end: endCol, region: region });
+            // Add all columns from start to end (inclusive)
+            for (let col = startCol; col <= endCol; col++) {
+                allColumns.add(col);
+                const coord = state.refMap[col];
+                if (!coordToCol.has(coord)) {
+                    coordToCol.set(coord, []);
+                }
+                coordToCol.get(coord).push(col);
             }
         }
     }
-    positions.sort((a, b) => a - b);
     
-    // Map coordinates to alignment columns
-    const coordToCol = new Map();
-    for (let col = 0; col < state.refMap.length; col++) {
-        const coord = state.refMap[col];
-        if (positions.includes(coord)) {
-            if (!coordToCol.has(coord)) {
-                coordToCol.set(coord, []);
-            }
-            coordToCol.get(coord).push(col);
-        }
-    }
+    // Create sorted list of unique coordinates that appear in the selected columns
+    const positions = Array.from(new Set(Array.from(allColumns).map(col => state.refMap[col]))).sort((a, b) => a - b);
     
-    // Get bottom sequence amino acids at each position
+    // Create sorted list of all selected alignment columns
+    const sortedColumns = Array.from(allColumns).sort((a, b) => a - b);
+    
+    // Get bottom sequence amino acids for all selected columns
+    // Store by coordinate for compatibility, but we'll access by column when drawing
     const bottomAAs = new Map();
-    for (const coord of positions) {
-        const cols = coordToCol.get(coord);
-        if (cols && cols.length > 0) {
-            // Use first column for this coordinate
-            const col = cols[0];
-            if (col < bottomSeq.seq.length) {
-                const aa = bottomSeq.seq[col];
-                bottomAAs.set(coord, aa === '-' ? null : aa);
+    for (const col of allColumns) {
+        const coord = state.refMap[col];
+        if (col < bottomSeq.seq.length) {
+            const aa = bottomSeq.seq[col];
+            if (aa !== '-') {
+                // Store by coordinate (may overwrite if same coord appears in multiple columns)
+                bottomAAs.set(coord, aa);
             }
         }
     }
@@ -6036,31 +6060,73 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
             }
         }
         
-        // Count amino acids at each position (only those different from bottom sequence)
-        for (const coord of positions) {
+        // Count amino acids at each alignment column (only those different from bottom sequence)
+        // Store frequencies per column, not per coordinate, to handle gaps correctly
+        const columnFrequencies = new Map(); // col -> Map(aa -> count)
+        
+        for (const col of allColumns) {
             const freqMap = new Map();
-            const bottomAA = bottomAAs.get(coord);
-            const cols = coordToCol.get(coord);
             
-            if (cols && cols.length > 0) {
-                const col = cols[0];
-                for (const seq of groupSeqs) {
-                    if (col < seq.seq.length) {
-                        const aa = seq.seq[col];
-                        if (aa !== '-' && aa !== bottomAA) {
+            // Get bottom AA for this specific alignment column
+            let bottomAA = null;
+            let bottomIsGap = false;
+            if (col < bottomSeq.seq.length) {
+                const aa = bottomSeq.seq[col];
+                if (aa === '-') {
+                    bottomIsGap = true;
+                } else {
+                    bottomAA = aa;
+                }
+            }
+            
+            // Count variants at this alignment column (only if different from bottom)
+            // Include gaps as variants (represented by nabla character)
+            for (const seq of groupSeqs) {
+                if (col < seq.seq.length) {
+                    const aa = seq.seq[col];
+                    if (aa === '-') {
+                        // Gap is a variant if bottom sequence doesn't have a gap
+                        if (!bottomIsGap) {
+                            freqMap.set('∇', (freqMap.get('∇') || 0) + 1);
+                        }
+                    } else {
+                        // Amino acid is a variant if different from bottom (or if bottom is a gap)
+                        if (bottomIsGap || aa !== bottomAA) {
                             freqMap.set(aa, (freqMap.get(aa) || 0) + 1);
                         }
                     }
                 }
             }
             
-            frequencies.set(coord, freqMap);
+            // Only store if there are variants at this column
+            if (freqMap.size > 0) {
+                columnFrequencies.set(col, freqMap);
+            }
+        }
+        
+        // Convert column frequencies to coordinate-based frequencies for display
+        // (group columns by coordinate for the logo display)
+        for (const col of allColumns) {
+            const coord = state.refMap[col];
+            if (!frequencies.has(coord)) {
+                frequencies.set(coord, new Map());
+            }
+            const coordFreqMap = frequencies.get(coord);
+            
+            // If this column has variants, add them to the coordinate frequency map
+            if (columnFrequencies.has(col)) {
+                const colFreqMap = columnFrequencies.get(col);
+                for (const [aa, count] of colFreqMap.entries()) {
+                    coordFreqMap.set(aa, (coordFreqMap.get(aa) || 0) + count);
+                }
+            }
         }
         
         groupFrequencies.push({
             groupId,
             groupValue,
-            frequencies,
+            frequencies, // Keep for compatibility
+            columnFrequencies, // Per-column frequencies for accurate display
             count: groupSeqs.length
         });
     }
@@ -6098,9 +6164,13 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Calculate SVG dimensions
     const numGroups = groupFrequencies.length;
     const numLogos = numGroups + 1; // Groups + bottom sequence
-    const svgWidth = positions.length * charWidth + (epitope.regions.length - 1) * regionGap + padding * 2 + leftLabelWidth;
-    // Height = (number of logos * logoHeight) + padding top and bottom
-    const svgHeight = numLogos * logoHeight + padding * 2;
+    const svgWidth = sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap + padding * 2 + leftLabelWidth;
+    
+    // Title height: first line (18px) + spacing (5px) + second line (9px) + bottom margin (15px)
+    const titleHeight = 18 + 5 + 9 + 15;
+    
+    // Height = title + (number of logos * logoHeight) + padding top and bottom
+    const svgHeight = titleHeight + numLogos * logoHeight + padding * 2;
     
     // Create SVG element
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -6108,6 +6178,32 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     svg.setAttribute('height', svgHeight);
     svg.style.border = '1px solid #ccc';
     svg.style.background = 'white';
+    
+    // Add title lines inside SVG
+    // Get file name from state or file input
+    const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
+    
+    // First title line: "Epitope: <epitope name>"
+    const titleLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    titleLine1.setAttribute('x', padding + leftLabelWidth);
+    titleLine1.setAttribute('y', padding + 18); // 18px font size, align to baseline
+    titleLine1.setAttribute('font-family', 'sans-serif');
+    titleLine1.setAttribute('font-size', '18');
+    titleLine1.setAttribute('font-weight', 'bold');
+    titleLine1.setAttribute('fill', '#000');
+    titleLine1.textContent = `Epitope: ${epitope.name}`;
+    svg.appendChild(titleLine1);
+    
+    // Second title line: "Alignment: <file name>"
+    const titleLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    titleLine2.setAttribute('x', padding + leftLabelWidth);
+    titleLine2.setAttribute('y', padding + 18 + 5 + 9); // First line + spacing (5px) + second line font size (9px)
+    titleLine2.setAttribute('font-family', 'sans-serif');
+    titleLine2.setAttribute('font-size', '9');
+    titleLine2.setAttribute('font-weight', 'bold');
+    titleLine2.setAttribute('fill', '#000');
+    titleLine2.textContent = `Alignment: ${fileName}`;
+    svg.appendChild(titleLine2);
     
     // Draw horizontal separators: at top of uppermost logo and at bottom of each logo
     const separatorColor = '#d0d0d0'; // Lighter grey for all separators
@@ -6159,7 +6255,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Draw line before first region
     const startLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     startLine.setAttribute('x1', xOffset);
-    startLine.setAttribute('y1', padding);
+    startLine.setAttribute('y1', titleHeight + padding); // Start after title
     startLine.setAttribute('x2', xOffset);
     startLine.setAttribute('y2', svgHeight - padding);
     startLine.setAttribute('stroke', separatorColor);
@@ -6167,20 +6263,15 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     svg.appendChild(startLine);
     
     // Draw lines between regions
-    for (let i = 0; i < epitope.regions.length - 1; i++) {
-        const region = epitope.regions[i];
-        const nextRegion = epitope.regions[i + 1];
-        const regionEndCoord = region.end;
-        const nextStartCoord = nextRegion.start;
-        
-        // Find positions in this region
-        const regionPositions = positions.filter(p => p >= region.start && p <= region.end);
-        xOffset += regionPositions.length * charWidth;
+    for (let i = 0; i < regionColumnRanges.length - 1; i++) {
+        const currentRange = regionColumnRanges[i];
+        const regionColumnCount = currentRange.end - currentRange.start + 1;
+        xOffset += regionColumnCount * charWidth;
         
         // Draw vertical line (lighter grey)
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', xOffset);
-        line.setAttribute('y1', padding);
+        line.setAttribute('y1', titleHeight + padding); // Start after title
         line.setAttribute('x2', xOffset);
         line.setAttribute('y2', svgHeight - padding);
         line.setAttribute('stroke', separatorColor);
@@ -6193,13 +6284,12 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Draw line after last region
     // Calculate end position: add positions in last region
     if (epitope.regions.length > 0) {
-        const lastRegion = epitope.regions[epitope.regions.length - 1];
-        const lastRegionPositions = positions.filter(p => p >= lastRegion.start && p <= lastRegion.end);
-        const endX = padding + leftLabelWidth + positions.length * charWidth + (epitope.regions.length - 1) * regionGap;
+        const lastRange = regionColumnRanges[regionColumnRanges.length - 1];
+        const endX = padding + leftLabelWidth + sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap;
         
         const endLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         endLine.setAttribute('x1', endX);
-        endLine.setAttribute('y1', padding);
+        endLine.setAttribute('y1', titleHeight + padding); // Start after title
         endLine.setAttribute('x2', endX);
         endLine.setAttribute('y2', svgHeight - padding);
         endLine.setAttribute('stroke', separatorColor);
@@ -6218,37 +6308,73 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Bottom logo starts at svgHeight - padding - logoHeight
     const bottomLogoY = svgHeight - padding - logoHeight;
     xOffset = padding + leftLabelWidth;
-    let currentRegionIdx = 0;
-    for (let i = 0; i < positions.length; i++) {
-        const coord = positions[i];
+    let currentRegionRangeIdx = 0;
+    
+    // Iterate through all selected alignment columns (not just coordinates)
+    for (let i = 0; i < sortedColumns.length; i++) {
+        const col = sortedColumns[i];
+        const coord = state.refMap[col];
         
         // Check if we need to add gap for new region
-        if (currentRegionIdx < epitope.regions.length - 1) {
-            const currentRegion = epitope.regions[currentRegionIdx];
-            const nextRegion = epitope.regions[currentRegionIdx + 1];
-            if (coord > currentRegion.end && coord === nextRegion.start) {
+        if (currentRegionRangeIdx < regionColumnRanges.length - 1) {
+            const currentRange = regionColumnRanges[currentRegionRangeIdx];
+            const nextRange = regionColumnRanges[currentRegionRangeIdx + 1];
+            if (col > currentRange.end && col === nextRange.start) {
                 xOffset += regionGap;
-                currentRegionIdx++;
+                currentRegionRangeIdx++;
             }
         }
         
-        const bottomAA = bottomAAs.get(coord);
-        if (bottomAA) {
-            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            text.setAttribute('x', xOffset + charWidth / 2);
-            text.setAttribute('y', bottomLogoY + logoHeight); // Position at bottom of logo area
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('dominant-baseline', 'text-after-edge'); // Align to bottom
-            text.setAttribute('font-family', 'monospace');
-            text.setAttribute('font-size', '16');
-            text.setAttribute('font-weight', 'bold');
+        // Get amino acid from bottom sequence at this alignment column
+        let bottomAA = null;
+        let isGap = false;
+        if (col < bottomSeq.seq.length) {
+            const aa = bottomSeq.seq[col];
+            if (aa === '-') {
+                isGap = true;
+            } else {
+                bottomAA = aa;
+            }
+        }
+        
+        // Draw bottom sequence character (amino acid or gap)
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', xOffset + charWidth / 2);
+        text.setAttribute('y', bottomLogoY + logoHeight); // Position at bottom of logo area
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'text-after-edge'); // Align to bottom
+        text.setAttribute('font-family', 'monospace');
+        text.setAttribute('font-size', '16');
+        text.setAttribute('font-weight', 'bold');
+        if (isGap) {
+            text.setAttribute('fill', '#808080'); // Grey for gaps
+            text.textContent = '∇'; // Nabla character for gaps
+        } else if (bottomAA) {
             text.setAttribute('fill', aaColors[bottomAA] || '#000');
             text.textContent = bottomAA;
+        }
+        if (isGap || bottomAA) {
             svg.appendChild(text);
         }
         
         // Position label - only for start and end coordinates of each region, rotated vertically
-        if (regionBoundaryCoords.has(coord)) {
+        // Check if this column corresponds to a region boundary coordinate
+        let isBoundary = false;
+        let boundaryCoord = null;
+        for (const range of regionColumnRanges) {
+            if (col === range.start && state.refMap[col] === range.region.start) {
+                isBoundary = true;
+                boundaryCoord = range.region.start;
+                break;
+            }
+            if (col === range.end && state.refMap[col] === range.region.end) {
+                isBoundary = true;
+                boundaryCoord = range.region.end;
+                break;
+            }
+        }
+        
+        if (isBoundary && boundaryCoord !== null) {
             const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             const labelX = xOffset + charWidth / 2;
             const labelY = svgHeight - padding + 20;
@@ -6261,7 +6387,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
             label.setAttribute('fill', '#666');
             // Rotate text 90 degrees counter-clockwise around the center point
             label.setAttribute('transform', `rotate(-90 ${labelX} ${labelY})`);
-            label.textContent = coord.toString();
+            label.textContent = boundaryCoord.toString();
             svg.appendChild(label);
         }
         
@@ -6276,28 +6402,32 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         const yBase = svgHeight - padding - logoHeight - (rowIdx * logoHeight);
         
         xOffset = padding + leftLabelWidth;
-        currentRegionIdx = 0;
+        currentRegionRangeIdx = 0;
         
-        for (let i = 0; i < positions.length; i++) {
-            const coord = positions[i];
+        // Iterate through all selected alignment columns (same as bottom row)
+        for (let i = 0; i < sortedColumns.length; i++) {
+            const col = sortedColumns[i];
+            const coord = state.refMap[col];
             
             // Check if we need to add gap for new region
-            if (currentRegionIdx < epitope.regions.length - 1) {
-                const currentRegion = epitope.regions[currentRegionIdx];
-                const nextRegion = epitope.regions[currentRegionIdx + 1];
-                if (coord > currentRegion.end && coord === nextRegion.start) {
+            if (currentRegionRangeIdx < regionColumnRanges.length - 1) {
+                const currentRange = regionColumnRanges[currentRegionRangeIdx];
+                const nextRange = regionColumnRanges[currentRegionRangeIdx + 1];
+                if (col > currentRange.end && col === nextRange.start) {
                     xOffset += regionGap;
-                    currentRegionIdx++;
+                    currentRegionRangeIdx++;
                 }
             }
             
-            const freqMap = groupData.frequencies.get(coord);
-            if (freqMap && freqMap.size > 0) {
+            // Get frequencies for this specific alignment column (not by coordinate)
+            // This ensures we compare against the correct bottom sequence position even with gaps
+            const colFreqMap = groupData.columnFrequencies.get(col);
+            if (colFreqMap && colFreqMap.size > 0) {
                 // Calculate frequencies relative to total group size (within-group frequencies)
                 const totalGroupSize = groupData.count;
                 
                 // Sort amino acids by frequency (descending)
-                const sortedAAs = Array.from(freqMap.entries())
+                const sortedAAs = Array.from(colFreqMap.entries())
                     .sort((a, b) => b[1] - a[1]);
                 
                 // Draw amino acids stacked by frequency (from bottom to top, no gaps)
@@ -6321,7 +6451,12 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                     text.setAttribute('font-family', 'monospace');
                     text.setAttribute('font-size', baseFontSize.toString());
                     text.setAttribute('font-weight', 'bold');
-                    text.setAttribute('fill', aaColors[aa] || '#000');
+                    // Handle gaps (nabla character) with grey color
+                    if (aa === '∇') {
+                        text.setAttribute('fill', '#808080'); // Grey for gaps
+                    } else {
+                        text.setAttribute('fill', aaColors[aa] || '#000');
+                    }
                     
                     // Scale vertically from the bottom edge
                     // Transform: translate to bottom point, scale upward, translate back
@@ -6370,6 +6505,75 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     svg.appendChild(bottomLabelEl);
     
     return svg;
+}
+
+// Export functions for sequence logo
+function exportLogoAsSVG(svgElement, epitopeName, fileName) {
+    // Clone the SVG to avoid modifying the original
+    const clonedSvg = svgElement.cloneNode(true);
+    
+    // Get SVG as string
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(clonedSvg);
+    
+    // Create blob and download
+    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Create filename: escape_from_<epitope name>_<file name>.svg
+    const baseFileName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
+    // Sanitize filename (remove special characters that might cause issues)
+    const sanitizedEpitope = epitopeName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedFile = baseFileName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    link.download = `escape_from_${sanitizedEpitope}_${sanitizedFile}.svg`;
+    link.click();
+    
+    URL.revokeObjectURL(url);
+}
+
+function exportLogoAsPDF(svgElement, epitopeName, fileName) {
+    // For PDF export, convert SVG to image first using canvas, then embed in PDF
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    const img = new Image();
+    img.onload = function() {
+        // Create canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = svgElement.width.baseVal.value;
+        canvas.height = svgElement.height.baseVal.value;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        
+        // Convert canvas to data URL (PNG)
+        const imgData = canvas.toDataURL('image/png');
+        
+        // Create a simple PDF using data URI (browser will handle it)
+        // Note: This creates a PDF-like file, but browsers may download as PNG
+        // For true PDF, you'd need jsPDF library
+        const link = document.createElement('a');
+        link.href = imgData;
+        
+        // Create filename: escape_from_<epitope name>_<file name>.pdf
+        const baseFileName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
+        // Sanitize filename
+        const sanitizedEpitope = epitopeName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFile = baseFileName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        link.download = `escape_from_${sanitizedEpitope}_${sanitizedFile}.pdf`;
+        link.click();
+        
+        URL.revokeObjectURL(url);
+    };
+    img.onerror = function() {
+        alert('Error converting SVG to PDF. Please try downloading as SVG instead.');
+        URL.revokeObjectURL(url);
+    };
+    img.src = url;
 }
 
 // Initialize legend dragging
