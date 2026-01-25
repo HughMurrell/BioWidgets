@@ -1394,7 +1394,7 @@ function showSubtypeModal() {
     
     // Populate group selector
     const select = document.getElementById('sel-subtype-group');
-    select.innerHTML = '<option value="">-- Select a group --</option>';
+    select.innerHTML = '';
     
     // Sort groups alphabetically by value
     const groupEntries = Array.from(state.groupNames.entries()).sort((a, b) => {
@@ -1403,10 +1403,14 @@ function showSubtypeModal() {
         return valA.localeCompare(valB);
     });
     
-    groupEntries.forEach(([groupId, groupValue]) => {
+    groupEntries.forEach(([groupId, groupValue], index) => {
         const option = document.createElement('option');
         option.value = groupId.toString();
         option.textContent = groupValue || `Group ${groupId}`;
+        // Make the first group selected by default
+        if (index === 0) {
+            option.selected = true;
+        }
         select.appendChild(option);
     });
     
@@ -5789,8 +5793,8 @@ function render() {
                 ctxTree.lineTo(x3, endY);
                 ctxTree.stroke();
             }
-            ctxTree.restore();
-        }
+        ctxTree.restore();
+    }
         
         ctxTree.restore();
     }
@@ -5823,7 +5827,7 @@ function showSequenceLogo() {
     selectorModal.style.cssText = 'background: white; padding: 20px; border-radius: 8px; min-width: 300px;';
     
     const title = document.createElement('h3');
-    title.textContent = 'Select Bottom Logo Sequence';
+    title.textContent = 'Select Escape Start Sequence';
     title.style.margin = '0 0 15px 0';
     selectorModal.appendChild(title);
     
@@ -6338,11 +6342,18 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         }
         
         // Draw bottom sequence character (amino acid or gap)
+        // Use explicit Y positioning for cross-browser compatibility (especially Safari)
+        // Position text so its bottom aligns with bottomLogoY + logoHeight
+        // For Safari, need larger adjustment - increase offset to move text up
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', xOffset + charWidth / 2);
-        text.setAttribute('y', bottomLogoY + logoHeight); // Position at bottom of logo area
+        // Calculate Y position: bottom of logo area minus font descent
+        // For Safari, need larger offset (50% of font size) to move text up relative to lines
+        const fontSize = 16;
+        const textY = bottomLogoY + logoHeight - (fontSize * 0.50); // ~8px for 16px font
+        text.setAttribute('y', textY);
         text.setAttribute('text-anchor', 'middle');
-        text.setAttribute('dominant-baseline', 'text-after-edge'); // Align to bottom
+        text.setAttribute('alignment-baseline', 'baseline'); // Use baseline for Safari compatibility
         text.setAttribute('font-family', 'monospace');
         text.setAttribute('font-size', '16');
         text.setAttribute('font-weight', 'bold');
@@ -6442,8 +6453,6 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                     const centerX = xOffset + charWidth / 2;
                     
                     // Position the text so its bottom edge is at yCurrentBottom
-                    // Use 'text-after-edge' to align the bottom of the text to yCurrentBottom
-                    // When scaled, it will extend upward from this point with no gap
                     text.setAttribute('x', centerX);
                     text.setAttribute('y', yCurrentBottom);
                     text.setAttribute('text-anchor', 'middle');
