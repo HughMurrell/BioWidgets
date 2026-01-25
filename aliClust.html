@@ -262,6 +262,7 @@
                 <input type="file" id="inp-epitopes" accept=".csv" style="display: none;">
                 <button id="btn-load-epitopes" title="Load epitope descriptions from CSV file">Load Epitopes</button>
                 <button id="btn-select-epitope" title="Select an epitope to restrict display">Select Epitope</button>
+                <button id="btn-show-logo" title="Show sequence logo for selected epitope">Show Logo</button>
             </div>
         </div>
         
@@ -688,7 +689,8 @@ const state = {
     groupDelimiter: null, // Delimiter used for grouping
     groupFieldNum: null, // Field number (1-based) used for grouping
     groupNames: null, // Map from group ID to group value (for legend)
-    originalSubtype: null // Store original subtype sequence for reverting
+    originalSubtype: null, // Store original subtype sequence for reverting
+    currentFileName: null // Store the current alignment file name
 };
 
 // --- DOM ---
@@ -716,6 +718,7 @@ const dom = {
     inpEpitopes: document.getElementById('inp-epitopes'),
     btnLoadEpitopes: document.getElementById('btn-load-epitopes'),
     btnSelectEpitope: document.getElementById('btn-select-epitope'),
+    btnShowLogo: document.getElementById('btn-show-logo'),
     selFrame: document.getElementById('sel-frame'),
     grpFrame: document.getElementById('grp-frame'),
     overlay: document.getElementById('overlay'),
@@ -792,6 +795,9 @@ async function init() {
     }
     if (dom.btnSelectEpitope) {
         dom.btnSelectEpitope.addEventListener('click', showEpitopeSelector);
+    }
+    if (dom.btnShowLogo) {
+        dom.btnShowLogo.addEventListener('click', showSequenceLogo);
     }
     dom.btnInferTree.addEventListener('click', showInferModal);
     dom.btnExportTree.addEventListener('click', exportTree);
@@ -1199,6 +1205,9 @@ function loadFile(file) {
     const reader = new FileReader();
     const name = file.name.toLowerCase();
     const isFastq = name.endsWith('.fastq') || name.endsWith('.fq');
+    
+    // Store the file name
+    state.currentFileName = file.name;
 
     reader.onload = e => {
         if(isFastq) parseFastq(e.target.result);
@@ -3455,14 +3464,22 @@ function performUMAP(distanceMatrix, nNeighbors = 15, spread = 1.0, minDist = 0.
     let UMAPClass = null;
     
     // Try different ways UMAP might be exported
+    // Note: We avoid checking 'umap' directly to prevent conflicts with the local variable declared later
     if (typeof UMAP !== 'undefined') {
         UMAPClass = UMAP;
-    } else if (typeof umap !== 'undefined') {
-        UMAPClass = umap;
     } else if (typeof window !== 'undefined' && window.UMAP) {
         UMAPClass = window.UMAP;
     } else if (typeof window !== 'undefined' && window.umap) {
         UMAPClass = window.umap;
+    } else {
+        // Try to access umap via window property access to avoid variable name conflicts
+        try {
+            if (typeof window !== 'undefined' && 'umap' in window) {
+                UMAPClass = window['umap'];
+            }
+        } catch (e) {
+            // Ignore errors
+        }
     }
     
     if (!UMAPClass) {
@@ -5777,6 +5794,582 @@ function render() {
         
         ctxTree.restore();
     }
+}
+
+// --- Sequence Logo Generation ---
+function showSequenceLogo() {
+    if (!state.selectedEpitope) {
+        alert("Please select an epitope first.");
+        return;
+    }
+    
+    if (!state.sequenceGroups || state.groupNames.size === 0) {
+        alert("Please group sequences first.");
+        return;
+    }
+    
+    // Find the epitope
+    const epitope = state.epitopes.find(e => e.name === state.selectedEpitope);
+    if (!epitope) {
+        alert(`Epitope "${state.selectedEpitope}" not found.`);
+        return;
+    }
+    
+    // Show popup to select bottom sequence (Reference, Subtype, or Founder)
+    const selectorOverlay = document.createElement('div');
+    selectorOverlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+    
+    const selectorModal = document.createElement('div');
+    selectorModal.style.cssText = 'background: white; padding: 20px; border-radius: 8px; min-width: 300px;';
+    
+    const title = document.createElement('h3');
+    title.textContent = 'Select Bottom Logo Sequence';
+    title.style.margin = '0 0 15px 0';
+    selectorModal.appendChild(title);
+    
+    const select = document.createElement('select');
+    select.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 15px; font-size: 14px;';
+    
+    // Check which sequences are available
+    const hasReference = state.refIndex >= 0 && state.refIndex < state.rawSequences.length;
+    const hasSubtype = state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length;
+    const founderIndex = state.rawSequences.findIndex(seq => 
+        seq.name && seq.name.startsWith('consensus_of_')
+    );
+    const hasFounder = founderIndex !== -1;
+    
+    if (hasReference) {
+        const opt = document.createElement('option');
+        opt.value = 'reference';
+        opt.textContent = 'Reference';
+        select.appendChild(opt);
+    }
+    
+    if (hasSubtype) {
+        const opt = document.createElement('option');
+        opt.value = 'subtype';
+        opt.textContent = 'Subtype';
+        select.appendChild(opt);
+    }
+    
+    if (hasFounder) {
+        const opt = document.createElement('option');
+        opt.value = 'founder';
+        opt.textContent = 'Founder';
+        opt.selected = true; // Default to founder
+        select.appendChild(opt);
+    }
+    
+    if (!hasReference && !hasSubtype && !hasFounder) {
+        alert("No reference, subtype, or founder sequence available.");
+        selectorOverlay.remove();
+        return;
+    }
+    
+    selectorModal.appendChild(select);
+    
+    const buttonDiv = document.createElement('div');
+    buttonDiv.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer;';
+    cancelBtn.onclick = () => selectorOverlay.remove();
+    buttonDiv.appendChild(cancelBtn);
+    
+    const okBtn = document.createElement('button');
+    okBtn.textContent = 'OK';
+    okBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer;';
+    okBtn.onclick = () => {
+        const selectedType = select.value;
+        selectorOverlay.remove();
+        
+        // Find the selected sequence
+        let bottomSeq = null;
+        let bottomIndex = -1;
+        let bottomLabel = '';
+        
+        if (selectedType === 'reference' && hasReference) {
+            bottomIndex = state.refIndex;
+            bottomSeq = state.rawSequences[bottomIndex];
+            bottomLabel = `Reference (${bottomSeq.name})`;
+        } else if (selectedType === 'subtype' && hasSubtype) {
+            bottomIndex = state.subtypeIndex;
+            bottomSeq = state.rawSequences[bottomIndex];
+            bottomLabel = `Subtype (${bottomSeq.name})`;
+        } else if (selectedType === 'founder' && hasFounder) {
+            bottomIndex = founderIndex;
+            bottomSeq = state.rawSequences[bottomIndex];
+            bottomLabel = `Founder (${bottomSeq.name})`;
+        }
+        
+        if (!bottomSeq) {
+            alert("Selected sequence not found.");
+            return;
+        }
+        
+        // Get all unique group IDs (sorted)
+        const groupIds = Array.from(state.groupNames.keys()).sort((a, b) => a - b);
+        if (groupIds.length === 0) {
+            alert("No groups found.");
+            return;
+        }
+        
+        // Generate the logo
+        const svg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel);
+        
+        // Show in a modal
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+        
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background: white; padding: 20px; border-radius: 8px; max-width: 90vw; max-height: 90vh; overflow: auto;';
+        
+        // Create title container with two lines
+        const titleContainer = document.createElement('div');
+        titleContainer.style.cssText = 'margin: 0 0 15px 0;';
+        
+        const titleLine1 = document.createElement('div');
+        titleLine1.style.cssText = 'font-size: 18px; font-weight: bold; margin-bottom: 5px;';
+        titleLine1.textContent = `Epitope: ${epitope.name}`;
+        titleContainer.appendChild(titleLine1);
+        
+        // Get file name from state or file input
+        const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
+        const titleLine2 = document.createElement('div');
+        titleLine2.style.cssText = 'font-size: 9px; font-weight: bold;';
+        titleLine2.textContent = `Alignment: ${fileName}`;
+        titleContainer.appendChild(titleLine2);
+        
+        modal.appendChild(titleContainer);
+        
+        modal.appendChild(svg);
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Close';
+        closeBtn.style.cssText = 'margin-top: 15px; padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer;';
+        closeBtn.onclick = () => overlay.remove();
+        modal.appendChild(closeBtn);
+        
+        overlay.appendChild(modal);
+        overlay.onclick = (e) => {
+            if (e.target === overlay) overlay.remove();
+        };
+        document.body.appendChild(overlay);
+    };
+    buttonDiv.appendChild(okBtn);
+    
+    selectorModal.appendChild(buttonDiv);
+    selectorOverlay.appendChild(selectorModal);
+    document.body.appendChild(selectorOverlay);
+}
+
+function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel) {
+    // Amino acid color mapping
+    const aaColors = {
+        'D': '#e74c3c', 'E': '#e74c3c', // Red - acidic
+        'K': '#3498db', 'R': '#3498db', 'H': '#3498db', // Blue - basic
+        'S': '#2ecc71', 'N': '#2ecc71', 'T': '#2ecc71', 'G': '#2ecc71', 'Q': '#2ecc71', // Green - polar
+        'F': '#f39c12', 'A': '#f39c12', 'P': '#f39c12', 'I': '#f39c12', 
+        'L': '#f39c12', 'V': '#f39c12', 'M': '#f39c12', 'W': '#f39c12', 'Y': '#f39c12', // Orange - hydrophobic
+        'C': '#95a5a6', // Gray
+        '-': '#bdc3c7' // Light gray for gaps
+    };
+    
+    // Get reference sequence for coordinate mapping
+    const refSeq = state.viewSequences[state.refIndex]?.seq;
+    if (!refSeq || !state.refMap) {
+        alert("Reference sequence or coordinate map not available.");
+        return document.createElement('div');
+    }
+    
+    // Collect all epitope positions (coordinates)
+    const positions = [];
+    for (const region of epitope.regions) {
+        for (let coord = region.start; coord <= region.end; coord++) {
+            if (!positions.includes(coord)) {
+                positions.push(coord);
+            }
+        }
+    }
+    positions.sort((a, b) => a - b);
+    
+    // Map coordinates to alignment columns
+    const coordToCol = new Map();
+    for (let col = 0; col < state.refMap.length; col++) {
+        const coord = state.refMap[col];
+        if (positions.includes(coord)) {
+            if (!coordToCol.has(coord)) {
+                coordToCol.set(coord, []);
+            }
+            coordToCol.get(coord).push(col);
+        }
+    }
+    
+    // Get bottom sequence amino acids at each position
+    const bottomAAs = new Map();
+    for (const coord of positions) {
+        const cols = coordToCol.get(coord);
+        if (cols && cols.length > 0) {
+            // Use first column for this coordinate
+            const col = cols[0];
+            if (col < bottomSeq.seq.length) {
+                const aa = bottomSeq.seq[col];
+                bottomAAs.set(coord, aa === '-' ? null : aa);
+            }
+        }
+    }
+    
+    // Calculate frequencies for each group
+    const groupFrequencies = [];
+    for (const groupId of groupIds) {
+        const groupValue = state.groupNames.get(groupId);
+        const frequencies = new Map(); // coord -> Map(aa -> count)
+        
+        // Get all sequences in this group
+        const groupSeqs = [];
+        for (let i = 0; i < state.rawSequences.length; i++) {
+            const seq = state.rawSequences[i];
+            if (i === bottomIndex) continue; // Skip bottom sequence
+            if (seq.name && state.sequenceGroups.get(seq.name) === groupId) {
+                groupSeqs.push(seq);
+            }
+        }
+        
+        // Count amino acids at each position (only those different from bottom sequence)
+        for (const coord of positions) {
+            const freqMap = new Map();
+            const bottomAA = bottomAAs.get(coord);
+            const cols = coordToCol.get(coord);
+            
+            if (cols && cols.length > 0) {
+                const col = cols[0];
+                for (const seq of groupSeqs) {
+                    if (col < seq.seq.length) {
+                        const aa = seq.seq[col];
+                        if (aa !== '-' && aa !== bottomAA) {
+                            freqMap.set(aa, (freqMap.get(aa) || 0) + 1);
+                        }
+                    }
+                }
+            }
+            
+            frequencies.set(coord, freqMap);
+        }
+        
+        groupFrequencies.push({
+            groupId,
+            groupValue,
+            frequencies,
+            count: groupSeqs.length
+        });
+    }
+    
+    // SVG parameters
+    const charWidth = 20;
+    const baseFontSize = 16;
+    const baseHeight = baseFontSize; // Base height matches font size
+    const logoHeight = charWidth * 1.5; // Each logo height is 1.5 times the character width (30px)
+    const padding = 40;
+    
+    // Calculate required label width based on all labels
+    // Estimate text width: approximately 6-7 pixels per character for 12px font
+    const labelFontSize = 12;
+    const pixelsPerChar = 7; // Approximate pixels per character for 12px font
+    let maxLabelWidth = 0;
+    
+    // Check bottom label
+    if (bottomLabel) {
+        const bottomLabelWidth = bottomLabel.length * pixelsPerChar;
+        maxLabelWidth = Math.max(maxLabelWidth, bottomLabelWidth);
+    }
+    
+    // Check group labels
+    for (const groupData of groupFrequencies) {
+        const groupLabel = `Variants at ${groupData.groupValue} (${groupData.count})`;
+        const groupLabelWidth = groupLabel.length * pixelsPerChar;
+        maxLabelWidth = Math.max(maxLabelWidth, groupLabelWidth);
+    }
+    
+    // Set leftLabelWidth with some padding (add 20px for spacing)
+    const leftLabelWidth = Math.max(150, maxLabelWidth + 20); // Minimum 150px, or calculated width + padding
+    const regionGap = 10;
+    
+    // Calculate SVG dimensions
+    const numGroups = groupFrequencies.length;
+    const numLogos = numGroups + 1; // Groups + bottom sequence
+    const svgWidth = positions.length * charWidth + (epitope.regions.length - 1) * regionGap + padding * 2 + leftLabelWidth;
+    // Height = (number of logos * logoHeight) + padding top and bottom
+    const svgHeight = numLogos * logoHeight + padding * 2;
+    
+    // Create SVG element
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', svgWidth);
+    svg.setAttribute('height', svgHeight);
+    svg.style.border = '1px solid #ccc';
+    svg.style.background = 'white';
+    
+    // Draw horizontal separators: at top of uppermost logo and at bottom of each logo
+    const separatorColor = '#d0d0d0'; // Lighter grey for all separators
+    
+    // Top separator (at top of uppermost logo)
+    if (groupFrequencies.length > 0) {
+        // Topmost logo's bottom is at: svgHeight - padding - logoHeight - ((groupFrequencies.length - 1) * logoHeight)
+        // Top of that logo is at: bottom + logoHeight
+        const topmostLogoBottom = svgHeight - padding - logoHeight - ((groupFrequencies.length - 1) * logoHeight);
+        const topmostLogoTop = topmostLogoBottom + logoHeight;
+        const topSeparator = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        topSeparator.setAttribute('x1', padding + leftLabelWidth);
+        topSeparator.setAttribute('y1', topmostLogoTop);
+        topSeparator.setAttribute('x2', svgWidth - padding);
+        topSeparator.setAttribute('y2', topmostLogoTop);
+        topSeparator.setAttribute('stroke', separatorColor);
+        topSeparator.setAttribute('stroke-width', '1');
+        svg.appendChild(topSeparator);
+    }
+    
+    // Bottom separator for each logo (at the bottom of each logo row)
+    // Bottom logo bottom: svgHeight - padding - logoHeight
+    // Each group logo bottom: svgHeight - padding - logoHeight - (rowIdx * logoHeight)
+    for (let i = 0; i <= groupFrequencies.length; i++) {
+        const separatorY = svgHeight - padding - logoHeight - (i * logoHeight);
+        const separator = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        separator.setAttribute('x1', padding + leftLabelWidth);
+        separator.setAttribute('y1', separatorY);
+        separator.setAttribute('x2', svgWidth - padding);
+        separator.setAttribute('y2', separatorY);
+        separator.setAttribute('stroke', separatorColor);
+        separator.setAttribute('stroke-width', '1');
+        svg.appendChild(separator);
+    }
+    
+    // Additional horizontal line at the very bottom of the bottom logo (after coordinate labels)
+    const bottomLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    bottomLine.setAttribute('x1', padding + leftLabelWidth);
+    bottomLine.setAttribute('y1', svgHeight - padding);
+    bottomLine.setAttribute('x2', svgWidth - padding);
+    bottomLine.setAttribute('y2', svgHeight - padding);
+    bottomLine.setAttribute('stroke', separatorColor);
+    bottomLine.setAttribute('stroke-width', '1');
+    svg.appendChild(bottomLine);
+    
+    // Draw vertical lines: before first region, between regions, and after last region
+    let xOffset = padding + leftLabelWidth;
+    
+    // Draw line before first region
+    const startLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    startLine.setAttribute('x1', xOffset);
+    startLine.setAttribute('y1', padding);
+    startLine.setAttribute('x2', xOffset);
+    startLine.setAttribute('y2', svgHeight - padding);
+    startLine.setAttribute('stroke', separatorColor);
+    startLine.setAttribute('stroke-width', '2');
+    svg.appendChild(startLine);
+    
+    // Draw lines between regions
+    for (let i = 0; i < epitope.regions.length - 1; i++) {
+        const region = epitope.regions[i];
+        const nextRegion = epitope.regions[i + 1];
+        const regionEndCoord = region.end;
+        const nextStartCoord = nextRegion.start;
+        
+        // Find positions in this region
+        const regionPositions = positions.filter(p => p >= region.start && p <= region.end);
+        xOffset += regionPositions.length * charWidth;
+        
+        // Draw vertical line (lighter grey)
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', xOffset);
+        line.setAttribute('y1', padding);
+        line.setAttribute('x2', xOffset);
+        line.setAttribute('y2', svgHeight - padding);
+        line.setAttribute('stroke', separatorColor);
+        line.setAttribute('stroke-width', '2');
+        svg.appendChild(line);
+        
+        xOffset += regionGap;
+    }
+    
+    // Draw line after last region
+    // Calculate end position: add positions in last region
+    if (epitope.regions.length > 0) {
+        const lastRegion = epitope.regions[epitope.regions.length - 1];
+        const lastRegionPositions = positions.filter(p => p >= lastRegion.start && p <= lastRegion.end);
+        const endX = padding + leftLabelWidth + positions.length * charWidth + (epitope.regions.length - 1) * regionGap;
+        
+        const endLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        endLine.setAttribute('x1', endX);
+        endLine.setAttribute('y1', padding);
+        endLine.setAttribute('x2', endX);
+        endLine.setAttribute('y2', svgHeight - padding);
+        endLine.setAttribute('stroke', separatorColor);
+        endLine.setAttribute('stroke-width', '2');
+        svg.appendChild(endLine);
+    }
+    
+    // Create a set of start and end coordinates for each region
+    const regionBoundaryCoords = new Set();
+    for (const region of epitope.regions) {
+        regionBoundaryCoords.add(region.start);
+        regionBoundaryCoords.add(region.end);
+    }
+    
+    // Draw bottom sequence row
+    // Bottom logo starts at svgHeight - padding - logoHeight
+    const bottomLogoY = svgHeight - padding - logoHeight;
+    xOffset = padding + leftLabelWidth;
+    let currentRegionIdx = 0;
+    for (let i = 0; i < positions.length; i++) {
+        const coord = positions[i];
+        
+        // Check if we need to add gap for new region
+        if (currentRegionIdx < epitope.regions.length - 1) {
+            const currentRegion = epitope.regions[currentRegionIdx];
+            const nextRegion = epitope.regions[currentRegionIdx + 1];
+            if (coord > currentRegion.end && coord === nextRegion.start) {
+                xOffset += regionGap;
+                currentRegionIdx++;
+            }
+        }
+        
+        const bottomAA = bottomAAs.get(coord);
+        if (bottomAA) {
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', xOffset + charWidth / 2);
+            text.setAttribute('y', bottomLogoY + logoHeight); // Position at bottom of logo area
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('dominant-baseline', 'text-after-edge'); // Align to bottom
+            text.setAttribute('font-family', 'monospace');
+            text.setAttribute('font-size', '16');
+            text.setAttribute('font-weight', 'bold');
+            text.setAttribute('fill', aaColors[bottomAA] || '#000');
+            text.textContent = bottomAA;
+            svg.appendChild(text);
+        }
+        
+        // Position label - only for start and end coordinates of each region, rotated vertically
+        if (regionBoundaryCoords.has(coord)) {
+            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            const labelX = xOffset + charWidth / 2;
+            const labelY = svgHeight - padding + 20;
+            label.setAttribute('x', labelX);
+            label.setAttribute('y', labelY);
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('dominant-baseline', 'middle');
+            label.setAttribute('font-family', 'sans-serif');
+            label.setAttribute('font-size', '10');
+            label.setAttribute('fill', '#666');
+            // Rotate text 90 degrees counter-clockwise around the center point
+            label.setAttribute('transform', `rotate(-90 ${labelX} ${labelY})`);
+            label.textContent = coord.toString();
+            svg.appendChild(label);
+        }
+        
+        xOffset += charWidth;
+    }
+    
+    // Draw group rows (first group just above bottom, second group above first, etc.)
+    for (let rowIdx = 0; rowIdx < groupFrequencies.length; rowIdx++) {
+        const groupData = groupFrequencies[rowIdx];
+        // First group (rowIdx=0) is just above bottom logo, second group (rowIdx=1) is above first, etc.
+        // Calculate yBase: start from bottom, go up by bottom logo height, then up by (rowIdx * logoHeight)
+        const yBase = svgHeight - padding - logoHeight - (rowIdx * logoHeight);
+        
+        xOffset = padding + leftLabelWidth;
+        currentRegionIdx = 0;
+        
+        for (let i = 0; i < positions.length; i++) {
+            const coord = positions[i];
+            
+            // Check if we need to add gap for new region
+            if (currentRegionIdx < epitope.regions.length - 1) {
+                const currentRegion = epitope.regions[currentRegionIdx];
+                const nextRegion = epitope.regions[currentRegionIdx + 1];
+                if (coord > currentRegion.end && coord === nextRegion.start) {
+                    xOffset += regionGap;
+                    currentRegionIdx++;
+                }
+            }
+            
+            const freqMap = groupData.frequencies.get(coord);
+            if (freqMap && freqMap.size > 0) {
+                // Calculate frequencies relative to total group size (within-group frequencies)
+                const totalGroupSize = groupData.count;
+                
+                // Sort amino acids by frequency (descending)
+                const sortedAAs = Array.from(freqMap.entries())
+                    .sort((a, b) => b[1] - a[1]);
+                
+                // Draw amino acids stacked by frequency (from bottom to top, no gaps)
+                // Start from the bottom (yBase) and stack upward
+                let yCurrentBottom = yBase; // Current bottom position for stacking
+                for (const [aa, count] of sortedAAs) {
+                    // Frequency within the group (count / total group size)
+                    const frequency = count / totalGroupSize;
+                    const charHeight = baseHeight * frequency; // Height proportional to within-group frequency
+                    
+                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    const centerX = xOffset + charWidth / 2;
+                    
+                    // Position the text so its bottom edge is at yCurrentBottom
+                    // Use 'text-after-edge' to align the bottom of the text to yCurrentBottom
+                    // When scaled, it will extend upward from this point with no gap
+                    text.setAttribute('x', centerX);
+                    text.setAttribute('y', yCurrentBottom);
+                    text.setAttribute('text-anchor', 'middle');
+                    text.setAttribute('dominant-baseline', 'text-after-edge'); // Align to bottom edge
+                    text.setAttribute('font-family', 'monospace');
+                    text.setAttribute('font-size', baseFontSize.toString());
+                    text.setAttribute('font-weight', 'bold');
+                    text.setAttribute('fill', aaColors[aa] || '#000');
+                    
+                    // Scale vertically from the bottom edge
+                    // Transform: translate to bottom point, scale upward, translate back
+                    const scaleY = charHeight / baseHeight;
+                    text.setAttribute('transform', `translate(${centerX}, ${yCurrentBottom}) scale(1, ${scaleY}) translate(${-centerX}, ${-yCurrentBottom})`);
+                    text.textContent = aa;
+                    svg.appendChild(text);
+                    
+                    // Move up for next character (no gap - next character starts exactly where this one's top ends)
+                    yCurrentBottom -= charHeight;
+                }
+            }
+            
+            xOffset += charWidth;
+        }
+        
+        // Row label with color coding (shifted left out of logo area)
+        // Align label bottom with logo bottom (yBase)
+        const rowLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        rowLabel.setAttribute('x', padding + 10);
+        rowLabel.setAttribute('y', yBase);
+        rowLabel.setAttribute('text-anchor', 'start');
+        rowLabel.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text with yBase
+        rowLabel.setAttribute('font-family', 'sans-serif');
+        rowLabel.setAttribute('font-size', '12');
+        rowLabel.setAttribute('font-weight', 'bold');
+        // Color code: first group orange, others light blue
+        const labelColor = rowIdx === 0 ? '#f39c12' : '#3498db';
+        rowLabel.setAttribute('fill', labelColor);
+        rowLabel.textContent = `Variants at ${groupData.groupValue} (${groupData.count})`;
+        svg.appendChild(rowLabel);
+    }
+    
+    // Bottom row label (light blue, shifted left out of logo area)
+    // Align label bottom with logo bottom (same y as bottom logo characters)
+    const bottomLabelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    bottomLabelEl.setAttribute('x', padding + 10);
+    bottomLabelEl.setAttribute('y', bottomLogoY + logoHeight); // Align with bottom of bottom logo
+    bottomLabelEl.setAttribute('text-anchor', 'start');
+    bottomLabelEl.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text with logo bottom
+    bottomLabelEl.setAttribute('font-family', 'sans-serif');
+    bottomLabelEl.setAttribute('font-size', '12');
+    bottomLabelEl.setAttribute('font-weight', 'bold');
+    bottomLabelEl.setAttribute('fill', '#3498db'); // Light blue
+    bottomLabelEl.textContent = bottomLabel;
+    svg.appendChild(bottomLabelEl);
+    
+    return svg;
 }
 
 // Initialize legend dragging
