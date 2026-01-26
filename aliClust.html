@@ -253,6 +253,8 @@
             </div>
         </div>
 
+        <!-- Frame selector commented out but code preserved for potential reinstatement -->
+        <!--
         <div class="control-group" id="grp-frame" style="opacity:0.4; pointer-events:none;">
             <label>Frame</label>
             <select id="sel-frame">
@@ -261,6 +263,7 @@
                 <option value="3">3</option>
             </select>
         </div>
+        -->
 
         <div class="control-group">
             <label>Highlighter</label>
@@ -543,15 +546,26 @@
 
 <div id="help-overlay">
     <div class="help-box">
-        <h2>FastAlign Help</h2>
+        <h2>aliClust Help</h2>
         <div class="help-row"><span class="help-key">Choose File</span> <span>Load an Alignment with Ref as first seq and SubType as second seq.</span></div>
+        <div class="help-row"><span class="help-key">Sort</span> <span>Sort sequences by name (REF and SUBTYPE remain first)</span></div>
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
         <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
         <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny using FastTree of Neighbor Joining</span></div>
-        <div class="help-row"><span class="help-key">Set Reference</span> <span>Right-click a sequence name.</span></div>
-        <div class="help-row"><span class="help-key">Move Block</span> <span>Drag selection horizontally to shift sequences.</span></div>
-        <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view.</span></div>
-        <div class="help-row"><span class="help-key">Export</span> <span>Download or Copy current view (NT or AA) as FASTA.</span></div>
+        <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
+        <div class="help-row"><span class="help-key">Ladderize</span> <span>Ladderize tree and reorder sequences</span></div>
+        <div class="help-row"><span class="help-key">Histogram</span> <span>Show histogram of root-to-leaf distances</span></div>
+        <div class="help-row"><span class="help-key">Cluster</span> <span>Show 2D projection and clustering of pairwise leaf distances</span></div>
+        <div class="help-row"><span class="help-key">fasta</span> <span>Download current view (NT or AA) as FASTA</span></div>
+        <div class="help-row"><span class="help-key">tree</span> <span>Export current tree as Newick format</span></div>
+        <div class="help-row"><span class="help-key">Clear Alignment</span> <span>Remove all sequences</span></div>
+        <div class="help-row"><span class="help-key">Clear Tree</span> <span>Remove current tree</span></div>
+        <div class="help-row"><span class="help-key">View Mode</span> <span>Switch between Nucleotide (NT) and Amino Acid (AA) view</span></div>
+        <div class="help-row"><span class="help-key">Highlighter</span> <span>Highlight differences with respect to Reference, SubType, or Founder</span></div>
+        <div class="help-row"><span class="help-key">Load Epitopes</span> <span>Load epitope descriptions from CSV file</span></div>
+        <div class="help-row"><span class="help-key">Select Epitope</span> <span>Select an epitope to restrict display</span></div>
+        <div class="help-row"><span class="help-key">Show Logo</span> <span>Generate sequence logo for selected epitope</span></div>
+        <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view</span></div>
         <button class="close-help" onclick="document.getElementById('help-overlay').classList.remove('active')">Close</button>
     </div>
 </div>
@@ -851,7 +865,9 @@ async function init() {
         state.highlightMatches = dom.selHighlight.value;
         render();
     });
-    dom.selFrame.addEventListener('change', () => { state.frame = +dom.selFrame.value; recalc(); });
+    if (dom.selFrame) {
+        dom.selFrame.addEventListener('change', () => { state.frame = +dom.selFrame.value; recalc(); });
+    }
     
     
     document.getElementById('sel-infer-method').addEventListener('change', (e) => {
@@ -5039,19 +5055,23 @@ function setMode(m, disableNT = false) {
     state.mode = m;
     if(m === 'NT') {
         dom.btnNt.classList.add('active'); dom.btnAa.classList.remove('active');
-        dom.grpFrame.style.opacity = '0.4'; dom.grpFrame.style.pointerEvents = 'none';
+        if (dom.grpFrame) {
+            dom.grpFrame.style.opacity = '0.4'; dom.grpFrame.style.pointerEvents = 'none';
+        }
         // Enable NT button
         dom.btnNt.disabled = false;
         dom.btnNt.style.opacity = '1';
     } else {
         dom.btnAa.classList.add('active'); dom.btnNt.classList.remove('active');
         // Enable frame selector only when viewing AA mode with an NT alignment (not when AA alignment is loaded)
-        if (state.isAASequence) {
-            // AA alignment loaded - disable frame selector
-            dom.grpFrame.style.opacity = '0.4'; dom.grpFrame.style.pointerEvents = 'none';
-        } else {
-            // NT alignment loaded - enable frame selector when switching to AA mode
-            dom.grpFrame.style.opacity = '1'; dom.grpFrame.style.pointerEvents = 'auto';
+        if (dom.grpFrame) {
+            if (state.isAASequence) {
+                // AA alignment loaded - disable frame selector
+                dom.grpFrame.style.opacity = '0.4'; dom.grpFrame.style.pointerEvents = 'none';
+            } else {
+                // NT alignment loaded - enable frame selector when switching to AA mode
+                dom.grpFrame.style.opacity = '1'; dom.grpFrame.style.pointerEvents = 'auto';
+            }
         }
         // Disable NT button if AA alignment was detected (can't reverse translate)
         if (disableNT) {
