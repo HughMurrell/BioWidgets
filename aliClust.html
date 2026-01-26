@@ -14,6 +14,8 @@
     <script src="https://biowasm.com/cdn/v3/aioli.js"></script>
     <!-- Included UMAP for dimensionality reduction -->
     <script src="https://hughmurrell.github.io/webwidgets/umap-js.min.js"></script>
+    <!-- Included html2pdf.js for PDF export (includes jsPDF and svg2pdf internally) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         :root {
             --bg-color: #f8f9fa;
@@ -193,11 +195,8 @@
     <div id="controls">
         <div class="control-group">
             <label>Sequences</label>
-            <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
-        </div>
-        <div class="control-group">
-            <label>Sort</label>
             <div style="display:flex; gap:5px; align-items:center;">
+                <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
                 <button id="btn-sort-sequences" title="Sort sequences by name (REF and SUBTYPE remain first)">Sort</button>
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
                 <button id="btn-subtype" title="Add founder sequence from selected group">Add Founder</button>
@@ -207,25 +206,13 @@
             <label>Phylogeny</label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
-                <input type="file" id="inp-tree">
+                <!-- Choose file button commented out -->
+                <!-- <input type="file" id="inp-tree"> -->
                 <button id="btn-reroot-tree" title="Reroot tree on subtype sequence">Reroot</button>
                 <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
                 <button id="btn-histogram" title="Show histogram of root-to-leaf distances" disabled>Histogram</button>
                 <button id="btn-mds" title="Show 2D projection and clustering of pairwise leaf distances" disabled>Cluster</button>
-                <button id="btn-export-tree" title="Export current tree as Newick">Export</button>
             </div>
-        </div>
-        <div class="control-group">
-            <label>Reset</label>
-            <div style="display:flex; gap:5px;">
-                <button id="btn-clear-aln" title="Remove all sequences">Clear Alignment</button>
-                <button id="btn-clear-tree" title="Remove current tree">Clear Tree</button>
-            </div>
-        </div>
-        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
-        <div class="control-group">
-            <label>History</label>
-            <button id="btn-undo" title="Ctrl+Z">⟲ Undo</button>
         </div>
         
         <!-- Export Controls -->
@@ -233,10 +220,29 @@
         <div class="control-group">
             <label>Export</label>
             <div style="display:flex; gap:5px;">
-                <button id="btn-download" title="Download Current View">Download</button>
-                <button id="btn-copy" title="Copy to Clipboard">Copy</button>
+                <button id="btn-download" title="Download Current View">fasta</button>
+                <!-- Copy button commented out but code preserved -->
+                <!-- <button id="btn-copy" title="Copy to Clipboard">Copy</button> -->
+                <button id="btn-export-tree" title="Export current tree as Newick">tree</button>
             </div>
         </div>
+        
+        <div class="control-group">
+            <label>Reset</label>
+            <div style="display:flex; gap:5px;">
+                <button id="btn-clear-aln" title="Remove all sequences">Clear Alignment</button>
+                <button id="btn-clear-tree" title="Remove current tree">Clear Tree</button>
+            </div>
+        </div>
+        
+        <!-- History section commented out but code preserved -->
+        <!--
+        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
+        <div class="control-group">
+            <label>History</label>
+            <button id="btn-undo" title="Ctrl+Z">⟲ Undo</button>
+        </div>
+        -->
 
         <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
         <div class="control-group">
@@ -245,6 +251,15 @@
                 <button id="btn-nt" class="active" style="border-top-right-radius:0; border-bottom-right-radius:0;">NT</button>
                 <button id="btn-aa" style="border-top-left-radius:0; border-bottom-left-radius:0; border-left:none;">AA</button>
             </div>
+        </div>
+
+        <div class="control-group" id="grp-frame" style="opacity:0.4; pointer-events:none;">
+            <label>Frame</label>
+            <select id="sel-frame">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+            </select>
         </div>
 
         <div class="control-group">
@@ -268,15 +283,6 @@
         
 
         <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
-
-        <div class="control-group" id="grp-frame" style="opacity:0.4; pointer-events:none;">
-            <label>Frame</label>
-            <select id="sel-frame">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-            </select>
-        </div>
 
         <div class="control-group">
             <label>Info</label>
@@ -772,7 +778,9 @@ async function init() {
     }
 
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
-    dom.fileTree.addEventListener('change', e => loadTreeFile(e.target.files[0]));
+    if (dom.fileTree) {
+        dom.fileTree.addEventListener('change', e => loadTreeFile(e.target.files[0]));
+    }
     if (dom.btnSortSequences) {
         dom.btnSortSequences.addEventListener('click', sortSequencesByName);
     }
@@ -834,7 +842,9 @@ async function init() {
     document.getElementById('btn-run-ladderize').addEventListener('click', runLadderizeTask);
     dom.btnClearAlignment.addEventListener('click', clearAlignment);
     dom.btnClearTree.addEventListener('click', clearTreeOnly);
-    dom.btnUndo.addEventListener('click', undo);
+    if (dom.btnUndo) {
+        dom.btnUndo.addEventListener('click', undo);
+    }
     dom.btnNt.addEventListener('click', () => setMode('NT'));
     dom.btnAa.addEventListener('click', () => setMode('AA'));
     dom.selHighlight.addEventListener('change', () => {
@@ -850,7 +860,9 @@ async function init() {
     document.getElementById('btn-run-infer').addEventListener('click', runInferTask);
 
     dom.btnDownload.addEventListener('click', () => exportAlignment('download'));
-    dom.btnCopy.addEventListener('click', handleCopyButton);
+    if (dom.btnCopy) {
+        dom.btnCopy.addEventListener('click', handleCopyButton);
+    }
     dom.btnHelp.addEventListener('click', () => dom.helpOverlay.classList.add('active'));
 
     dom.areaSeq.addEventListener('scroll', () => requestAnimationFrame(render));
@@ -1022,6 +1034,7 @@ function shouldHandleClipboardEvent() {
 }
 
 function handleCopyButton() {
+    if (!dom.btnCopy) return; // Copy button is commented out
     const content = getClipboardContent(true);
     if(!content) return;
     if(!navigator.clipboard || !navigator.clipboard.writeText) {
@@ -1729,6 +1742,40 @@ function showInferModal() {
 function runInferTask() {
     const method = document.getElementById('sel-infer-method').value;
     document.getElementById('infer-overlay').style.display = 'none';
+
+    // Clear clustering state and remove cluster annotations before inferring a new tree
+    if (state.leafClusters || state.hierarchicalActive) {
+        const delimiter = state.groupDelimiter || '_';
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+        
+        // Remove cluster suffixes from sequence names
+        state.rawSequences.forEach(seq => {
+            if (seq.name) {
+                seq.name = seq.name.replace(clusterPattern, '');
+            }
+        });
+        
+        // Also remove from tree nodes if tree exists
+        if (state.tree && state.tree.root) {
+            function removeClusterSuffixesFromTree(node) {
+                if (node.name) {
+                    node.name = node.name.replace(clusterPattern, '');
+                }
+                if (node.children) {
+                    node.children.forEach(removeClusterSuffixesFromTree);
+                }
+            }
+            removeClusterSuffixesFromTree(state.tree.root);
+        }
+        
+        // Clear clustering state
+        state.leafClusters = null;
+        state.hierarchicalActive = false;
+        state.hierarchicalDepths = [0, 0, 0];
+        
+        // Update color legend to remove cluster colors
+        updateColorLegend();
+    }
 
     if (method === 'nj') {
         inferTreeNJ();
@@ -4998,7 +5045,14 @@ function setMode(m, disableNT = false) {
         dom.btnNt.style.opacity = '1';
     } else {
         dom.btnAa.classList.add('active'); dom.btnNt.classList.remove('active');
-        dom.grpFrame.style.opacity = '1'; dom.grpFrame.style.pointerEvents = 'auto';
+        // Enable frame selector only when viewing AA mode with an NT alignment (not when AA alignment is loaded)
+        if (state.isAASequence) {
+            // AA alignment loaded - disable frame selector
+            dom.grpFrame.style.opacity = '0.4'; dom.grpFrame.style.pointerEvents = 'none';
+        } else {
+            // NT alignment loaded - enable frame selector when switching to AA mode
+            dom.grpFrame.style.opacity = '1'; dom.grpFrame.style.pointerEvents = 'auto';
+        }
         // Disable NT button if AA alignment was detected (can't reverse translate)
         if (disableNT) {
             dom.btnNt.disabled = true;
@@ -5015,8 +5069,10 @@ function setMode(m, disableNT = false) {
 }
 
 function recalc() {
-    dom.btnUndo.disabled = (state.history.length === 0);
-    dom.btnUndo.style.opacity = (state.history.length === 0) ? "0.5" : "1";
+    if (dom.btnUndo) {
+        dom.btnUndo.disabled = (state.history.length === 0);
+        dom.btnUndo.style.opacity = (state.history.length === 0) ? "0.5" : "1";
+    }
 
     if(!state.rawSequences.length) return;
 
@@ -5529,10 +5585,8 @@ function render() {
         const groupId = state.sequenceGroups ? state.sequenceGroups.get(seqName) : undefined;
         
         // Set background color: use group color if grouping exists, otherwise default
-        if(r === state.refIndex) {
-            bgColor = '#eff6ff';
-        } else if(isSubtype) {
-            bgColor = '#fef3c7'; // Light yellow background for subtype
+        if(r === state.refIndex || isSubtype || isFounder) {
+            bgColor = '#fce7f3'; // Light magenta background for Reference, Subtype, and Founder
         } else if (groupId !== undefined) {
             // Use group color for background
             const lightBgColor = GROUP_LIGHT_BG[groupId % GROUP_LIGHT_BG.length];
@@ -5543,10 +5597,8 @@ function render() {
         }
         
         // Set text color: use group color if grouping exists, otherwise default
-        if(r === state.refIndex) {
-            textColor = '#2563eb';
-        } else if(isSubtype) {
-            textColor = '#d97706'; // Orange color for subtype
+        if(r === state.refIndex || isSubtype || isFounder) {
+            textColor = '#ff00ff'; // Magenta for Reference, Subtype, and Founder
         } else if (groupId !== undefined) {
             // Use group color for text
             textColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
@@ -5561,6 +5613,8 @@ function render() {
         if(r === state.refIndex) {
             ctxNames.font = "bold " + CONFIG.labelFont;
         } else if(isSubtype) {
+            ctxNames.font = "bold " + CONFIG.labelFont;
+        } else if(isFounder) {
             ctxNames.font = "bold " + CONFIG.labelFont;
         } else {
             ctxNames.font = CONFIG.labelFont;
@@ -5940,11 +5994,19 @@ function showSequenceLogo() {
         buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px;';
         
         // Export SVG button
-        const exportBtn = document.createElement('button');
-        exportBtn.textContent = 'Export SVG';
-        exportBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
-        exportBtn.onclick = () => {
+        const exportSvgBtn = document.createElement('button');
+        exportSvgBtn.textContent = 'Export SVG';
+        exportSvgBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
+        exportSvgBtn.onclick = () => {
             exportLogoAsSVG(svg, epitopeName, fileName);
+        };
+        
+        // Export PDF button
+        const exportPdfBtn = document.createElement('button');
+        exportPdfBtn.textContent = 'Export PDF';
+        exportPdfBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
+        exportPdfBtn.onclick = () => {
+            exportLogoAsPDF(svg, epitopeName, fileName);
         };
         
         // Close button
@@ -5953,7 +6015,8 @@ function showSequenceLogo() {
         closeBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 4px;';
         closeBtn.onclick = () => overlay.remove();
         
-        buttonContainer.appendChild(exportBtn);
+        buttonContainer.appendChild(exportSvgBtn);
+        buttonContainer.appendChild(exportPdfBtn);
         buttonContainer.appendChild(closeBtn);
         modal.appendChild(buttonContainer);
         
@@ -6136,7 +6199,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     }
     
     // SVG parameters
-    const charWidth = 20;
+    const charWidth = 18;
     const baseFontSize = 16;
     const baseHeight = baseFontSize; // Base height matches font size
     const logoHeight = charWidth * 1.5; // Each logo height is 1.5 times the character width (30px)
@@ -6163,7 +6226,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     
     // Set leftLabelWidth with some padding (add 20px for spacing)
     const leftLabelWidth = Math.max(150, maxLabelWidth + 20); // Minimum 150px, or calculated width + padding
-    const regionGap = 10;
+    const regionGap = 3; // Reduced gap between regions to be more proportional to cell width
     
     // Calculate SVG dimensions
     const numGroups = groupFrequencies.length;
@@ -6189,7 +6252,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     
     // First title line: "Epitope: <epitope name>"
     const titleLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    titleLine1.setAttribute('x', padding + leftLabelWidth);
+    titleLine1.setAttribute('x', padding + 10); // Align with logo labels
     titleLine1.setAttribute('y', padding + 18); // 18px font size, align to baseline
     titleLine1.setAttribute('font-family', 'sans-serif');
     titleLine1.setAttribute('font-size', '18');
@@ -6200,7 +6263,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     
     // Second title line: "Alignment: <file name>"
     const titleLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    titleLine2.setAttribute('x', padding + leftLabelWidth);
+    titleLine2.setAttribute('x', padding + 10); // Align with logo labels
     titleLine2.setAttribute('y', padding + 18 + 5 + 9); // First line + spacing (5px) + second line font size (9px)
     titleLine2.setAttribute('font-family', 'sans-serif');
     titleLine2.setAttribute('font-size', '9');
@@ -6342,18 +6405,14 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         }
         
         // Draw bottom sequence character (amino acid or gap)
-        // Use explicit Y positioning for cross-browser compatibility (especially Safari)
-        // Position text so its bottom aligns with bottomLogoY + logoHeight
-        // For Safari, need larger adjustment - increase offset to move text up
+        // Position text so its bottom aligns with the separator line below (same approach as group logos)
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', xOffset + charWidth / 2);
-        // Calculate Y position: bottom of logo area minus font descent
-        // For Safari, need larger offset (50% of font size) to move text up relative to lines
-        const fontSize = 16;
-        const textY = bottomLogoY + logoHeight - (fontSize * 0.50); // ~8px for 16px font
+        // Position at bottomLogoY + logoHeight (same as separator position) with text-after-edge alignment
+        const textY = bottomLogoY + logoHeight;
         text.setAttribute('y', textY);
         text.setAttribute('text-anchor', 'middle');
-        text.setAttribute('alignment-baseline', 'baseline'); // Use baseline for Safari compatibility
+        text.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text to y position (same as group logos)
         text.setAttribute('font-family', 'monospace');
         text.setAttribute('font-size', '16');
         text.setAttribute('font-weight', 'bold');
@@ -6492,14 +6551,15 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         rowLabel.setAttribute('font-family', 'sans-serif');
         rowLabel.setAttribute('font-size', '12');
         rowLabel.setAttribute('font-weight', 'bold');
-        // Color code: first group orange, others light blue
-        const labelColor = rowIdx === 0 ? '#f39c12' : '#3498db';
+        // Use the same color as assigned to the group in the legend
+        const groupId = groupData.groupId;
+        const labelColor = GROUP_COLORS[groupId % GROUP_COLORS.length];
         rowLabel.setAttribute('fill', labelColor);
         rowLabel.textContent = `Variants at ${groupData.groupValue} (${groupData.count})`;
         svg.appendChild(rowLabel);
     }
     
-    // Bottom row label (light blue, shifted left out of logo area)
+    // Bottom row label (colored based on sequence type: Cyan for Reference, Magenta for Subtype, Yellow for Founder)
     // Align label bottom with logo bottom (same y as bottom logo characters)
     const bottomLabelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     bottomLabelEl.setAttribute('x', padding + 10);
@@ -6509,7 +6569,8 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     bottomLabelEl.setAttribute('font-family', 'sans-serif');
     bottomLabelEl.setAttribute('font-size', '12');
     bottomLabelEl.setAttribute('font-weight', 'bold');
-    bottomLabelEl.setAttribute('fill', '#3498db'); // Light blue
+    // Use magenta for all special sequences (Reference, Subtype, Founder)
+    bottomLabelEl.setAttribute('fill', '#ff00ff'); // Magenta
     bottomLabelEl.textContent = bottomLabel;
     svg.appendChild(bottomLabelEl);
     
@@ -6543,46 +6604,67 @@ function exportLogoAsSVG(svgElement, epitopeName, fileName) {
 }
 
 function exportLogoAsPDF(svgElement, epitopeName, fileName) {
-    // For PDF export, convert SVG to image first using canvas, then embed in PDF
-    const svgData = new XMLSerializer().serializeToString(svgElement);
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
+    // Check if html2pdf is available
+    if (typeof html2pdf === 'undefined') {
+        alert('PDF export library not loaded. Please ensure html2pdf.js is available.');
+        return;
+    }
     
-    const img = new Image();
-    img.onload = function() {
-        // Create canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = svgElement.width.baseVal.value;
-        canvas.height = svgElement.height.baseVal.value;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
+    try {
+        // Clone the SVG to avoid modifying the original
+        const clonedSvg = svgElement.cloneNode(true);
         
-        // Convert canvas to data URL (PNG)
-        const imgData = canvas.toDataURL('image/png');
-        
-        // Create a simple PDF using data URI (browser will handle it)
-        // Note: This creates a PDF-like file, but browsers may download as PNG
-        // For true PDF, you'd need jsPDF library
-        const link = document.createElement('a');
-        link.href = imgData;
+        // Get SVG dimensions
+        const svgWidth = svgElement.width.baseVal.value;
+        const svgHeight = svgElement.height.baseVal.value;
         
         // Create filename: escape_from_<epitope name>_<file name>.pdf
         const baseFileName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
         // Sanitize filename
         const sanitizedEpitope = epitopeName.replace(/[^a-zA-Z0-9_-]/g, '_');
         const sanitizedFile = baseFileName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        link.download = `escape_from_${sanitizedEpitope}_${sanitizedFile}.pdf`;
-        link.click();
+        const pdfFileName = `escape_from_${sanitizedEpitope}_${sanitizedFile}.pdf`;
         
-        URL.revokeObjectURL(url);
-    };
-    img.onerror = function() {
-        alert('Error converting SVG to PDF. Please try downloading as SVG instead.');
-        URL.revokeObjectURL(url);
-    };
-    img.src = url;
+        // Configure html2pdf options
+        // Convert pixels to points (1px = 0.75pt at 96 DPI)
+        const pdfWidth = svgWidth * 0.75;
+        const pdfHeight = svgHeight * 0.75;
+        
+        const opt = {
+            margin: [0, 0, 0, 0],
+            filename: pdfFileName,
+            image: { type: 'svg', quality: 1.0 },
+            html2canvas: { 
+                scale: 2,
+                useCORS: true,
+                logging: false,
+                width: svgWidth,
+                height: svgHeight
+            },
+            jsPDF: { 
+                unit: 'pt', 
+                format: [pdfWidth, pdfHeight], // Custom format to match SVG exactly
+                orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait'
+            }
+        };
+        
+        // Convert SVG to PDF using html2pdf
+        // Get the PDF and manually ensure single page
+        html2pdf().set(opt).from(clonedSvg).toPdf().get('pdf').then((pdf) => {
+            // Remove any pages beyond the first
+            const totalPages = pdf.internal.getNumberOfPages();
+            if (totalPages > 1) {
+                // Delete extra pages
+                for (let i = totalPages; i > 1; i--) {
+                    pdf.deletePage(i);
+                }
+            }
+            pdf.save(pdfFileName);
+        });
+    } catch (error) {
+        console.error('Error exporting PDF:', error);
+        alert('Error exporting PDF: ' + error.message + '. Please try downloading as SVG instead.');
+    }
 }
 
 // Initialize legend dragging
