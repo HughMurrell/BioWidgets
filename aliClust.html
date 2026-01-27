@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AliView: View and Cluster Alignments in the browser</title>
+    <title>aliViz: View, Cluster, and Visualize Alignments in the browser</title>
     <!-- Included the NW Alignment Library -->
     <script src="https://murrellgroup.github.io/WebWidgets/nw.js"></script>
     <!-- Included the Phylogenetic Tools Library -->
@@ -546,7 +546,7 @@
 
 <div id="help-overlay">
     <div class="help-box">
-        <h2>aliClust Help</h2>
+        <h2>aliViz Help</h2>
         <div class="help-row"><span class="help-key">Choose File</span> <span>Load an Alignment with Ref as first seq and SubType as second seq.</span></div>
         <div class="help-row"><span class="help-key">Sort</span> <span>Sort sequences by name (REF and SUBTYPE remain first)</span></div>
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
@@ -5488,7 +5488,20 @@ function onResize() {
 
 function render() {
     if(!state.viewSequences.length && state.rawSequences.length === 0) {
-        ctxSeq.clearRect(0,0,dom.cvsSeq.width, dom.cvsSeq.height);
+        // Draw watermark "aliViz" on white background when no alignment is loaded
+        const vW = dom.cvsSeq.width, vH = dom.cvsSeq.height;
+        ctxSeq.fillStyle = '#ffffff';
+        ctxSeq.fillRect(0, 0, vW, vH);
+        
+        // Draw watermark text
+        ctxSeq.save();
+        ctxSeq.fillStyle = '#b0b0b0'; // Darker grey for watermark
+        ctxSeq.font = 'bold 144px Arial, sans-serif';
+        ctxSeq.textAlign = 'center';
+        ctxSeq.textBaseline = 'middle';
+        ctxSeq.globalAlpha = 0.5; // More visible watermark
+        ctxSeq.fillText('aliViz', vW / 2, vH / 2);
+        ctxSeq.restore();
         return;
     }
 
