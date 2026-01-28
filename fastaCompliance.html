@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FASTA Compliance: View and Analyze FASTA Files</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --panel-bg: #ffffff;
+            --border-color: #d1d5db;
+            --primary: #2563eb;
+            --header-height: 90px;
+            --ruler-height: 30px; 
+            --names-width: 200px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body, html {
+            margin: 0; padding: 0;
+            height: 100%; width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            overflow: hidden;
+            user-select: none;
+            overscroll-behavior-x: none;
+        }
+
+        #app {
+            display: flex; flex-direction: column;
+            height: 100vh; width: 100vw;
+        }
+
+        #controls {
+            height: var(--header-height);
+            background: var(--panel-bg);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center;
+            padding: 0 20px; gap: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            flex-shrink: 0; z-index: 20;
+            overflow-x: auto;
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; }
+        button, select, input[type="file"] {
+            padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px;
+            background: white; font-size: 13px; cursor: pointer;
+            white-space: nowrap;
+        }
+        button:hover { background-color: #f3f4f6; }
+        button.active { background-color: var(--primary); color: white; border-color: var(--primary); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #viewer-grid {
+            flex: 1; display: grid;
+            grid-template-columns: var(--names-width) 5px minmax(0, 1fr);
+            grid-template-rows: var(--ruler-height) minmax(0, 1fr);
+            grid-template-areas: 
+                "corner-names resizer-names ruler" 
+                "names        resizer-names seq";
+            overflow: hidden; position: relative;
+            background: #fff;
+        }
+
+        #area-corner-names { grid-area: corner-names; background: #f3f4f6; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+
+        #area-ruler {
+            grid-area: ruler; background: #f3f4f6;
+            border-bottom: 1px solid var(--border-color);
+            position: relative; overflow: hidden;
+        }
+
+        #resizer-names {
+            grid-area: resizer-names; background: #f3f4f6;
+            border-right: 1px solid var(--border-color);
+            cursor: col-resize; z-index: 15;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #resizer-names:hover { background: #d1d5db; }
+        #resizer-names::after { content: ''; width: 1px; height: 20px; background: #9ca3af; }
+
+        #area-names {
+            grid-area: names; background: #fff;
+            border-right: 1px solid var(--border-color);
+            position: relative; overflow: auto; z-index: 5;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+        }
+
+        #area-seq {
+            grid-area: seq; overflow: auto; position: relative;
+            background: #fff; outline: none; cursor: text;
+        }
+        #area-seq.grabbing { cursor: grabbing; }
+
+        canvas { display: block; }
+        #cvs-seq { position: sticky; top: 0; left: 0; pointer-events: none; }
+        #scroll-sizer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; }
+
+        #overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.75);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 9999; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+        }
+        #overlay.active { opacity: 1; pointer-events: all; }
+        
+        .spinner {
+            width: 30px; height: 30px;
+            border: 3px solid #e5e7eb; border-top: 3px solid var(--primary);
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        #group-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;
+        }
+        .help-box {
+            background: white; width: 450px; max-width: 90%; 
+            padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .help-box h2 { margin: 0 0 10px 0; font-size: 18px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .help-row { display: flex; justify-content: space-between; font-size: 13px; color: #374151; padding: 5px 0; }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div id="controls">
+        <div class="control-group">
+            <label>FASTA FILE</label>
+            <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt" style="position: absolute; width: 0; height: 0; opacity: 0; overflow: hidden;">
+            <label for="inp-file" style="padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; background: white; font-size: 13px; cursor: pointer; white-space: nowrap; display: inline-block; text-transform: none;">Choose</label>
+        </div>
+        
+        <div class="control-group">
+            <label>Sort</label>
+            <button id="btn-sort-sequences" title="Sort sequences by name">Sort</button>
+        </div>
+
+        <div class="control-group">
+            <label>Group</label>
+            <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+        </div>
+
+        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
+
+        <div class="control-group">
+            <label>Export</label>
+            <button id="btn-download" title="Download Current View">fasta</button>
+        </div>
+
+        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
+
+        <div class="control-group">
+            <label>View Mode</label>
+            <div style="display:flex;">
+                <button id="btn-nt" class="active" style="border-top-right-radius:0; border-bottom-right-radius:0;">NT</button>
+                <button id="btn-aa" style="border-top-left-radius:0; border-bottom-left-radius:0; border-left:none;">AA</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Highlighter</label>
+            <select id="sel-highlight" style="min-width: 120px;">
+                <option value="" selected>Off</option>
+                <option value="reference">Reference</option>
+            </select>
+        </div>
+    </div>
+    <div id="filename-display" style="padding: 8px 20px; font-size: 16px; color: #374151; border-top: 1px solid var(--border-color);">
+        <strong>File:</strong> <span id="filename-text">no file loaded yet</span>
+    </div>
+
+    <div id="viewer-grid">
+        <div id="area-corner-names"></div>
+        <div id="resizer-names"></div>
+        
+        <div id="area-ruler"><canvas id="cvs-ruler"></canvas></div>
+        <div id="area-names"><canvas id="cvs-names"></canvas></div>
+        <div id="area-seq" tabindex="0"><div id="scroll-sizer"></div><canvas id="cvs-seq"></canvas></div>
+    </div>
+</div>
+
+<div id="overlay">
+    <div class="spinner"></div>
+    <div id="overlay-msg" style="margin-top:10px; font-weight:500;">Processing...</div>
+</div>
+
+<div id="group-overlay">
+    <div class="help-box">
+        <h2>Group Sequences</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Delimiter Character</label>
+            <input type="text" id="inp-group-delimiter" value="_" maxlength="1" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Field Number (1-indexed, after splitting by delimiter)</label>
+            <input type="number" id="inp-group-field" value="3" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
+            <button id="btn-run-group" class="active">Group</button>
+        </div>
+    </div>
+</div>
+
+<div id="color-legend" style="position: fixed; top: 100px; right: 20px; background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 5000; display: none; max-width: 250px; font-size: 12px;">
+    <div id="legend-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: move; user-select: none;">
+        <h3 style="margin: 0; font-size: 14px; color: #374151;">Color Legend</h3>
+        <button onclick="document.getElementById('color-legend').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #6b7280;">×</button>
+    </div>
+    <div id="legend-groups" style="margin-bottom: 15px;">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 8px;">Groups:</div>
+        <div id="legend-groups-content"></div>
+    </div>
+</div>
+
+<script>
+// --- Config ---
+const CONFIG = {
+    font: "14px 'Courier New', monospace",
+    labelFont: "12px system-ui, sans-serif",
+    charWidth: 12,
+    rowHeight: 24,
+    highlightMatchColor: '#ffffff',
+    rulerTickStep: 10,
+    colors: {
+        NT: { 
+            'A': '#81d4fa', 'G': '#fff176', 'C': '#a5d6a7', 'T': '#ff8a80', 'U': '#ff8a80', 
+            'R': '#e6ee9c', 'Y': '#80cbc4', 'M': '#a5d6a7', 'K': '#ef9a9a', 'S': '#c5e1a5', 
+            'W': '#ce93d8', 'H': '#81d4fa', 'B': '#ef9a9a', 'V': '#fff59d', 'D': '#ffcc80', 
+            'N': '#eeeeee',
+            '-': '#ffffff', 'default': '#f5f5f5' 
+        },
+        AA: { 'A': '#80a0f0', 'R': '#f01505', 'N': '#00ff00', 'D': '#c048c0', 'C': '#f08080', 'Q': '#00ff00', 'E': '#c048c0', 'G': '#f09048', 'H': '#15a4a4', 'I': '#80a0f0', 'L': '#80a0f0', 'K': '#f01505', 'M': '#80a0f0', 'F': '#80a0f0', 'P': '#ffff00', 'S': '#00ff00', 'T': '#00ff00', 'W': '#80a0f0', 'Y': '#15a4a4', 'V': '#80a0f0', '*': '#999999', '-': '#ffffff', 'default': '#ffffff' }
+    }
+};
+
+const COLOR_PALETTE = [
+    '#3b82f6', // Blue
+    '#10b981', // Green
+    '#f59e0b', // Amber
+    '#8b5cf6', // Purple
+    '#ec4899', // Pink
+    '#84cc16', // Lime
+    '#f97316', // Orange
+    '#6366f1', // Indigo
+    '#14b8a6', // Teal
+    '#ef4444', // Red
+];
+
+const GROUP_LIGHT_BG = [
+    '#dbeafe', // Light blue
+    '#d1fae5', // Light green
+    '#fef3c7', // Light amber
+    '#ede9fe', // Light purple
+    '#fce7f3', // Light pink
+    '#ecfccb', // Light lime
+    '#fed7aa', // Light orange
+    '#e0e7ff', // Light indigo
+    '#ccfbf1', // Light teal
+    '#fee2e2', // Light red
+];
+
+const CODON_TABLE = {
+    'ATA':'I', 'ATC':'I', 'ATT':'I', 'ATG':'M', 'ACA':'T', 'ACC':'T', 'ACG':'T', 'ACT':'T',
+    'AAC':'N', 'AAT':'N', 'AAA':'K', 'AAG':'K', 'AGC':'S', 'AGT':'S', 'AGA':'R', 'AGG':'R',
+    'CTA':'L', 'CTC':'L', 'CTG':'L', 'CTT':'L', 'CCA':'P', 'CCC':'P', 'CCG':'P', 'CCT':'P',
+    'CAC':'H', 'CAT':'H', 'CAA':'Q', 'CAG':'Q', 'CGA':'R', 'CGC':'R', 'CGG':'R', 'CGT':'R',
+    'GTA':'V', 'GTC':'V', 'GTG':'V', 'GTT':'V', 'GCA':'A', 'GCC':'A', 'GCG':'A', 'GCT':'A',
+    'GAC':'D', 'GAT':'D', 'GAA':'E', 'GAG':'E', 'GGA':'G', 'GGC':'G', 'GGG':'G', 'GGT':'G',
+    'TCA':'S', 'TCC':'S', 'TCG':'S', 'TCT':'S', 'TTC':'F', 'TTT':'F', 'TTA':'L', 'TTG':'L',
+    'TAC':'Y', 'TAT':'Y', 'TAA':'*', 'TAG':'*', 'TGC':'C', 'TGT':'C', 'TGA':'*', 'TGG':'W',
+};
+
+// --- State ---
+const state = {
+    rawSequences: [],
+    viewSequences: [],
+    mode: 'NT',
+    highlightMatches: '', // 'reference' or '' (off)
+    frame: 1,
+    maxLength: 0,
+    selection: null,
+    selectionAnchor: null,
+    namesWidth: 200,
+    refIndex: 0,
+    refMap: [],
+    mouse: { isDown: false, target: null, startR: 0, startC: 0, lastHoverC: 0 },
+    isAASequence: false,
+    isAlignment: false, // Whether all sequences have the same length (alignment)
+    sequenceGroups: null,
+    groupDelimiter: null,
+    groupFieldNum: null,
+    groupNames: null,
+    currentFileName: null,
+};
+
+// --- DOM ---
+const dom = {
+    file: document.getElementById('inp-file'),
+    btnSortSequences: document.getElementById('btn-sort-sequences'),
+    btnGroupSequences: document.getElementById('btn-group-sequences'),
+    btnDownload: document.getElementById('btn-download'),
+    btnNt: document.getElementById('btn-nt'),
+    btnAa: document.getElementById('btn-aa'),
+    selHighlight: document.getElementById('sel-highlight'),
+    overlay: document.getElementById('overlay'),
+    overlayMsg: document.getElementById('overlay-msg'),
+    areaSeq: document.getElementById('area-seq'),
+    areaNames: document.getElementById('area-names'),
+    areaRuler: document.getElementById('area-ruler'),
+    resizerNames: document.getElementById('resizer-names'),
+    cvsSeq: document.getElementById('cvs-seq'),
+    cvsNames: document.getElementById('cvs-names'),
+    cvsRuler: document.getElementById('cvs-ruler'),
+    sizer: document.getElementById('scroll-sizer'),
+    filenameDisplay: document.getElementById('filename-display'),
+    filenameText: document.getElementById('filename-text')
+};
+
+const ctxSeq = dom.cvsSeq.getContext('2d', { alpha: false });
+const ctxNames = dom.cvsNames.getContext('2d');
+const ctxRuler = dom.cvsRuler.getContext('2d');
+
+// --- Init ---
+function init() {
+    dom.file.addEventListener('change', (e) => {
+        if(e.target.files.length) loadFile(e.target.files[0]);
+    });
+    
+    dom.btnSortSequences.addEventListener('click', sortSequencesByName);
+    dom.btnGroupSequences.addEventListener('click', () => {
+        document.getElementById('group-overlay').style.display = 'flex';
+    });
+    document.getElementById('btn-run-group').addEventListener('click', runGroupTask);
+    
+    dom.btnDownload.addEventListener('click', () => exportAlignment('download'));
+    
+    dom.btnNt.addEventListener('click', () => setMode('NT'));
+    dom.btnAa.addEventListener('click', () => setMode('AA'));
+    
+    dom.selHighlight.addEventListener('change', (e) => {
+        state.highlightMatches = e.target.value;
+        recalc();
+    });
+
+    // Synchronize scrolling
+    dom.areaSeq.addEventListener('scroll', () => {
+        dom.areaNames.scrollTop = dom.areaSeq.scrollTop;
+        dom.areaRuler.scrollLeft = dom.areaSeq.scrollLeft;
+        render();
+    });
+    dom.areaNames.addEventListener('scroll', () => {
+        dom.areaSeq.scrollTop = dom.areaNames.scrollTop;
+    });
+    dom.areaRuler.addEventListener('scroll', () => {
+        dom.areaSeq.scrollLeft = dom.areaRuler.scrollLeft;
+        render();
+    });
+
+    // Mouse interactions
+    dom.areaSeq.addEventListener('mousedown', (e) => onMouseDown(e, 'SEQ'));
+    dom.areaNames.addEventListener('mousedown', (e) => onMouseDown(e, 'NAMES'));
+    dom.areaRuler.addEventListener('mousedown', (e) => onMouseDown(e, 'RULER'));
+
+    // Resize names panel
+    let resizingNames = false;
+    dom.resizerNames.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        resizingNames = true;
+        state.mouse.startX = e.clientX;
+        state.mouse.startNamesWidth = state.namesWidth;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if(resizingNames) {
+            const delta = e.clientX - state.mouse.startX;
+            const newWidth = state.mouse.startNamesWidth + delta;
+            setNamesWidth(Math.max(150, Math.min(600, newWidth)));
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        resizingNames = false;
+    });
+
+    setNamesWidth(state.namesWidth);
+    onResize();
+}
+
+function setNamesWidth(w) {
+    state.namesWidth = Math.max(100, Math.min(800, w));
+    document.documentElement.style.setProperty('--names-width', state.namesWidth + 'px');
+    onResize();
+}
+
+function calculateNamesWidth() {
+    if (!state.rawSequences.length) {
+        setNamesWidth(200); // Default width
+        return;
+    }
+    
+    // Ensure canvas is initialized for text measurement
+    if (dom.cvsNames.width === 0) {
+        dom.cvsNames.width = 1;
+        dom.cvsNames.height = 1;
+    }
+    
+    // Calculate width needed for longest sequence name
+    const ctx = dom.cvsNames.getContext('2d');
+    ctx.font = CONFIG.labelFont;
+    
+    let maxWidth = 0;
+    state.rawSequences.forEach((s) => {
+        const text = s.name || '';
+        const metrics = ctx.measureText(text);
+        if (metrics.width > maxWidth) {
+            maxWidth = metrics.width;
+        }
+    });
+    
+    // Add padding (20px on each side) and set width
+    const calculatedWidth = Math.ceil(maxWidth) + 40;
+    setNamesWidth(Math.max(200, Math.min(800, calculatedWidth)));
+}
+
+function onResize() {
+    const w = dom.areaSeq.clientWidth;
+    const h = dom.areaSeq.clientHeight;
+    dom.cvsSeq.width = w;
+    dom.cvsSeq.height = h;
+    // Names canvas should be at least as wide as the calculated width to show full names
+    dom.cvsNames.width = Math.max(dom.areaNames.clientWidth, state.namesWidth);
+    dom.cvsNames.height = dom.areaNames.clientHeight;
+    dom.cvsRuler.width = dom.areaRuler.clientWidth;
+    dom.cvsRuler.height = dom.areaRuler.clientHeight;
+    recalc();
+}
+
+window.addEventListener('resize', onResize);
+
+function showOverlay(show) {
+    if(show) dom.overlay.classList.add('active');
+    else dom.overlay.classList.remove('active');
+}
+
+// --- Loading ---
+function loadFile(file) {
+    if(!file) return;
+    showOverlay(true);
+    const reader = new FileReader();
+    const name = file.name.toLowerCase();
+    const isFastq = name.endsWith('.fastq') || name.endsWith('.fq');
+    
+    // Store the original filename
+    state.currentFileName = file.name;
+    
+    reader.onload = e => {
+        if(isFastq) parseFastq(e.target.result);
+        else parseFasta(e.target.result);
+    };
+    reader.readAsText(file);
+}
+
+function parseFasta(text) {
+    const lines = text.split(/\r?\n/);
+    const seqs = [];
+    let name = null, buf = [];
+    for(let line of lines) {
+        line = line.trim();
+        if(!line) continue;
+        if(line.startsWith('>')) {
+            if(name) seqs.push({name, seq: buf.join('').split('')});
+            name = line.substring(1).trim();
+            buf = [];
+        } else {
+            buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+        }
+    }
+    if(name) seqs.push({name, seq: buf.join('').split('')});
+    
+    // Check if this is an alignment (all sequences same length)
+    let isAlignment = true;
+    if(seqs.length > 1) {
+        const firstLength = seqs[0].seq.length;
+        for(let i = 1; i < seqs.length; i++) {
+            if(seqs[i].seq.length !== firstLength) {
+                isAlignment = false;
+                break;
+            }
+        }
+    } else if(seqs.length === 1) {
+        isAlignment = true; // Single sequence can be considered an alignment
+    } else {
+        isAlignment = false;
+    }
+    
+    finalizeLoad(seqs, isAlignment);
+}
+
+function parseFastq(text) {
+    const lines = text.split(/\r?\n/);
+    const seqs = [];
+    for(let i = 0; i < lines.length; i += 4) {
+        if(i + 1 < lines.length && lines[i].startsWith('@')) {
+            const name = lines[i].substring(1).trim();
+            const seq = lines[i + 1].toUpperCase().replace(/[^A-Z-]/g, '').split('');
+            seqs.push({name, seq});
+        }
+    }
+    
+    // Check if this is an alignment (all sequences same length)
+    let isAlignment = true;
+    if(seqs.length > 1) {
+        const firstLength = seqs[0].seq.length;
+        for(let i = 1; i < seqs.length; i++) {
+            if(seqs[i].seq.length !== firstLength) {
+                isAlignment = false;
+                break;
+            }
+        }
+    } else if(seqs.length === 1) {
+        isAlignment = true; // Single sequence can be considered an alignment
+    } else {
+        isAlignment = false;
+    }
+    
+    finalizeLoad(seqs, isAlignment);
+}
+
+function detectSequenceType(seqs) {
+    if (!seqs || seqs.length === 0) return 'NT';
+    const sample = seqs[0].seq.join('').replace(/-/g, '').substring(0, 100);
+    const aaChars = /[EFILPQ]/i;
+    const hasAA = aaChars.test(sample);
+    const ntOnly = /^[ACGTURYSWKMBDHVN-]+$/i.test(sample);
+    return (hasAA || !ntOnly) ? 'AA' : 'NT';
+}
+
+function finalizeLoad(seqs, isAlignment) {
+    if(!seqs.length) {
+        alert("No sequences found in file.");
+        showOverlay(false);
+        return;
+    }
+    
+    state.rawSequences = seqs;
+    state.refIndex = 0;
+    state.isAASequence = (detectSequenceType(seqs) === 'AA');
+    state.isAlignment = isAlignment;
+    
+    if(state.isAASequence && state.mode === 'NT') {
+        setMode('AA', true);
+    }
+    
+    // Enable/disable highlighter based on whether it's an alignment
+    if (dom.selHighlight) {
+        dom.selHighlight.disabled = !isAlignment;
+        if (!isAlignment) {
+            dom.selHighlight.value = '';
+            state.highlightMatches = '';
+        }
+    }
+    
+    // Display filename
+    if (state.currentFileName) {
+        dom.filenameText.textContent = state.currentFileName;
+    } else {
+        dom.filenameText.textContent = 'no file loaded yet';
+    }
+    
+    // Calculate and set names panel width based on longest sequence name
+    calculateNamesWidth();
+    
+    recalc();
+    showOverlay(false);
+}
+
+// --- Sort Sequences by Name ---
+function sortSequencesByName() {
+    if (state.rawSequences.length === 0) {
+        alert("No sequences to sort.");
+        return;
+    }
+    
+    const refSeq = state.rawSequences[state.refIndex];
+    
+    const otherSeqs = [];
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i !== state.refIndex) {
+            otherSeqs.push(state.rawSequences[i]);
+        }
+    }
+    
+    otherSeqs.sort((a, b) => {
+        const nameA = a.name || '';
+        const nameB = b.name || '';
+        return nameA.localeCompare(nameB);
+    });
+    
+    const newSequences = [refSeq, ...otherSeqs];
+    state.rawSequences = newSequences;
+    state.refIndex = 0;
+    
+    // Recalculate names width after sorting
+    calculateNamesWidth();
+    
+    recalc();
+}
+
+// --- Group Sequences by Name Field ---
+function runGroupTask() {
+    const delimiter = document.getElementById('inp-group-delimiter').value || '_';
+    const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 3;
+    
+    if (delimiter.length === 0) {
+        alert("Please specify a delimiter character.");
+        return;
+    }
+    
+    if (fieldNumOneBased < 1) {
+        alert("Field number must be at least 1.");
+        return;
+    }
+    
+    const fieldNum = fieldNumOneBased - 1;
+    document.getElementById('group-overlay').style.display = 'none';
+    
+    const nameToGroup = new Map();
+    const uniqueGroupValues = new Set();
+    
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex) continue;
+        
+        const seq = state.rawSequences[i];
+        const name = seq.name || '';
+        const fields = name.split(delimiter);
+        
+        if (fields.length > fieldNum) {
+            uniqueGroupValues.add(fields[fieldNum]);
+        }
+    }
+    
+    const sortedGroupValues = Array.from(uniqueGroupValues).sort();
+    const groupNames = new Map();
+    const groupIdToValue = new Map();
+    
+    sortedGroupValues.forEach((groupValue, index) => {
+        const groupId = index;
+        groupNames.set(groupValue, groupId);
+        groupIdToValue.set(groupId, groupValue);
+    });
+    
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex) continue;
+        
+        const seq = state.rawSequences[i];
+        const name = seq.name || '';
+        const fields = name.split(delimiter);
+        
+        if (fields.length > fieldNum) {
+            const groupValue = fields[fieldNum];
+            const gId = groupNames.get(groupValue);
+            nameToGroup.set(name, gId);
+        }
+    }
+    
+    state.sequenceGroups = nameToGroup;
+    state.groupDelimiter = delimiter;
+    state.groupFieldNum = fieldNumOneBased;
+    state.groupNames = groupIdToValue;
+    
+    updateColorLegend();
+    recalc();
+}
+
+function updateColorLegend() {
+    const legend = document.getElementById('color-legend');
+    const groupsContent = document.getElementById('legend-groups-content');
+    
+    if (!state.sequenceGroups || state.groupNames.size === 0) {
+        legend.style.display = 'none';
+        return;
+    }
+    
+    groupsContent.innerHTML = '';
+    const sortedGroups = Array.from(state.groupNames.entries()).sort((a, b) => a[0] - b[0]);
+    
+    sortedGroups.forEach(([groupId, groupValue]) => {
+        const color = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
+        const div = document.createElement('div');
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.gap = '8px';
+        div.style.marginBottom = '4px';
+        div.innerHTML = `
+            <div style="width: 16px; height: 16px; background: ${color}; border: 1px solid #d1d5db; border-radius: 3px;"></div>
+            <span>${groupValue}</span>
+        `;
+        groupsContent.appendChild(div);
+    });
+    
+    legend.style.display = 'block';
+}
+
+// --- Export Logic ---
+function exportAlignment(target) {
+    if (!state.viewSequences.length) return;
+    
+    const rows = state.viewSequences.map((_, idx) => idx);
+    const content = buildFastaContent(rows, 0, null);
+    if(!content) return;
+
+    const blob = new Blob([content], {type: "text/plain"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    
+    // Generate filename: use input filename with _compliant-Y added to basename
+    let downloadName;
+    if (state.currentFileName) {
+        const lastDot = state.currentFileName.lastIndexOf('.');
+        const basename = lastDot > 0 ? state.currentFileName.substring(0, lastDot) : state.currentFileName;
+        const extension = lastDot > 0 ? state.currentFileName.substring(lastDot) : '.fasta';
+        downloadName = `${basename}_compliant-${state.mode}${extension}`;
+    } else {
+        downloadName = `alignment_compliant-${state.mode}.fasta`;
+    }
+    
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function buildFastaContent(rows, colStart = 0, colEnd = null) {
+    if(!rows || !rows.length) return "";
+    const lines = [];
+    rows.forEach(r => {
+        const entry = state.viewSequences[r];
+        if(!entry) return;
+        const seq = entry.seq;
+        const start = Math.min(colStart, seq.length);
+        const end = (colEnd === null || colEnd === undefined) ? seq.length : Math.min(seq.length, colEnd + 1);
+        const fragment = seq.slice(start, end).join('');
+        lines.push(`>${entry.name}`);
+        lines.push(fragment);
+    });
+    return lines.join('\n') + (lines.length ? '\n' : '');
+}
+
+function setMode(m, disableNT = false) {
+    state.mode = m;
+    if(m === 'NT') {
+        dom.btnNt.classList.add('active'); dom.btnAa.classList.remove('active');
+        dom.btnNt.disabled = false;
+        dom.btnNt.style.opacity = '1';
+    } else {
+        dom.btnAa.classList.add('active'); dom.btnNt.classList.remove('active');
+        if (disableNT) {
+            dom.btnNt.disabled = true;
+            dom.btnNt.style.opacity = '0.5';
+        } else {
+            dom.btnNt.disabled = false;
+            dom.btnNt.style.opacity = '1';
+        }
+    }
+    state.selection = null;
+    recalc();
+}
+
+function recalc() {
+    if(!state.rawSequences.length) {
+        dom.sizer.style.width = '1px';
+        dom.sizer.style.height = '1px';
+        render();
+        return;
+    }
+
+    const refSeq = state.rawSequences[state.refIndex];
+    const nonRefSequences = state.rawSequences.filter((s, idx) => idx !== state.refIndex);
+    
+    let allViewSequences;
+    if(state.mode === 'NT') {
+        const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
+        const nonRefViews = nonRefSequences.map(s => ({ name: s.name, seq: s.seq }));
+        allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
+    } else {
+        if (state.isAASequence) {
+            const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
+            const nonRefViews = nonRefSequences.map(s => ({ name: s.name, seq: s.seq }));
+            allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
+        } else {
+            const offset = state.frame - 1;
+            const refView = refSeq ? {
+                name: refSeq.name,
+                seq: (() => {
+                    const dna = refSeq.seq;
+                    const aa = [];
+                    for(let i=offset; i<dna.length; i+=3) {
+                        if(i+2 >= dna.length) break;
+                        const codon = dna.slice(i, i+3).join('');
+                        if(codon.includes('-')) aa.push('-');
+                        else if (/[^ACGT]/i.test(codon)) aa.push('X');
+                        else aa.push(CODON_TABLE[codon] || 'X');
+                    }
+                    return aa;
+                })()
+            } : null;
+            const nonRefViews = nonRefSequences.map(s => {
+                const dna = s.seq;
+                const aa = [];
+                for(let i=offset; i<dna.length; i+=3) {
+                    if(i+2 >= dna.length) break;
+                    const codon = dna.slice(i, i+3).join('');
+                    if(codon.includes('-')) aa.push('-');
+                    else if (/[^ACGT]/i.test(codon)) aa.push('X');
+                    else aa.push(CODON_TABLE[codon] || 'X');
+                }
+                return { name: s.name, seq: aa };
+            });
+            allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
+        }
+    }
+    
+    state.viewSequences = allViewSequences;
+    state.refIndex = 0;
+
+    let max = 0;
+    state.viewSequences.forEach(s => max = Math.max(max, s.seq.length));
+    state.maxLength = max;
+    
+    state.refMap = new Int32Array(max + 1);
+    if(state.viewSequences[state.refIndex]) {
+        const refSeq = state.viewSequences[state.refIndex].seq;
+        let count = 0;
+        for(let i=0; i<max; i++) {
+            const char = (i < refSeq.length) ? refSeq[i] : '-';
+            if(char !== '-') count++;
+            state.refMap[i] = count;
+        }
+    }
+
+    dom.sizer.style.width = (max * CONFIG.charWidth + 200) + 'px';
+    dom.sizer.style.height = (state.viewSequences.length * CONFIG.rowHeight) + 'px';
+    
+    render();
+}
+
+// --- Interactions ---
+function getCoords(e, type) {
+    let r = 0, c = 0;
+    const rect = (type==='SEQ'?dom.areaSeq:(type==='NAMES'?dom.areaNames:dom.areaRuler)).getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    if(type === 'SEQ') {
+        c = Math.floor((x + dom.areaSeq.scrollLeft) / CONFIG.charWidth);
+        r = Math.floor((y + dom.areaSeq.scrollTop) / CONFIG.rowHeight);
+    } else if (type === 'NAMES') {
+        r = Math.floor((y + dom.areaSeq.scrollTop) / CONFIG.rowHeight);
+    } else if (type === 'RULER') {
+        c = Math.floor((x + dom.areaSeq.scrollLeft) / CONFIG.charWidth);
+    }
+    return { r, c };
+}
+
+function onMouseDown(e, type) {
+    dom.areaSeq.focus();
+    
+    const { r, c } = getCoords(e, type);
+    const maxR = Math.max(0, state.viewSequences.length - 1);
+    const safeR = Math.min(r, maxR);
+    const safeC = Math.max(0, c);
+
+    state.mouse.isDown = true;
+    state.mouse.startR = safeR;
+    state.mouse.startC = safeC;
+    state.mouse.lastHoverC = safeC;
+    state.mouse.target = type;
+    state.selectionAnchor = { r: safeR, c: safeC };
+
+    if(type === 'SEQ') {
+        state.selection = { r1: safeR, c1: safeC, r2: safeR, c2: safeC };
+    } else if (type === 'NAMES') {
+        state.selection = { r1: safeR, r2: safeR, c1: 0, c2: 99999999 }; 
+    } else if (type === 'RULER') {
+        const maxR = state.viewSequences.length - 1;
+        state.selection = { r1: 0, r2: maxR, c1: safeC, c2: safeC };
+    }
+    
+    render();
+}
+
+window.addEventListener('mousemove', (e) => {
+    if(!state.mouse.isDown) return;
+    
+    const { r, c } = getCoords(e, state.mouse.target);
+    const maxR = Math.max(0, state.viewSequences.length - 1);
+    const safeR = Math.min(r, maxR);
+    const safeC = Math.max(0, c);
+    
+    if(state.mouse.target === 'SEQ') {
+        state.selection = {
+            r1: Math.min(state.mouse.startR, safeR),
+            r2: Math.max(state.mouse.startR, safeR),
+            c1: Math.min(state.mouse.startC, safeC),
+            c2: Math.max(state.mouse.startC, safeC)
+        };
+    } else if (state.mouse.target === 'NAMES') {
+        state.selection = {
+            r1: Math.min(state.mouse.startR, safeR),
+            r2: Math.max(state.mouse.startR, safeR),
+            c1: 0,
+            c2: 99999999
+        };
+    } else if (state.mouse.target === 'RULER') {
+        const maxR = state.viewSequences.length - 1;
+        state.selection = {
+            r1: 0,
+            r2: maxR,
+            c1: Math.min(state.mouse.startC, safeC),
+            c2: Math.max(state.mouse.startC, safeC)
+        };
+    }
+    
+    render();
+});
+
+window.addEventListener('mouseup', () => {
+    state.mouse.isDown = false;
+});
+
+// --- Render ---
+function render() {
+    if(!state.viewSequences.length) {
+        ctxSeq.fillStyle = '#ffffff';
+        ctxSeq.fillRect(0, 0, dom.cvsSeq.width, dom.cvsSeq.height);
+        ctxNames.fillStyle = '#ffffff';
+        ctxNames.fillRect(0, 0, dom.cvsNames.width, dom.cvsNames.height);
+        ctxRuler.fillStyle = '#f3f4f6';
+        ctxRuler.fillRect(0, 0, dom.cvsRuler.width, dom.cvsRuler.height);
+        return;
+    }
+
+    const scrollLeft = dom.areaSeq.scrollLeft;
+    const scrollTop = dom.areaSeq.scrollTop;
+    const vW = dom.cvsSeq.width;
+    const vH = dom.cvsSeq.height;
+
+    const startRow = Math.max(0, Math.floor(scrollTop / CONFIG.rowHeight) - 1);
+    const endRow = Math.min(state.viewSequences.length, Math.ceil((scrollTop + vH) / CONFIG.rowHeight) + 1);
+    const startCol = Math.max(0, Math.floor(scrollLeft / CONFIG.charWidth) - 1);
+    const endCol = Math.min(state.maxLength, Math.ceil((scrollLeft + vW) / CONFIG.charWidth) + 1);
+
+    // Ruler
+    ctxRuler.fillStyle = '#f3f4f6';
+    ctxRuler.fillRect(0, 0, dom.cvsRuler.width, dom.cvsRuler.height);
+    ctxRuler.font = CONFIG.labelFont;
+    ctxRuler.textBaseline = 'bottom';
+    ctxRuler.textAlign = 'center';
+    ctxRuler.fillStyle = '#374151';
+    
+    for(let c = startCol; c < endCol; c++) {
+        // Show ticks at positions 1, 11, 21, etc. (when (c+1) % 10 === 1, or equivalently c % 10 === 0)
+        if(c % 10 === 0) {
+            // Center of the column
+            const x = (c * CONFIG.charWidth) + (CONFIG.charWidth / 2) - scrollLeft;
+            // Position number (1-indexed): c+1
+            const position = c + 1;
+            // Draw tick mark centered in column
+            ctxRuler.beginPath();
+            ctxRuler.moveTo(x, 0);
+            ctxRuler.lineTo(x, 10);
+            ctxRuler.strokeStyle = '#6b7280';
+            ctxRuler.stroke();
+            // Place number below the tick mark
+            ctxRuler.fillText(position.toString(), x, dom.cvsRuler.height - 2);
+        }
+    }
+
+    // Names
+    ctxNames.fillStyle = '#fff';
+    ctxNames.fillRect(0, 0, dom.cvsNames.width, dom.cvsNames.height);
+    ctxNames.font = CONFIG.labelFont;
+    ctxNames.textBaseline = 'middle';
+    ctxNames.textAlign = 'left';
+    
+    for(let r = startRow; r < endRow; r++) {
+        const seq = state.viewSequences[r];
+        if(!seq) continue;
+        
+        const y = (r * CONFIG.rowHeight) - scrollTop;
+        let bgColor = '#fff';
+        let textColor = '#111827';
+        
+        if(r === state.refIndex) {
+            bgColor = '#eff6ff';
+        } else if (state.sequenceGroups) {
+            const groupId = state.sequenceGroups.get(seq.name);
+            if (groupId !== undefined) {
+                bgColor = GROUP_LIGHT_BG[(groupId + 1) % GROUP_LIGHT_BG.length];
+                textColor = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
+            }
+        }
+        
+        ctxNames.fillStyle = bgColor;
+        // Fill the entire width needed for names (may be wider than viewport)
+        ctxNames.fillRect(0, y, Math.max(dom.cvsNames.width, state.namesWidth), CONFIG.rowHeight);
+        
+        ctxNames.fillStyle = textColor;
+        // Draw text - it will be visible even if canvas is wider than viewport (scrollable)
+        ctxNames.fillText(seq.name || '', 8, y + CONFIG.rowHeight / 2);
+    }
+
+    // Sequence
+    ctxSeq.fillStyle = '#ffffff';
+    ctxSeq.fillRect(0, 0, vW, vH);
+    ctxSeq.font = CONFIG.font;
+    ctxSeq.textBaseline = 'middle';
+    ctxSeq.textAlign = 'center';
+    const colors = state.mode === 'NT' ? CONFIG.colors.NT : CONFIG.colors.AA;
+    
+    let highlightSeq = null;
+    if (state.highlightMatches === 'reference') {
+        if (state.refIndex >= 0 && state.viewSequences[state.refIndex]) {
+            highlightSeq = state.viewSequences[state.refIndex].seq;
+        }
+    }
+
+    for(let r = startRow; r < endRow; r++) {
+        const seq = state.viewSequences[r];
+        if(!seq) continue;
+        const y = (r * CONFIG.rowHeight) - scrollTop;
+        
+        for(let c = startCol; c < endCol; c++) {
+            if(c >= seq.seq.length) break;
+            
+            const char = seq.seq[c];
+            const x = (c * CONFIG.charWidth) - scrollLeft;
+            let fillColor;
+            
+            if (char === '-') {
+                fillColor = '#e5e7eb';
+            } else {
+                fillColor = colors[char] || colors['default'];
+                
+                if(state.highlightMatches && highlightSeq) {
+                    const highlightChar = (c < highlightSeq.length) ? highlightSeq[c] : '-';
+                    if(highlightChar !== '-') {
+                        if(char === highlightChar) {
+                            fillColor = CONFIG.highlightMatchColor;
+                        }
+                    }
+                }
+            }
+
+            ctxSeq.fillStyle = fillColor;
+            ctxSeq.fillRect(x, y, CONFIG.charWidth, CONFIG.rowHeight);
+            if(char !== '-') {
+                ctxSeq.fillStyle = '#000';
+                ctxSeq.fillText(char, x + CONFIG.charWidth/2, y + CONFIG.rowHeight/2);
+            }
+        }
+    }
+
+    // Selection
+    if(state.selection) {
+        const { r1, r2, c1, c2 } = state.selection;
+        const visC2 = Math.min(c2, state.maxLength + 20);
+        const sx = (c1 * CONFIG.charWidth) - scrollLeft;
+        const sy = (r1 * CONFIG.rowHeight) - scrollTop;
+        const w = Math.max(4, (visC2 - c1 + 1) * CONFIG.charWidth);
+        const h = (r2 - r1 + 1) * CONFIG.rowHeight;
+        
+        ctxSeq.fillStyle = 'rgba(37, 99, 235, 0.2)';
+        ctxSeq.fillRect(sx, sy, w, h);
+        ctxSeq.strokeStyle = 'rgba(37, 99, 235, 0.8)';
+        ctxSeq.lineWidth = 1;
+        ctxSeq.strokeRect(sx, sy, w, h);
+    }
+}
+
+init();
+
+</script>
+</body>
+</html>
+
