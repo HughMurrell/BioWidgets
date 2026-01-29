@@ -148,6 +148,16 @@
             <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
         </div>
 
+        <div class="control-group">
+            <label>Validate</label>
+            <button id="btn-validate" title="Validate filename and sequence names against naming convention" disabled>Validate</button>
+        </div>
+
+        <div class="control-group">
+            <label>Parse</label>
+            <button id="btn-parse" title="Parse and display filename and sequence name components" disabled>Parse</button>
+        </div>
+
         <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
 
         <div class="control-group">
@@ -206,6 +216,26 @@
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
             <button id="btn-run-group" class="active">Group</button>
+        </div>
+    </div>
+</div>
+
+<div id="validation-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 700px; max-height: 80vh; overflow-y: auto;">
+        <h2>Validation Results</h2>
+        <div id="validation-results" style="font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 60vh; overflow-y: auto; background: #f9fafb; padding: 15px; border-radius: 4px; border: 1px solid #e5e7eb;"></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('validation-overlay').style.display='none'" class="active">Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="parse-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 800px; max-height: 80vh; overflow-y: auto;">
+        <h2>Parse Results</h2>
+        <div id="parse-results" style="font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 60vh; overflow-y: auto; background: #f9fafb; padding: 15px; border-radius: 4px; border: 1px solid #e5e7eb;"></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('parse-overlay').style.display='none'" class="active">Close</button>
         </div>
     </div>
 </div>
@@ -279,6 +309,369 @@ const CODON_TABLE = {
     'TAC':'Y', 'TAT':'Y', 'TAA':'*', 'TAG':'*', 'TGC':'C', 'TGT':'C', 'TGA':'*', 'TGG':'W',
 };
 
+// ============================================================================
+// FASTA Naming Convention - JavaScript Implementation
+// Mirrors py/fasta_naming.py structure for maintainability
+// ============================================================================
+
+// --- Global Validation Constants ---
+const NETWORK_PATTERN = /^[A-Z]$/;
+const PROTOCOL_PATTERN = /^\d{3,4}[A-Z]?$/;
+const PTID_PATTERN = /^(CAP\d{3}|\d{4,6})$/;
+const VISIT_PATTERN = /^\d{4}(-\d{4})*$/;
+const SEQUENCE_ID_PATTERN = /^\w{8}$/;
+
+const VALID_REGIONS = ['env', 'pol', 'gag', 'nef', 'ren', 'gp'];
+const VALID_MOLECULES = ['aa', 'nt'];
+const VALID_SEQUENCING_METHODS = ['pb', 'sa', 'np', 'il', 'sy'];
+
+const OPTIONAL_FIELD_FLAGS = {
+    'a': 'alignment',
+    'f': 'filters',
+    'm': 'modifiers',
+    'w': 'additions',
+    'o': 'removals',
+    's': 'sequencing',
+    'p': 'processing',
+    'e': 'extras',
+    'r': 'reviewed'
+};
+
+// --- Helper Functions ---
+function _formatOptionalField(flag, fieldData) {
+    // Format optional field dictionary into string representation
+    // Example: {'main': 'maff', 'sub': [], 'subsub': {}} -> "a-maff"
+    const parts = [`${flag}-${fieldData.main}`];
+    
+    // Add subcategories
+    for (const sub of (fieldData.sub || [])) {
+        if (fieldData.subsub && fieldData.subsub[sub]) {
+            // Has subsubcategories
+            const subsubParts = fieldData.subsub[sub].join('+');
+            parts.push(`${sub}+${subsubParts}`);
+        } else {
+            // No subsubcategories
+            parts.push(sub);
+        }
+    }
+    
+    // Add subsub entries that don't have explicit sub entries
+    if (fieldData.subsub) {
+        for (const [key, values] of Object.entries(fieldData.subsub)) {
+            if (key === fieldData.main && !(fieldData.sub || []).includes(key)) {
+                // subsubcategories directly attached to main
+                const subsubStr = values.join('+');
+                parts[0] += `+${subsubStr}`;
+            }
+        }
+    }
+    
+    return parts.join('-');
+}
+
+function _parseOptionalField(fieldStr) {
+    // Parse optional field string into structured dictionary
+    // Example: "a-maff" -> {'main': 'maff', 'sub': [], 'subsub': {}}
+    if (!fieldStr.includes('-')) {
+        throw new Error(`Invalid optional field format: ${fieldStr}`);
+    }
+    
+    const content = fieldStr.split('-').slice(1).join('-'); // Remove flag, keep everything after first dash
+    const parts = content.split('-');
+    
+    const result = {
+        main: '',
+        sub: [],
+        subsub: {}
+    };
+    
+    // First part might contain main+subsub (e.g., "rw+CB+AG")
+    if (parts[0].includes('+')) {
+        const mainParts = parts[0].split('+');
+        result.main = mainParts[0];
+        result.subsub[mainParts[0]] = mainParts.slice(1);
+    } else {
+        result.main = parts[0];
+    }
+    
+    // Process remaining parts (subcategories)
+    for (const part of parts.slice(1)) {
+        if (part.includes('+')) {
+            // Subcategory with subsubcategories
+            const subParts = part.split('+');
+            const subName = subParts[0];
+            result.sub.push(subName);
+            result.subsub[subName] = subParts.slice(1);
+        } else {
+            // Simple subcategory
+            result.sub.push(part);
+        }
+    }
+    
+    return result;
+}
+
+// --- Data Classes ---
+class FastaFileName {
+    constructor(network, protocol, ptid, visit, region, molecule, optionalFields = {}) {
+        this.network = network;
+        this.protocol = protocol;
+        this.ptid = ptid;
+        this.visit = visit;
+        this.region = region;
+        this.molecule = molecule;
+        
+        // Optional fields
+        this.alignment = optionalFields.alignment || null;
+        this.filters = optionalFields.filters || null;
+        this.modifiers = optionalFields.modifiers || null;
+        this.additions = optionalFields.additions || null;
+        this.removals = optionalFields.removals || null;
+        this.sequencing = optionalFields.sequencing || null;
+        this.processing = optionalFields.processing || null;
+        this.extras = optionalFields.extras || null;
+        this.reviewed = optionalFields.reviewed || null;
+        
+        this.validate();
+    }
+    
+    validate() {
+        // Network validation
+        if (!NETWORK_PATTERN.test(this.network)) {
+            throw new Error(`Invalid network '${this.network}': must be 1 uppercase letter`);
+        }
+        
+        // Protocol validation
+        if (!PROTOCOL_PATTERN.test(this.protocol)) {
+            throw new Error(`Invalid protocol '${this.protocol}': must be 3-4 characters`);
+        }
+        
+        // PTID validation
+        if (!PTID_PATTERN.test(this.ptid)) {
+            throw new Error(`Invalid PTID '${this.ptid}': must be 4-6 digits or CAP### format`);
+        }
+        
+        // Visit validation
+        if (!VISIT_PATTERN.test(this.visit)) {
+            throw new Error(`Invalid visit '${this.visit}': must be 4 digits or dash-separated`);
+        }
+        
+        // Region validation
+        if (!VALID_REGIONS.includes(this.region.toLowerCase())) {
+            throw new Error(`Invalid region '${this.region}': must be one of ${VALID_REGIONS.join(', ')}`);
+        }
+        
+        // Molecule validation
+        if (!VALID_MOLECULES.includes(this.molecule.toLowerCase())) {
+            throw new Error(`Invalid molecule '${this.molecule}': must be one of ${VALID_MOLECULES.join(', ')}`);
+        }
+    }
+    
+    toFilename() {
+        const parts = [
+            `${this.network}${this.protocol}`,
+            this.ptid,
+            this.visit,
+            this.region,
+            this.molecule
+        ];
+        
+        // Add optional fields if present
+        if (this.alignment) parts.push(_formatOptionalField('a', this.alignment));
+        if (this.filters) parts.push(_formatOptionalField('f', this.filters));
+        if (this.modifiers) parts.push(_formatOptionalField('m', this.modifiers));
+        if (this.additions) parts.push(_formatOptionalField('w', this.additions));
+        if (this.removals) parts.push(_formatOptionalField('o', this.removals));
+        if (this.sequencing) parts.push(_formatOptionalField('s', this.sequencing));
+        if (this.processing) parts.push(_formatOptionalField('p', this.processing));
+        if (this.extras) parts.push(_formatOptionalField('e', this.extras));
+        if (this.reviewed) parts.push(_formatOptionalField('r', this.reviewed));
+        
+        return parts.join('_') + '.fasta';
+    }
+}
+
+class SequenceName {
+    constructor(network, cohort, ptid, visit, region, sequencingMethod, sequenceId, optionalFields = {}) {
+        this.network = network;
+        this.cohort = cohort;
+        this.ptid = ptid;
+        this.visit = visit;
+        this.region = region;
+        this.sequencingMethod = sequencingMethod;
+        this.sequenceId = sequenceId || '';
+        
+        // Optional fields
+        this.processing = optionalFields.processing || null;
+        this.modifiers = optionalFields.modifiers || null;
+        this.extras = optionalFields.extras || null;
+        this.collapsed = optionalFields.collapsed || null;
+        
+        this.validate();
+    }
+    
+    validate() {
+        // Network validation
+        if (!NETWORK_PATTERN.test(this.network)) {
+            throw new Error(`Invalid network '${this.network}': must be 1 uppercase letter`);
+        }
+        
+        // Sequencing method validation
+        if (!VALID_SEQUENCING_METHODS.includes(this.sequencingMethod.toLowerCase())) {
+            throw new Error(`Invalid sequencing method '${this.sequencingMethod}': must be one of ${VALID_SEQUENCING_METHODS.join(', ')}`);
+        }
+        
+        // Sequence ID validation (optional for collapsed sequences)
+        if (this.sequenceId && !this.collapsed) {
+            if (!SEQUENCE_ID_PATTERN.test(this.sequenceId)) {
+                throw new Error(`Invalid sequence ID '${this.sequenceId}': must be 8 characters`);
+            }
+        }
+    }
+    
+    toSequenceId() {
+        const parts = [
+            `${this.network}${this.cohort}`,
+            this.ptid,
+            this.visit,
+            this.region,
+            this.sequenceId ? `${this.sequencingMethod}-${this.sequenceId}` : this.sequencingMethod
+        ];
+        
+        // Add optional fields
+        if (this.collapsed) parts.push(this.collapsed);
+        if (this.processing) parts.push(this.processing);
+        if (this.modifiers) parts.push(this.modifiers);
+        if (this.extras) parts.push(this.extras);
+        
+        return parts.join('_');
+    }
+}
+
+// --- Parser Functions ---
+function parseFastaFilename(filename) {
+    // Remove .fasta extension if present
+    let name = filename.replace(/\.fasta$/, '');
+    
+    // Split by underscore
+    const parts = name.split('_');
+    
+    if (parts.length < 5) {
+        throw new Error(`Filename has too few parts: expected at least 5, got ${parts.length}`);
+    }
+    
+    // Parse obligate fields
+    const networkProtocol = parts[0];
+    const network = networkProtocol[0];
+    const protocol = networkProtocol.slice(1);
+    
+    const ptid = parts[1];
+    const visit = parts[2];
+    const region = parts[3];
+    const molecule = parts[4];
+    
+    // Parse optional fields by flag
+    const optionalFields = {};
+    for (const part of parts.slice(5)) {
+        if (part.startsWith('a-')) {
+            optionalFields.alignment = _parseOptionalField(part);
+        } else if (part.startsWith('f-')) {
+            optionalFields.filters = _parseOptionalField(part);
+        } else if (part.startsWith('m-')) {
+            optionalFields.modifiers = _parseOptionalField(part);
+        } else if (part.startsWith('w-')) {
+            optionalFields.additions = _parseOptionalField(part);
+        } else if (part.startsWith('o-')) {
+            optionalFields.removals = _parseOptionalField(part);
+        } else if (part.startsWith('s-')) {
+            optionalFields.sequencing = _parseOptionalField(part);
+        } else if (part.startsWith('p-')) {
+            optionalFields.processing = _parseOptionalField(part);
+        } else if (part.startsWith('e-')) {
+            optionalFields.extras = _parseOptionalField(part);
+        } else if (part.startsWith('r-')) {
+            optionalFields.reviewed = _parseOptionalField(part);
+        }
+    }
+    
+    return new FastaFileName(network, protocol, ptid, visit, region, molecule, optionalFields);
+}
+
+function parseSequenceName(seqId) {
+    const parts = seqId.split('_');
+    
+    if (parts.length < 5) {
+        throw new Error(`Sequence ID has too few parts: expected at least 5, got ${parts.length}`);
+    }
+    
+    // Parse obligate fields
+    const networkCohort = parts[0];
+    const network = networkCohort[0];
+    const cohort = networkCohort.slice(1);
+    
+    const ptid = parts[1];
+    const visit = parts[2];
+    const region = parts[3];
+    
+    // Parse sequencing method and ID
+    const seqParts = parts[4].split('-');
+    const sequencingMethod = seqParts[0];
+    const sequenceId = seqParts.length > 1 ? seqParts[1] : '';
+    
+    // Parse optional fields
+    const optionalFields = {};
+    for (const part of parts.slice(5)) {
+        if (part.startsWith('p-')) {
+            optionalFields.processing = part;
+        } else if (part.startsWith('m-')) {
+            optionalFields.modifiers = part;
+        } else if (part.startsWith('e-')) {
+            optionalFields.extras = part;
+        } else if (part.startsWith('coll-')) {
+            optionalFields.collapsed = part;
+        }
+    }
+    
+    return new SequenceName(network, cohort, ptid, visit, region, sequencingMethod, sequenceId, optionalFields);
+}
+
+// --- Validation Function ---
+function validateFastaFile(filename, sequences) {
+    // sequences: array of {name: string, seq: array}
+    const errors = [];
+    
+    // Validate filename
+    let filenameObj;
+    try {
+        filenameObj = parseFastaFilename(filename);
+    } catch (e) {
+        errors.push(`Filename error: ${e.message}`);
+        return errors; // Can't validate sequences without valid filename
+    }
+    
+    // Validate sequences
+    for (let i = 0; i < sequences.length; i++) {
+        const seq = sequences[i];
+        try {
+            const seqName = parseSequenceName(seq.name);
+            
+            // Check consistency between filename and sequence names
+            if (seqName.network !== filenameObj.network) {
+                errors.push(`Sequence ${i+1}: network mismatch (file: ${filenameObj.network}, seq: ${seqName.network})`);
+            }
+            
+            if (seqName.ptid !== filenameObj.ptid) {
+                errors.push(`Sequence ${i+1}: PTID mismatch (file: ${filenameObj.ptid}, seq: ${seqName.ptid})`);
+            }
+            
+        } catch (e) {
+            errors.push(`Sequence ${i+1} ('${seq.name}'): ${e.message}`);
+        }
+    }
+    
+    return errors;
+}
+
 // --- State ---
 const state = {
     rawSequences: [],
@@ -322,7 +715,11 @@ const dom = {
     cvsRuler: document.getElementById('cvs-ruler'),
     sizer: document.getElementById('scroll-sizer'),
     filenameDisplay: document.getElementById('filename-display'),
-    filenameText: document.getElementById('filename-text')
+    filenameText: document.getElementById('filename-text'),
+    btnValidate: document.getElementById('btn-validate'),
+    btnParse: document.getElementById('btn-parse'),
+    validationResults: document.getElementById('validation-results'),
+    parseResults: document.getElementById('parse-results')
 };
 
 const ctxSeq = dom.cvsSeq.getContext('2d', { alpha: false });
@@ -350,6 +747,13 @@ function init() {
         state.highlightMatches = e.target.value;
         recalc();
     });
+    
+    dom.btnValidate.addEventListener('click', runValidation);
+    
+    if (dom.btnParse) {
+        dom.btnParse.addEventListener('click', runParse);
+    }
+    
 
     // Synchronize scrolling
     dom.areaSeq.addEventListener('scroll', () => {
@@ -569,6 +973,14 @@ function finalizeLoad(seqs, isAlignment) {
         }
     }
     
+    // Enable validate and parse buttons if file is loaded
+    if (dom.btnValidate) {
+        dom.btnValidate.disabled = false;
+    }
+    if (dom.btnParse) {
+        dom.btnParse.disabled = false;
+    }
+    
     // Display filename
     if (state.currentFileName) {
         dom.filenameText.textContent = state.currentFileName;
@@ -708,6 +1120,213 @@ function updateColorLegend() {
     });
     
     legend.style.display = 'block';
+}
+
+// --- Validation Logic ---
+function runValidation() {
+    if (!state.currentFileName || !state.rawSequences.length) {
+        alert("Please load a FASTA file first.");
+        return;
+    }
+    
+    showOverlay(true);
+    dom.overlayMsg.textContent = "Validating file...";
+    
+    try {
+        // Run validation using JavaScript implementation
+        const filename = state.currentFileName;
+        const errors = validateFastaFile(filename, state.rawSequences);
+        
+        // Display results
+        displayValidationResults(filename, errors, state.rawSequences.length);
+        
+        showOverlay(false);
+    } catch (error) {
+        console.error("Validation error:", error);
+        showOverlay(false);
+        alert("Validation failed: " + error.message);
+    }
+}
+
+function displayValidationResults(filename, errors, seqCount) {
+    const resultsDiv = dom.validationResults;
+    let html = '';
+    
+    html += `<div style="margin-bottom: 15px;"><strong>File:</strong> ${filename}</div>`;
+    html += `<div style="margin-bottom: 15px;"><strong>Sequences:</strong> ${seqCount}</div>`;
+    html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #e5e7eb;">';
+    
+    if (errors.length === 0) {
+        html += '<div style="color: #10b981; font-weight: bold; margin-bottom: 10px;">✓ Validation passed!</div>';
+        html += '<div style="color: #10b981;">All sequences and filename conform to the naming convention.</div>';
+    } else {
+        html += `<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">✗ Found ${errors.length} error(s):</div>`;
+        html += '<ul style="margin: 10px 0; padding-left: 20px;">';
+        errors.forEach(error => {
+            html += `<li style="margin: 5px 0; color: #374151;">${error}</li>`;
+        });
+        html += '</ul>';
+    }
+    
+    resultsDiv.innerHTML = html;
+    document.getElementById('validation-overlay').style.display = 'flex';
+}
+
+
+function displayValidationResults(filename, errors, seqCount) {
+    const resultsDiv = dom.validationResults;
+    let html = '';
+    
+    html += `<div style="margin-bottom: 15px;"><strong>File:</strong> ${filename}</div>`;
+    html += `<div style="margin-bottom: 15px;"><strong>Sequences:</strong> ${seqCount}</div>`;
+    html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #e5e7eb;">';
+    
+    if (errors.length === 0) {
+        html += '<div style="color: #10b981; font-weight: bold; margin-bottom: 10px;">✓ Validation passed!</div>';
+        html += '<div style="color: #10b981;">All sequences and filename conform to the naming convention.</div>';
+    } else {
+        html += `<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">✗ Found ${errors.length} error(s):</div>`;
+        html += '<ul style="margin: 10px 0; padding-left: 20px;">';
+        errors.forEach(error => {
+            html += `<li style="margin: 5px 0; color: #374151;">${error}</li>`;
+        });
+        html += '</ul>';
+    }
+    
+    resultsDiv.innerHTML = html;
+    document.getElementById('validation-overlay').style.display = 'flex';
+}
+
+// --- Parse Logic ---
+function runParse() {
+    if (!state.currentFileName || !state.rawSequences.length) {
+        alert("Please load a FASTA file first.");
+        return;
+    }
+    
+    try {
+        // Parse filename
+        let filenameObj;
+        try {
+            filenameObj = parseFastaFilename(state.currentFileName);
+        } catch (e) {
+            alert(`Error parsing filename: ${e.message}`);
+            return;
+        }
+        
+        // Parse sequences
+        const parsedSequences = [];
+        for (let i = 0; i < state.rawSequences.length; i++) {
+            const seq = state.rawSequences[i];
+            try {
+                const seqName = parseSequenceName(seq.name);
+                parsedSequences.push({
+                    originalId: seq.name,
+                    parsedName: seqName,
+                    parseError: null
+                });
+            } catch (e) {
+                parsedSequences.push({
+                    originalId: seq.name,
+                    parsedName: null,
+                    parseError: e.message
+                });
+            }
+        }
+        
+        // Display results
+        displayParseResults(state.currentFileName, filenameObj, parsedSequences);
+        
+    } catch (error) {
+        console.error("Parse error:", error);
+        alert("Parse failed: " + error.message);
+    }
+}
+
+function displayParseResults(filename, filenameObj, parsedSequences) {
+    const resultsDiv = dom.parseResults;
+    let html = '';
+    
+    // Filename Components
+    html += '<div style="margin-bottom: 20px;"><strong style="font-size: 14px; color: #374151;">=== Filename Components ===</strong></div>';
+    html += '<div style="margin-left: 15px; margin-bottom: 10px;">';
+    html += `<div style="margin: 5px 0;"><strong>Network:</strong> ${filenameObj.network}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Protocol:</strong> ${filenameObj.protocol}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>PTID:</strong> ${filenameObj.ptid}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Visit:</strong> ${filenameObj.visit}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Region:</strong> ${filenameObj.region}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Molecule:</strong> ${filenameObj.molecule}</div>`;
+    
+    // Optional fields
+    if (filenameObj.alignment) {
+        html += `<div style="margin: 5px 0;"><strong>Alignment:</strong> ${JSON.stringify(filenameObj.alignment)}</div>`;
+    }
+    if (filenameObj.filters) {
+        html += `<div style="margin: 5px 0;"><strong>Filters:</strong> ${JSON.stringify(filenameObj.filters)}</div>`;
+    }
+    if (filenameObj.modifiers) {
+        html += `<div style="margin: 5px 0;"><strong>Modifiers:</strong> ${JSON.stringify(filenameObj.modifiers)}</div>`;
+    }
+    if (filenameObj.additions) {
+        html += `<div style="margin: 5px 0;"><strong>Additions:</strong> ${JSON.stringify(filenameObj.additions)}</div>`;
+    }
+    if (filenameObj.removals) {
+        html += `<div style="margin: 5px 0;"><strong>Removals:</strong> ${JSON.stringify(filenameObj.removals)}</div>`;
+    }
+    if (filenameObj.sequencing) {
+        html += `<div style="margin: 5px 0;"><strong>Sequencing:</strong> ${JSON.stringify(filenameObj.sequencing)}</div>`;
+    }
+    if (filenameObj.processing) {
+        html += `<div style="margin: 5px 0;"><strong>Processing:</strong> ${JSON.stringify(filenameObj.processing)}</div>`;
+    }
+    if (filenameObj.extras) {
+        html += `<div style="margin: 5px 0;"><strong>Extras:</strong> ${JSON.stringify(filenameObj.extras)}</div>`;
+    }
+    if (filenameObj.reviewed) {
+        html += `<div style="margin: 5px 0;"><strong>Reviewed:</strong> ${JSON.stringify(filenameObj.reviewed)}</div>`;
+    }
+    
+    html += '</div>';
+    
+    // Sequences
+    html += `<div style="margin-top: 25px; margin-bottom: 15px;"><strong style="font-size: 14px; color: #374151;">=== Sequences (${parsedSequences.length}) ===</strong></div>`;
+    
+    const showCount = Math.min(5, parsedSequences.length);
+    for (let i = 0; i < showCount; i++) {
+        const seqData = parsedSequences[i];
+        html += `<div style="margin-left: 15px; margin-bottom: 15px; padding: 10px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 4px;">`;
+        html += `<div style="margin-bottom: 8px;"><strong>${i + 1}. ${seqData.originalId}</strong></div>`;
+        
+        if (seqData.parsedName) {
+            const sn = seqData.parsedName;
+            html += `<div style="margin: 3px 0; color: #374151;">Network: ${sn.network}, Cohort: ${sn.cohort}, PTID: ${sn.ptid}</div>`;
+            html += `<div style="margin: 3px 0; color: #374151;">Visit: ${sn.visit}, Region: ${sn.region}</div>`;
+            html += `<div style="margin: 3px 0; color: #374151;">Sequencing: ${sn.sequencingMethod}${sn.sequenceId ? '-' + sn.sequenceId : ''}</div>`;
+            if (sn.processing) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Processing: ${sn.processing}</div>`;
+            }
+            if (sn.modifiers) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Modifiers: ${sn.modifiers}</div>`;
+            }
+            if (sn.extras) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Extras: ${sn.extras}</div>`;
+            }
+            if (sn.collapsed) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Collapsed: ${sn.collapsed}</div>`;
+            }
+        } else {
+            html += `<div style="color: #ef4444; margin-top: 5px;">(parsing failed: ${seqData.parseError})</div>`;
+        }
+        
+        html += '</div>';
+    }
+    
+    if (parsedSequences.length > 5) {
+        html += `<div style="margin-left: 15px; margin-top: 10px; color: #6b7280;">... and ${parsedSequences.length - 5} more sequences</div>`;
+    }
+    
+    resultsDiv.innerHTML = html;
+    document.getElementById('parse-overlay').style.display = 'flex';
 }
 
 // --- Export Logic ---
