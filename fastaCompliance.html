@@ -269,6 +269,7 @@
     </div>
     <div id="legend-filename-section" style="margin-bottom: 15px;">
         <div style="font-weight: 600; color: #374151; margin-bottom: 8px;">Filename:</div>
+        <button id="btn-filename-help" style="margin-bottom: 8px; padding: 2px 8px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 11px; color: #6b7280; font-weight: 600;">?</button>
         <div id="legend-filename-content"></div>
     </div>
     <div id="legend-sequences-section">
@@ -279,6 +280,7 @@
                 <input type="number" id="inp-skip-sequences" value="0" min="0" style="width: 50px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 11px; text-align: center;">
             </div>
         </div>
+        <button id="btn-sequence-help" style="margin-bottom: 8px; padding: 2px 8px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 11px; color: #6b7280; font-weight: 600;">?</button>
         <div id="legend-sequences-content"></div>
     </div>
 </div>
@@ -327,7 +329,150 @@
     </div>
 </div>
 
+<div id="filename-help-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 6000; display: none; align-items: center; justify-content: center;">
+    <div class="help-box" style="width: 600px; max-width: 90%; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Standard FASTA Filename Compliance Rules</h2>
+            <button onclick="document.getElementById('filename-help-overlay').style.display='none'" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #6b7280; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">×</button>
+        </div>
+        <div style="line-height: 1.6; color: #374151;">
+            <h3 style="margin-top: 0; margin-bottom: 10px; color: #111827;">Required Fields (in order, separated by underscores _)</h3>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">NetworkProtocol (Field 1)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: [Network][Protocol]</li>
+                    <li>Network: 1 uppercase letter (A-Z)</li>
+                    <li>Protocol: 3-4 digits, optionally followed by 1 uppercase letter</li>
+                    <li>Example: V806, H123A</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">PTID (Field 2)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4-6 digits OR CAP### (where ### is 3 digits)</li>
+                    <li>Examples: 7822, 123456, CAP123</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Visit (Field 3)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4 digits OR dash-separated 4-digit ranges</li>
+                    <li>Examples: 0050, 0050-0070, 0050-0070-0100</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Region (Field 4)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Must be one of: env, pol, gag, nef, ren, gp</li>
+                    <li>Case-insensitive</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Molecule (Field 5)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Must be one of: aa (amino acid) or nt (nucleotide)</li>
+                    <li>Case-insensitive</li>
+                </ul>
+            </div>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #111827;">Optional Fields (after required fields)</h3>
+            <p style="margin: 5px 0;">Optional fields use flags with format [flag]-[value]:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li><strong>a-</strong> = alignment (e.g., a-maff)</li>
+                <li><strong>f-</strong> = filters (e.g., f-quality)</li>
+                <li><strong>m-</strong> = modifiers (e.g., m-normalized)</li>
+                <li><strong>w-</strong> = additions (e.g., w-reference)</li>
+                <li><strong>o-</strong> = removals (e.g., o-gaps)</li>
+                <li><strong>s-</strong> = sequencing (e.g., s-pb)</li>
+                <li><strong>p-</strong> = processing (e.g., p-cleaned)</li>
+                <li><strong>e-</strong> = extras (e.g., e-notes)</li>
+                <li><strong>r-</strong> = reviewed (e.g., r-reviewed)</li>
+            </ul>
+        </div>
+    </div>
+</div>
 
+<div id="sequence-help-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 6000; display: none; align-items: center; justify-content: center;">
+    <div class="help-box" style="width: 600px; max-width: 90%; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Standard FASTA Sequence Name Compliance Rules</h2>
+            <button onclick="document.getElementById('sequence-help-overlay').style.display='none'" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #6b7280; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">×</button>
+        </div>
+        <div style="line-height: 1.6; color: #374151;">
+            <h3 style="margin-top: 0; margin-bottom: 10px; color: #111827;">Required Fields (in order, separated by underscores _)</h3>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">NetworkCohort (Field 1)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: [Network][Cohort]</li>
+                    <li>Network: 1 uppercase letter (A-Z)</li>
+                    <li>Cohort: remaining characters (digits/letters)</li>
+                    <li>Example: V806, H123A</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">PTID (Field 2)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4-6 digits OR CAP### (where ### is 3 digits)</li>
+                    <li>Examples: 7822, 123456, CAP123</li>
+                    <li>Must match the filename PTID</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Visit (Field 3)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4 digits OR dash-separated 4-digit ranges</li>
+                    <li>Examples: 0050, 0050-0070, 0050-0070-0100</li>
+                    <li>Must match the filename visit</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Region (Field 4)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Must be one of: env, pol, gag, nef, ren, gp</li>
+                    <li>Case-insensitive</li>
+                    <li>Must match the filename region</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">SequencingMethodId (Field 5)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: [SequencingMethod] OR [SequencingMethod]-[SequenceId]</li>
+                    <li>Sequencing Method: must be one of: pb, sa, np, il, sy (case-insensitive)</li>
+                    <li>Sequence ID (if present): exactly 8 alphanumeric characters</li>
+                    <li>Examples: pb, pb-GTCATTTC, sa-12345678</li>
+                </ul>
+            </div>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #111827;">Optional Fields (after required fields)</h3>
+            <p style="margin: 5px 0;">Optional fields use flags with format [flag]-[value]:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li><strong>p-</strong> = processing (e.g., p-cleaned)</li>
+                <li><strong>m-</strong> = modifiers (e.g., m-normalized)</li>
+                <li><strong>e-</strong> = extras (e.g., e-notes)</li>
+                <li><strong>coll-</strong> = collapsed (e.g., coll-merged)</li>
+            </ul>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #111827;">Consistency Requirements</h3>
+            <p style="margin: 5px 0;">Sequence names must be consistent with the filename:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li>Network must match filename network</li>
+                <li>PTID must match filename PTID</li>
+                <li>Visit must match filename visit</li>
+                <li>Region must match filename region</li>
+            </ul>
+        </div>
+    </div>
+</div>
 
 <script>
 // --- Config ---
@@ -981,7 +1126,9 @@ const dom = {
     btnShowLegend: document.getElementById('btn-show-legend'),
     btnApplyTransformations: document.getElementById('btn-apply-transformations'),
     inpSkipSequences: document.getElementById('inp-skip-sequences'),
-    btnExportSettings: document.getElementById('btn-export-settings')
+    btnExportSettings: document.getElementById('btn-export-settings'),
+    btnFilenameHelp: document.getElementById('btn-filename-help'),
+    btnSequenceHelp: document.getElementById('btn-sequence-help')
 };
 
 const ctxSeq = dom.cvsSeq.getContext('2d', { alpha: false });
@@ -1087,6 +1234,26 @@ function init() {
     // Legend button
     if (dom.btnShowLegend) {
         dom.btnShowLegend.addEventListener('click', toggleLegend);
+    }
+    
+    // Filename help button
+    if (dom.btnFilenameHelp) {
+        dom.btnFilenameHelp.addEventListener('click', () => {
+            const overlay = document.getElementById('filename-help-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+        });
+    }
+    
+    // Sequence help button
+    if (dom.btnSequenceHelp) {
+        dom.btnSequenceHelp.addEventListener('click', () => {
+            const overlay = document.getElementById('sequence-help-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+        });
     }
     
     // Apply transformations button
