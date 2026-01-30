@@ -204,7 +204,7 @@
         <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
         
         <div class="control-group" style="flex-direction: column; align-items: flex-start; gap: 5px;">
-            <label style="font-size: 11px; color: #6b7280;">Delimiters</label>
+            <label style="font-size: 11px; color: #6b7280;">Current Delimiters</label>
             <div style="display: flex; gap: 10px; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 5px;">
                     <label style="font-size: 11px; text-transform: none;">Field:</label>
@@ -213,6 +213,20 @@
                 <div style="display: flex; align-items: center; gap: 5px;">
                     <label style="font-size: 11px; text-transform: none;">Subfield:</label>
                     <input type="text" id="inp-subfield-delimiter" value="-" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
+                </div>
+            </div>
+        </div>
+        
+        <div class="control-group" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="font-size: 11px; color: #6b7280;">New Delimiters</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="font-size: 11px; text-transform: none;">Field:</label>
+                    <input type="text" id="inp-new-field-delimiter" value="_" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="font-size: 11px; text-transform: none;">Subfield:</label>
+                    <input type="text" id="inp-new-subfield-delimiter" value="-" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
                 </div>
             </div>
         </div>
@@ -914,6 +928,8 @@ const state = {
     currentFileName: null,
     fieldDelimiter: '_',
     subfieldDelimiter: '-',
+    newFieldDelimiter: '_',
+    newSubfieldDelimiter: '-',
     filenameFields: [],
     sequenceFields: [],
     filenameRegexMap: new Map(), // fieldIndex -> regex string (identity by default)
@@ -954,6 +970,8 @@ const dom = {
     parseResults: document.getElementById('parse-results'),
     inpFieldDelimiter: document.getElementById('inp-field-delimiter'),
     inpSubfieldDelimiter: document.getElementById('inp-subfield-delimiter'),
+    inpNewFieldDelimiter: document.getElementById('inp-new-field-delimiter'),
+    inpNewSubfieldDelimiter: document.getElementById('inp-new-subfield-delimiter'),
     fieldLegendPopup: document.getElementById('field-legend-popup'),
     legendFilenameContent: document.getElementById('legend-filename-content'),
     legendSequencesContent: document.getElementById('legend-sequences-content'),
@@ -1030,6 +1048,26 @@ function init() {
             state.subfieldDelimiter = e.target.value || '-';
             updateFieldParsing();
             updateColoredFilename();
+            render();
+        });
+    }
+    
+    // New delimiter inputs (for output only, don't trigger parsing update)
+    if (dom.inpNewFieldDelimiter) {
+        state.newFieldDelimiter = dom.inpNewFieldDelimiter.value || '_';
+        dom.inpNewFieldDelimiter.addEventListener('input', (e) => {
+            state.newFieldDelimiter = e.target.value || '_';
+            // Re-render to update transformed names with new delimiters
+            updateTransformedFilename();
+            render();
+        });
+    }
+    if (dom.inpNewSubfieldDelimiter) {
+        state.newSubfieldDelimiter = dom.inpNewSubfieldDelimiter.value || '-';
+        dom.inpNewSubfieldDelimiter.addEventListener('input', (e) => {
+            state.newSubfieldDelimiter = e.target.value || '-';
+            // Re-render to update transformed names with new delimiters
+            updateTransformedFilename();
             render();
         });
     }
@@ -1506,6 +1544,9 @@ function getTransformedFilename() {
     });
     
     // Second pass: build output, skipping empty fields and their adjacent delimiters
+    // Use NEW delimiters for joining the transformed fields
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
     let transformedParts = [];
     transformedFields.forEach((part, idx) => {
         if (part.isDelimiter) {
@@ -1516,8 +1557,15 @@ function getTransformedFilename() {
             const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
             
             // Only include delimiter if neither adjacent field is empty
+            // Use NEW field delimiter for field delimiters, NEW subfield delimiter for subfield delimiters
             if (!prevIsEmpty && !nextIsEmpty) {
-                transformedParts.push(part.text);
+                if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                    // This is a field delimiter
+                    transformedParts.push(newFieldDelim);
+                } else {
+                    // This is a subfield delimiter
+                    transformedParts.push(newSubfieldDelim);
+                }
             }
         } else {
             // Only include non-empty fields
@@ -2214,6 +2262,9 @@ function transformSequenceName(seqName, sequenceIndex) {
     });
     
     // Second pass: build output, skipping empty fields and their adjacent delimiters
+    // Use NEW delimiters for joining the transformed fields
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
     let transformedParts = [];
     transformedFields.forEach((part, idx) => {
         if (part.isDelimiter) {
@@ -2224,8 +2275,15 @@ function transformSequenceName(seqName, sequenceIndex) {
             const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
             
             // Only include delimiter if neither adjacent field is empty
+            // Use NEW field delimiter for field delimiters, NEW subfield delimiter for subfield delimiters
             if (!prevIsEmpty && !nextIsEmpty) {
-                transformedParts.push(part.text);
+                if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                    // This is a field delimiter
+                    transformedParts.push(newFieldDelim);
+                } else {
+                    // This is a subfield delimiter
+                    transformedParts.push(newSubfieldDelim);
+                }
             }
         } else {
             // Only include non-empty fields
@@ -2468,9 +2526,11 @@ function updateLegend() {
     
     // Compute transformed filename fields
     let transformedFilenameFields = [];
+    const originalFieldToNewFields = new Map(); // originalFieldIndex -> array of {newFieldIdx, transformedValue}
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    
     if (state.currentFileName) {
-        const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
-        const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
         const filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
         
         // Apply transformations to get transformed fields
@@ -2489,48 +2549,193 @@ function updateLegend() {
         });
         
         // Re-parse the transformed filename to get proper field structure
+        // Use NEW delimiters for re-parsing since the transformed name uses new delimiters
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
         const transformedFilename = transformedFilenameFields.map(p => p.text).join('');
-        transformedFilenameFields = parseFields(transformedFilename, fieldDelim, subfieldDelim);
+        transformedFilenameFields = parseFields(transformedFilename, newFieldDelim, newSubfieldDelim);
+        
+        // Map original field indices to new field indices after transformation
+        // Build transformed string step by step to track positions
+        // (newFieldDelim already declared above)
+        let transformedStringPos = 0;
+        const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        originalFields.forEach(part => {
+            if (part.isDelimiter) {
+                transformedStringPos += part.text.length;
+            } else {
+                const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+                const transformed = applyRegexTransform(part.text, regex);
+                
+                // Check if this transformed field contains the NEW field delimiter (new field introduced)
+                if (transformed.includes(newFieldDelim)) {
+                    // This field was split - find which new field indices correspond to it
+                    // The first part starts at transformedStringPos in the transformed string
+                    const firstPartStartPos = transformedStringPos;
+                    
+                    // Find which field in the re-parsed structure contains this position
+                    const fieldAtPos = transformedFilenameFields.find(p => 
+                        !p.isDelimiter && p.startPos <= firstPartStartPos && p.endPos > firstPartStartPos
+                    );
+                    if (fieldAtPos) {
+                        // Get all consecutive field indices starting from this one
+                        const startFieldIdx = fieldAtPos.fieldIndex;
+                        const subParts = transformed.split(newFieldDelim);
+                        const newFieldIndices = [];
+                        for (let i = 0; i < subParts.length; i++) {
+                            newFieldIndices.push(startFieldIdx + i);
+                        }
+                        
+                        originalFieldToNewFields.set(part.fieldIndex, {
+                            newFieldIndices: newFieldIndices,
+                            transformedValue: transformed
+                        });
+                    }
+                }
+                transformedStringPos += transformed.length;
+            }
+        });
     }
     
-    // Build filename legend with standard spec matches (using TRANSFORMED fields)
-    const filenameFieldMap = new Map();
-    const filenameFieldMatches = new Map(); // fieldIndex -> array of matching standard fields
+    // Build filename legend with standard spec matches (using ORIGINAL field indices)
+    // Map: originalFieldIndex -> {color, matches, regex}
+    const originalFilenameFieldMap = new Map(); // originalFieldIndex -> {color, matches}
     const usedFilenameFields = new Set(); // Track which standard fields have been used
     
-    // Process fields in order
-    const sortedFilenameIndices = Array.from(new Set(transformedFilenameFields
-        .filter(p => !p.isDelimiter && p.fieldIndex !== undefined)
-        .map(p => p.fieldIndex)))
-        .sort((a, b) => a - b);
-    
-    sortedFilenameIndices.forEach(fieldIdx => {
-        if (!filenameFieldMap.has(fieldIdx)) {
-            filenameFieldMap.set(fieldIdx, FIELD_COLORS[fieldIdx % FIELD_COLORS.length]);
-            // Get the transformed field value for matching
-            const fieldParts = transformedFilenameFields.filter(p => !p.isDelimiter && p.fieldIndex === fieldIdx);
-            const fieldValue = fieldParts.map(p => p.text).join(state.subfieldDelimiter);
-            const allMatches = matchFieldToStandardSpec(fieldValue, fieldIdx, transformedFilenameFields);
-            // Filter out matches that have already been unambiguously assigned
-            const availableMatches = allMatches.filter(m => !usedFilenameFields.has(m));
-            filenameFieldMatches.set(fieldIdx, availableMatches);
-            // Only mark as "used" if there's exactly one unambiguous match
-            if (availableMatches.length === 1) {
-                usedFilenameFields.add(availableMatches[0]);
-            }
+    // Create mapping from new field indices to original field indices
+    // Use the actual transformed filename to get accurate positions
+    const newToOriginalFieldMap = new Map(); // newFieldIdx -> originalFieldIdx
+    if (state.currentFileName) {
+        const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        
+        // Get the actual transformed filename (built the same way as getTransformedFilename)
+        const transformedFilename = getTransformedFilename();
+        if (transformedFilename) {
+            // For each original field, find where its transformed value appears in the transformed filename
+            let searchStartPos = 0;
+            originalFields.forEach(part => {
+                if (!part.isDelimiter) {
+                    const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+                    const transformed = applyRegexTransform(part.text, regex);
+                    
+                    if (transformed && transformed !== '') {
+                        if (transformed.includes(newFieldDelim)) {
+                            // This field was split - map all new field indices to the original field index
+                            const subParts = transformed.split(newFieldDelim);
+                            // Find the position of the first part in the transformed filename
+                            const firstPart = subParts[0];
+                            const firstPartPos = transformedFilename.indexOf(firstPart, searchStartPos);
+                            if (firstPartPos >= 0) {
+                                // Find which field in the re-parsed structure contains this position
+                                const fieldAtPos = transformedFilenameFields.find(fp => 
+                                    !fp.isDelimiter && fp.startPos <= firstPartPos && fp.endPos > firstPartPos
+                                );
+                                if (fieldAtPos) {
+                                    const startFieldIdx = fieldAtPos.fieldIndex;
+                                    for (let i = 0; i < subParts.length; i++) {
+                                        newToOriginalFieldMap.set(startFieldIdx + i, part.fieldIndex);
+                                    }
+                                }
+                                searchStartPos = firstPartPos + transformed.length;
+                            }
+                        } else {
+                            // Normal field - find which new field index corresponds to it
+                            const fieldPos = transformedFilename.indexOf(transformed, searchStartPos);
+                            if (fieldPos >= 0) {
+                                const fieldAtPos = transformedFilenameFields.find(fp => 
+                                    !fp.isDelimiter && fp.startPos <= fieldPos && fp.endPos > fieldPos
+                                );
+                                if (fieldAtPos) {
+                                    newToOriginalFieldMap.set(fieldAtPos.fieldIndex, part.fieldIndex);
+                                }
+                                searchStartPos = fieldPos + transformed.length;
+                            }
+                        }
+                    }
+                }
+            });
         }
-    });
+    }
+    
+    // Process all original fields in order
+    if (state.currentFileName) {
+        const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        const sortedOriginalIndices = Array.from(new Set(originalFields
+            .filter(p => !p.isDelimiter && p.fieldIndex !== undefined)
+            .map(p => p.fieldIndex)))
+            .sort((a, b) => a - b);
+        
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const color = FIELD_COLORS[originalFieldIdx % FIELD_COLORS.length];
+            
+            // Check if this original field was split
+            const splitData = originalFieldToNewFields.get(originalFieldIdx);
+            if (splitData) {
+                // Field was split - match each part
+                // Use NEW delimiter for splitting since that's what was used when joining
+                const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+                const subParts = splitData.transformedValue.split(newFieldDelim);
+                const allMatches = [];
+                subParts.forEach((subPart, partIdx) => {
+                    const matches = matchFieldToStandardSpec(subPart, originalFieldIdx, transformedFilenameFields);
+                    if (allMatches.length < subParts.length) {
+                        for (const m of matches) {
+                            if (!allMatches.includes(m) && !usedFilenameFields.has(m)) {
+                                allMatches.push(m);
+                                break;
+                            }
+                        }
+                    }
+                });
+                originalFilenameFieldMap.set(originalFieldIdx, {
+                    color: color,
+                    matches: allMatches.length > 0 ? allMatches : null
+                });
+                allMatches.forEach(m => usedFilenameFields.add(m));
+                } else {
+                    // Normal field - find the corresponding new field and match it
+                    const newFieldIdx = Array.from(newToOriginalFieldMap.entries())
+                        .find(([newIdx, origIdx]) => origIdx === originalFieldIdx)?.[0];
+                    
+                    if (newFieldIdx !== undefined) {
+                        const fieldParts = transformedFilenameFields.filter(p => !p.isDelimiter && p.fieldIndex === newFieldIdx);
+                        // Use NEW subfield delimiter for joining since transformed fields use new delimiters
+                        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+                        const fieldValue = fieldParts.map(p => p.text).join(newSubfieldDelim);
+                        const allMatches = matchFieldToStandardSpec(fieldValue, newFieldIdx, transformedFilenameFields);
+                        const availableMatches = allMatches.filter(m => !usedFilenameFields.has(m));
+                        const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
+                        originalFilenameFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: firstMatch
+                        });
+                        if (firstMatch) {
+                            usedFilenameFields.add(firstMatch);
+                        }
+                    } else {
+                        originalFilenameFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: null
+                        });
+                    }
+                }
+        });
+    }
     
     let filenameHtml = '';
-    if (filenameFieldMap.size > 0) {
-        filenameFieldMap.forEach((color, fieldIdx) => {
-            const matches = filenameFieldMatches.get(fieldIdx) || [];
-            const matchText = matches.length > 0 ? matches.join('+') : '?';
-            const regexKey = `filename-${fieldIdx}`;
-            const currentRegex = state.filenameRegexMap.get(fieldIdx) || '(.*)';
+    if (originalFilenameFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalFilenameFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const fieldData = originalFilenameFieldMap.get(originalFieldIdx);
+            const match = fieldData.matches;
+            // match can be a string (single match) or array (multiple matches from split field)
+            const matchText = Array.isArray(match) ? (match.length > 0 ? match.join('+') : '?') : (match || '?');
+            const regexKey = `filename-${originalFieldIdx}`;
+            const currentRegex = state.filenameRegexMap.get(originalFieldIdx) || '(.*)';
             filenameHtml += `<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                <div style="width: 16px; height: 16px; background: ${color}; border: 1px solid #d1d5db; border-radius: 3px; flex-shrink: 0;"></div>
-                <span style="color: #374151; flex: 1;">${fieldIdx + 1}: ${matchText}</span>
+                <div style="width: 16px; height: 16px; background: ${fieldData.color}; border: 1px solid #d1d5db; border-radius: 3px; flex-shrink: 0;"></div>
+                <span style="color: #374151; flex: 1;">${originalFieldIdx + 1}: ${matchText}</span>
                 <input type="text" id="regex-${regexKey}" value="${currentRegex}" style="width: 80px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 11px; font-family: 'Courier New', monospace;" placeholder="(.*)">
             </div>`;
         });
@@ -2540,25 +2745,26 @@ function updateLegend() {
     dom.legendFilenameContent.innerHTML = filenameHtml;
     
     // Store regex values from inputs (but don't apply yet - wait for Apply button)
-    sortedFilenameIndices.forEach(fieldIdx => {
-        const regexKey = `filename-${fieldIdx}`;
-        const input = document.getElementById(`regex-${regexKey}`);
-        if (input) {
-            // Just store the value as user types, but don't apply transformations
-            input.addEventListener('input', (e) => {
-                const regex = e.target.value || '(.*)';
-                state.filenameRegexMap.set(fieldIdx, regex);
-            });
-        }
-    });
+    if (originalFilenameFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalFilenameFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const regexKey = `filename-${originalFieldIdx}`;
+            const input = document.getElementById(`regex-${regexKey}`);
+            if (input) {
+                // Just store the value as user types, but don't apply transformations
+                input.addEventListener('input', (e) => {
+                    const regex = e.target.value || '(.*)';
+                    state.filenameRegexMap.set(originalFieldIdx, regex);
+                });
+            }
+        });
+    }
     
     // Build sequence legend with standard spec matches (using TRANSFORMED fields)
     // First, get the first non-skipped sequence and transform it
     let transformedSequenceFields = [];
+    const originalSequenceFieldToNewFields = new Map(); // originalFieldIndex -> array of {newFieldIdx, transformedValue}
     if (state.rawSequences.length > 0) {
-        const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
-        const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
-        
         // Find first non-skipped sequence
         let exampleSeqIndex = state.skipSequences || 0;
         if (exampleSeqIndex >= state.rawSequences.length) {
@@ -2585,48 +2791,210 @@ function updateLegend() {
             });
             
             // Re-parse the transformed sequence name to get proper field structure
-            const transformedSequenceName = transformedSequenceFields.map(p => p.text).join('');
-            transformedSequenceFields = parseFields(transformedSequenceName, fieldDelim, subfieldDelim);
+            // Use NEW delimiters for re-parsing since the transformed name uses new delimiters
+            // IMPORTANT: Use transformSequenceName() to get the correctly transformed name with new delimiters
+            const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+            const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+            const transformedSequenceName = transformSequenceName(exampleSeqName, exampleSeqIndex);
+            transformedSequenceFields = parseFields(transformedSequenceName, newFieldDelim, newSubfieldDelim);
+            
+            // Map original field indices to new field indices after transformation
+            // Build transformed string step by step to track positions
+            let transformedStringPos = 0;
+            sequenceFields.forEach(part => {
+                if (part.isDelimiter) {
+                    transformedStringPos += part.text.length;
+                } else {
+                    const regex = state.sequenceRegexMap.get(part.fieldIndex) || '(.*)';
+                    const transformed = applyRegexTransform(part.text, regex);
+                    
+                    // Check if this transformed field contains the field delimiter (new field introduced)
+                    if (transformed.includes(fieldDelim)) {
+                        // This field was split - find which new field indices correspond to it
+                        // The first part starts at transformedStringPos in the transformed string
+                        const firstPartStartPos = transformedStringPos;
+                        
+                        // Find which field in the re-parsed structure contains this position
+                        const fieldAtPos = transformedSequenceFields.find(p => 
+                            !p.isDelimiter && p.startPos <= firstPartStartPos && p.endPos > firstPartStartPos
+                        );
+                        if (fieldAtPos) {
+                            // Get all consecutive field indices starting from this one
+                            const startFieldIdx = fieldAtPos.fieldIndex;
+                            const subParts = transformed.split(newFieldDelim);
+                            const newFieldIndices = [];
+                            for (let i = 0; i < subParts.length; i++) {
+                                newFieldIndices.push(startFieldIdx + i);
+                            }
+                            
+                            originalSequenceFieldToNewFields.set(part.fieldIndex, {
+                                newFieldIndices: newFieldIndices,
+                                transformedValue: transformed
+                            });
+                        }
+                    }
+                    transformedStringPos += transformed.length;
+                }
+            });
         }
     }
     
-    const sequenceFieldMap = new Map();
-    const sequenceFieldMatches = new Map(); // fieldIndex -> array of matching standard fields
+    // Build sequence legend with standard spec matches (using ORIGINAL field indices)
+    // Map: originalFieldIndex -> {color, matches, regex}
+    const originalSequenceFieldMap = new Map(); // originalFieldIndex -> {color, matches}
     const usedSequenceFields = new Set(); // Track which standard fields have been used
     
-    // Process fields in order (using TRANSFORMED fields)
-    const sortedSequenceIndices = Array.from(new Set(transformedSequenceFields
-        .filter(p => !p.isDelimiter && p.fieldIndex !== undefined)
-        .map(p => p.fieldIndex)))
-        .sort((a, b) => a - b);
-    
-    sortedSequenceIndices.forEach(fieldIdx => {
-        if (!sequenceFieldMap.has(fieldIdx)) {
-            sequenceFieldMap.set(fieldIdx, FIELD_COLORS[fieldIdx % FIELD_COLORS.length]);
-            // Get the transformed field value for matching
-            const fieldParts = transformedSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === fieldIdx);
-            const fieldValue = fieldParts.map(p => p.text).join(state.subfieldDelimiter);
-            const allMatches = matchSequenceFieldToStandardSpec(fieldValue, fieldIdx, transformedSequenceFields);
-            // Filter out matches that have already been unambiguously assigned
-            const availableMatches = allMatches.filter(m => !usedSequenceFields.has(m));
-            sequenceFieldMatches.set(fieldIdx, availableMatches);
-            // Only mark as "used" if there's exactly one unambiguous match
-            if (availableMatches.length === 1) {
-                usedSequenceFields.add(availableMatches[0]);
+    // Create mapping from new field indices to original field indices
+    // Use the actual transformed sequence name to get accurate positions
+    const newToOriginalSequenceFieldMap = new Map(); // newFieldIdx -> originalFieldIdx
+    if (state.rawSequences.length > 0) {
+        let exampleSeqIndex = state.skipSequences || 0;
+        if (exampleSeqIndex >= state.rawSequences.length) {
+            exampleSeqIndex = Math.max(0, state.rawSequences.length - 1);
+        }
+        
+        if (exampleSeqIndex >= 0 && exampleSeqIndex < state.rawSequences.length) {
+            const exampleSeqName = state.rawSequences[exampleSeqIndex].name || '';
+            const originalSequenceFields = parseFields(exampleSeqName, fieldDelim, subfieldDelim);
+            const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+            
+            // Get the actual transformed sequence name (built the same way as transformSequenceName)
+            const transformedSequenceName = transformSequenceName(exampleSeqName, exampleSeqIndex);
+            
+            if (transformedSequenceName) {
+                // For each original field, find where its transformed value appears in the transformed sequence name
+                let searchStartPos = 0;
+                originalSequenceFields.forEach(part => {
+                    if (!part.isDelimiter) {
+                        const regex = state.sequenceRegexMap.get(part.fieldIndex) || '(.*)';
+                        const transformed = applyRegexTransform(part.text, regex);
+                        
+                        if (transformed && transformed !== '') {
+                            if (transformed.includes(newFieldDelim)) {
+                                // This field was split - map all new field indices to the original field index
+                                const subParts = transformed.split(newFieldDelim);
+                                // Find the position of the first part in the transformed sequence name
+                                const firstPart = subParts[0];
+                                const firstPartPos = transformedSequenceName.indexOf(firstPart, searchStartPos);
+                                if (firstPartPos >= 0) {
+                                    // Find which field in the re-parsed structure contains this position
+                                    const fieldAtPos = transformedSequenceFields.find(fp => 
+                                        !fp.isDelimiter && fp.startPos <= firstPartPos && fp.endPos > firstPartPos
+                                    );
+                                    if (fieldAtPos) {
+                                        const startFieldIdx = fieldAtPos.fieldIndex;
+                                        for (let i = 0; i < subParts.length; i++) {
+                                            newToOriginalSequenceFieldMap.set(startFieldIdx + i, part.fieldIndex);
+                                        }
+                                    }
+                                    searchStartPos = firstPartPos + transformed.length;
+                                }
+                            } else {
+                                // Normal field - find which new field index corresponds to it
+                                const fieldPos = transformedSequenceName.indexOf(transformed, searchStartPos);
+                                if (fieldPos >= 0) {
+                                    const fieldAtPos = transformedSequenceFields.find(fp => 
+                                        !fp.isDelimiter && fp.startPos <= fieldPos && fp.endPos > fieldPos
+                                    );
+                                    if (fieldAtPos) {
+                                        newToOriginalSequenceFieldMap.set(fieldAtPos.fieldIndex, part.fieldIndex);
+                                    }
+                                    searchStartPos = fieldPos + transformed.length;
+                                }
+                            }
+                        }
+                    }
+                });
             }
         }
-    });
+    }
+    
+    // Process all original sequence fields in order
+    if (state.rawSequences.length > 0) {
+        let exampleSeqIndex = state.skipSequences || 0;
+        if (exampleSeqIndex >= state.rawSequences.length) {
+            exampleSeqIndex = Math.max(0, state.rawSequences.length - 1);
+        }
+        
+        if (exampleSeqIndex >= 0 && exampleSeqIndex < state.rawSequences.length) {
+            const exampleSeqName = state.rawSequences[exampleSeqIndex].name || '';
+            const originalSequenceFields = parseFields(exampleSeqName, fieldDelim, subfieldDelim);
+            const sortedOriginalIndices = Array.from(new Set(originalSequenceFields
+                .filter(p => !p.isDelimiter && p.fieldIndex !== undefined)
+                .map(p => p.fieldIndex)))
+                .sort((a, b) => a - b);
+            
+            sortedOriginalIndices.forEach(originalFieldIdx => {
+                const color = FIELD_COLORS[originalFieldIdx % FIELD_COLORS.length];
+                
+                // Check if this original field was split
+                const splitData = originalSequenceFieldToNewFields.get(originalFieldIdx);
+                if (splitData) {
+                    // Field was split - match each part
+                    // Use NEW delimiter for splitting since that's what was used when joining
+                    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+                    const subParts = splitData.transformedValue.split(newFieldDelim);
+                    const allMatches = [];
+                    subParts.forEach((subPart, partIdx) => {
+                        const matches = matchSequenceFieldToStandardSpec(subPart, originalFieldIdx, transformedSequenceFields);
+                        if (allMatches.length < subParts.length) {
+                            for (const m of matches) {
+                                if (!allMatches.includes(m) && !usedSequenceFields.has(m)) {
+                                    allMatches.push(m);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                    originalSequenceFieldMap.set(originalFieldIdx, {
+                        color: color,
+                        matches: allMatches.length > 0 ? allMatches : null
+                    });
+                    allMatches.forEach(m => usedSequenceFields.add(m));
+                } else {
+                    // Normal field - find the corresponding new field and match it
+                    const newFieldIdx = Array.from(newToOriginalSequenceFieldMap.entries())
+                        .find(([newIdx, origIdx]) => origIdx === originalFieldIdx)?.[0];
+                    
+                    if (newFieldIdx !== undefined) {
+                        const fieldParts = transformedSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === newFieldIdx);
+                        // Use NEW subfield delimiter for joining since transformed fields use new delimiters
+                        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+                        const fieldValue = fieldParts.map(p => p.text).join(newSubfieldDelim);
+                        const allMatches = matchSequenceFieldToStandardSpec(fieldValue, newFieldIdx, transformedSequenceFields);
+                        const availableMatches = allMatches.filter(m => !usedSequenceFields.has(m));
+                        const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
+                        originalSequenceFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: firstMatch
+                        });
+                        if (firstMatch) {
+                            usedSequenceFields.add(firstMatch);
+                        }
+                    } else {
+                        originalSequenceFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: null
+                        });
+                    }
+                }
+            });
+        }
+    }
     
     let sequenceHtml = '';
-    if (sequenceFieldMap.size > 0) {
-        sequenceFieldMap.forEach((color, fieldIdx) => {
-            const matches = sequenceFieldMatches.get(fieldIdx) || [];
-            const matchText = matches.length > 0 ? matches.join('+') : '?';
-            const regexKey = `sequence-${fieldIdx}`;
-            const currentRegex = state.sequenceRegexMap.get(fieldIdx) || '(.*)';
+    if (originalSequenceFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalSequenceFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const fieldData = originalSequenceFieldMap.get(originalFieldIdx);
+            const match = fieldData.matches;
+            // match can be a string (single match) or array (multiple matches from split field)
+            const matchText = Array.isArray(match) ? (match.length > 0 ? match.join('+') : '?') : (match || '?');
+            const regexKey = `sequence-${originalFieldIdx}`;
+            const currentRegex = state.sequenceRegexMap.get(originalFieldIdx) || '(.*)';
             sequenceHtml += `<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                <div style="width: 16px; height: 16px; background: ${color}; border: 1px solid #d1d5db; border-radius: 3px; flex-shrink: 0;"></div>
-                <span style="color: #374151; flex: 1;">${fieldIdx + 1}: ${matchText}</span>
+                <div style="width: 16px; height: 16px; background: ${fieldData.color}; border: 1px solid #d1d5db; border-radius: 3px; flex-shrink: 0;"></div>
+                <span style="color: #374151; flex: 1;">${originalFieldIdx + 1}: ${matchText}</span>
                 <input type="text" id="regex-${regexKey}" value="${currentRegex}" style="width: 80px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 11px; font-family: 'Courier New', monospace;" placeholder="(.*)">
             </div>`;
         });
@@ -2636,30 +3004,33 @@ function updateLegend() {
     dom.legendSequencesContent.innerHTML = sequenceHtml;
     
     // Store regex values from inputs (but don't apply yet - wait for Apply button)
-    sortedSequenceIndices.forEach(fieldIdx => {
-        const regexKey = `sequence-${fieldIdx}`;
-        const input = document.getElementById(`regex-${regexKey}`);
-        if (input) {
-            // Just store the value as user types, but don't apply transformations
-            input.addEventListener('input', (e) => {
-                const regex = e.target.value || '(.*)';
-                state.sequenceRegexMap.set(fieldIdx, regex);
-            });
-        }
-    });
+    if (originalSequenceFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalSequenceFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const regexKey = `sequence-${originalFieldIdx}`;
+            const input = document.getElementById(`regex-${regexKey}`);
+            if (input) {
+                // Just store the value as user types, but don't apply transformations
+                input.addEventListener('input', (e) => {
+                    const regex = e.target.value || '(.*)';
+                    state.sequenceRegexMap.set(originalFieldIdx, regex);
+                });
+            }
+        });
+    }
     
     // Show/hide sections based on content
     const filenameSection = document.getElementById('legend-filename-section');
     const sequencesSection = document.getElementById('legend-sequences-section');
     if (filenameSection) {
-        filenameSection.style.display = filenameFieldMap.size > 0 ? 'block' : 'none';
+        filenameSection.style.display = originalFilenameFieldMap.size > 0 ? 'block' : 'none';
     }
     if (sequencesSection) {
-        sequencesSection.style.display = sequenceFieldMap.size > 0 ? 'block' : 'none';
+        sequencesSection.style.display = originalSequenceFieldMap.size > 0 ? 'block' : 'none';
     }
     
     // Show/hide popup based on whether there's content
-    if (filenameFieldMap.size === 0 && sequenceFieldMap.size === 0) {
+    if (originalFilenameFieldMap.size === 0 && originalSequenceFieldMap.size === 0) {
         if (dom.fieldLegendPopup) {
             dom.fieldLegendPopup.style.display = 'none';
         }
@@ -2860,9 +3231,10 @@ function render() {
             // Transform sequence name and parse fields for coloring
             // Pass sequence index to skip header sequences
             const transformedName = transformSequenceName(seq.name || '', r);
-            const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
-            const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
-            const transformedFields = parseFields(transformedName, fieldDelim, subfieldDelim);
+            // Use NEW delimiters for parsing since transformed name uses new delimiters
+            const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+            const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+            const transformedFields = parseFields(transformedName, newFieldDelim, newSubfieldDelim);
             const textX = 8;
             const textY = y + CONFIG.rowHeight / 2;
             
