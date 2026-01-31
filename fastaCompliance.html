@@ -912,9 +912,55 @@ function parseFastaFilename(filename) {
     const region = parts[3];
     const molecule = parts[4];
     
-    // Parse optional fields by flag
+    // Validate required fields first (in order) before parsing optional fields
+    const requiredFieldErrors = [];
+    
+    // Validate networkProtocol (Field 1)
+    if (!NETWORK_PATTERN.test(network)) {
+        requiredFieldErrors.push(`Invalid network '${network}': must be 1 uppercase letter`);
+    }
+    if (protocol && !PROTOCOL_PATTERN.test(protocol)) {
+        requiredFieldErrors.push(`Invalid protocol '${protocol}': must be 3-4 digits, optionally followed by 1 uppercase letter`);
+    }
+    
+    // Validate PTID (Field 2)
+    if (!PTID_PATTERN.test(ptid)) {
+        requiredFieldErrors.push(`Invalid PTID '${ptid}': must be 4-6 digits or CAP### format`);
+    }
+    
+    // Validate Visit (Field 3)
+    if (!VISIT_PATTERN.test(visit)) {
+        requiredFieldErrors.push(`Invalid visit '${visit}': must be 4 digits or dash-separated`);
+    }
+    
+    // Validate Region (Field 4)
+    if (!VALID_REGIONS.includes(region.toLowerCase())) {
+        requiredFieldErrors.push(`Invalid region '${region}': must be one of ${VALID_REGIONS.join(', ')}`);
+    }
+    
+    // Validate Molecule (Field 5)
+    if (!VALID_MOLECULES.includes(molecule.toLowerCase())) {
+        requiredFieldErrors.push(`Invalid molecule '${molecule}': must be one of ${VALID_MOLECULES.join(', ')}`);
+    }
+    
+    // If any required field errors, throw them first (don't check optional fields yet)
+    if (requiredFieldErrors.length > 0) {
+        throw new Error(requiredFieldErrors[0]); // Report first required field error
+    }
+    
+    // Parse optional fields by flag (only if required fields are valid)
+    // All fields after the required 5 must start with a valid flag
     const optionalFields = {};
+    const optionalFieldErrors = [];
+    const validFlags = ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r'];
     for (const part of parts.slice(5)) {
+        // Check if this part starts with a valid flag
+        const hasValidFlag = validFlags.some(flag => part.startsWith(flag + '-'));
+        if (!hasValidFlag) {
+            optionalFieldErrors.push(`Invalid optional field '${part}': optional fields must start with a valid flag (a-, f-, m-, w-, o-, s-, p-, e-, or r-)`);
+            continue; // Skip this invalid optional field, continue checking others
+        }
+        
         if (part.startsWith('a-')) {
             optionalFields.alignment = _parseOptionalField(part);
         } else if (part.startsWith('f-')) {
@@ -936,6 +982,12 @@ function parseFastaFilename(filename) {
         }
     }
     
+    // If there are optional field errors, throw them (but only after required fields are valid)
+    if (optionalFieldErrors.length > 0) {
+        throw new Error(optionalFieldErrors[0]); // Report first optional field error
+    }
+    
+    // Create FastaFileName object (it will validate again, but we've already checked required fields)
     return new FastaFileName(network, protocol, ptid, visit, region, molecule, optionalFields);
 }
 
@@ -1743,16 +1795,14 @@ function getTransformedFilename() {
             const prevIsEmpty = prevField && !prevField.isDelimiter && prevField.isEmpty;
             const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
             
-            // Only include delimiter if neither adjacent field is empty
-            // Use NEW field delimiter for field delimiters, NEW subfield delimiter for subfield delimiters
-            if (!prevIsEmpty && !nextIsEmpty) {
-                if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
-                    // This is a field delimiter
-                    transformedParts.push(newFieldDelim);
-                } else {
-                    // This is a subfield delimiter
-                    transformedParts.push(newSubfieldDelim);
-                }
+            // Always include delimiters (even if adjacent fields are empty)
+            // They will be collapsed later if there are multiple consecutive ones
+            if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                // This is a field delimiter
+                transformedParts.push(newFieldDelim);
+            } else {
+                // This is a subfield delimiter
+                transformedParts.push(newSubfieldDelim);
             }
         } else {
             // Only include non-empty fields
@@ -1762,7 +1812,12 @@ function getTransformedFilename() {
         }
     });
     
-    return transformedParts.join('');
+    let result = transformedParts.join('');
+    
+    // Don't collapse delimiters here - keep them as-is for mapping purposes
+    // Delimiter collapsing will be done on export
+    
+    return result;
 }
 
 function getTransformedSequenceNames() {
@@ -1789,8 +1844,21 @@ function runValidation() {
     
     try {
         // Get transformed filename and sequence names
-        const transformedFilename = getTransformedFilename();
-        const allTransformedSequences = getTransformedSequenceNames();
+        let transformedFilename = getTransformedFilename();
+        let allTransformedSequences = getTransformedSequenceNames();
+        
+        // Collapse delimiters before validating
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+        
+        if (transformedFilename) {
+            transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+        }
+        
+        allTransformedSequences = allTransformedSequences.map(seq => ({
+            ...seq,
+            name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+        }));
         
         // Skip header sequences based on skipSequences setting
         const skipCount = state.skipSequences || 0;
@@ -1928,8 +1996,21 @@ function runParse() {
     
     try {
         // Get transformed filename and sequence names
-        const transformedFilename = getTransformedFilename();
-        const allTransformedSequences = getTransformedSequenceNames();
+        let transformedFilename = getTransformedFilename();
+        let allTransformedSequences = getTransformedSequenceNames();
+        
+        // Collapse delimiters before parsing
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+        
+        if (transformedFilename) {
+            transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+        }
+        
+        allTransformedSequences = allTransformedSequences.map(seq => ({
+            ...seq,
+            name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+        }));
         
         // Skip header sequences based on skipSequences setting
         const skipCount = state.skipSequences || 0;
@@ -2087,8 +2168,11 @@ function exportSettings() {
         sequenceTransformations[key.toString()] = value;
     });
     
-    // Get transformed filename for metadata
-    const transformedFilename = getTransformedFilename();
+    // Get transformed filename for metadata and collapse delimiters
+    let transformedFilename = getTransformedFilename();
+    if (transformedFilename) {
+        transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+    }
     
     // Build settings object
     const settings = {
@@ -2150,12 +2234,46 @@ function exportSettings() {
 }
 
 // --- Export Logic ---
+function collapseDelimiters(text, fieldDelim, subfieldDelim) {
+    if (!text) return text;
+    
+    // Collapse multiple consecutive field delimiters into a single one
+    const escapedFieldDelim = fieldDelim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fieldDelimRegex = new RegExp(escapedFieldDelim + '+', 'g');
+    let result = text.replace(fieldDelimRegex, fieldDelim);
+    
+    // Collapse multiple consecutive subfield delimiters within each field
+    const escapedSubfieldDelim = subfieldDelim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const subfieldDelimRegex = new RegExp(escapedSubfieldDelim + '+', 'g');
+    result = result.split(fieldDelim).map(field => field.replace(subfieldDelimRegex, subfieldDelim)).join(fieldDelim);
+    
+    // Remove leading and trailing field delimiters
+    const leadingDelimRegex = new RegExp('^' + escapedFieldDelim + '+');
+    const trailingDelimRegex = new RegExp(escapedFieldDelim + '+$');
+    result = result.replace(leadingDelimRegex, '').replace(trailingDelimRegex, '');
+    
+    return result;
+}
+
 function exportAlignment(target) {
     if (!state.viewSequences.length) return;
     
     // Get transformed filename and sequence names
-    const transformedFilename = getTransformedFilename();
-    const transformedSequences = getTransformedSequenceNames();
+    let transformedFilename = getTransformedFilename();
+    let transformedSequences = getTransformedSequenceNames();
+    
+    // Collapse delimiters on export
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    
+    if (transformedFilename) {
+        transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+    }
+    
+    transformedSequences = transformedSequences.map(seq => ({
+        ...seq,
+        name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+    }));
     
     // Build FASTA content using transformed sequence names
     const lines = [];
@@ -2176,15 +2294,15 @@ function exportAlignment(target) {
     const a = document.createElement("a");
     a.href = url;
     
-    // Generate filename: use transformed filename with _compliant-Y added to basename
+    // Generate filename: use transformed filename with _compliant added to basename
     let downloadName;
     if (transformedFilename) {
         const lastDot = transformedFilename.lastIndexOf('.');
         const basename = lastDot > 0 ? transformedFilename.substring(0, lastDot) : transformedFilename;
         const extension = lastDot > 0 ? transformedFilename.substring(lastDot) : '.fasta';
-        downloadName = `${basename}_compliant-${state.mode}${extension}`;
+        downloadName = `${basename}_compliant${extension}`;
     } else {
-        downloadName = `alignment_compliant-${state.mode}.fasta`;
+        downloadName = `alignment_compliant.fasta`;
     }
     
     a.download = downloadName;
@@ -2383,7 +2501,10 @@ function parseFields(text, fieldDelim, subfieldDelim) {
     const result = [];
     if (!text) return result;
     
-    const fields = text.split(fieldDelim);
+    // Strip file extension (.fasta, .fa, .fas) before parsing
+    const textWithoutExt = text.replace(/\.(fasta|fa|fas)$/i, '');
+    
+    const fields = textWithoutExt.split(fieldDelim);
     let currentPos = 0;
     
     fields.forEach((field, fieldIdx) => {
@@ -2559,16 +2680,14 @@ function transformSequenceName(seqName, sequenceIndex) {
             const prevIsEmpty = prevField && !prevField.isDelimiter && prevField.isEmpty;
             const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
             
-            // Only include delimiter if neither adjacent field is empty
-            // Use NEW field delimiter for field delimiters, NEW subfield delimiter for subfield delimiters
-            if (!prevIsEmpty && !nextIsEmpty) {
-                if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
-                    // This is a field delimiter
-                    transformedParts.push(newFieldDelim);
-                } else {
-                    // This is a subfield delimiter
-                    transformedParts.push(newSubfieldDelim);
-                }
+            // Always include delimiters (even if adjacent fields are empty)
+            // They will be collapsed later if there are multiple consecutive ones
+            if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                // This is a field delimiter
+                transformedParts.push(newFieldDelim);
+            } else {
+                // This is a subfield delimiter
+                transformedParts.push(newSubfieldDelim);
             }
         } else {
             // Only include non-empty fields
@@ -2578,7 +2697,12 @@ function transformSequenceName(seqName, sequenceIndex) {
         }
     });
     
-    return transformedParts.join('');
+    let result = transformedParts.join('');
+    
+    // Don't collapse delimiters here - keep them as-is for mapping purposes
+    // Delimiter collapsing will be done on export
+    
+    return result;
 }
 
 function updateColoredFilename() {
@@ -2647,32 +2771,61 @@ function updateTransformedFilename() {
         }
     });
     
-    // Second pass: build output, skipping empty fields and their adjacent delimiters
+    // Second pass: build output, skipping empty fields but keeping delimiters
+    // Use NEW delimiters for joining
+    const newFieldDelimForDisplay = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelimForDisplay = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    
     transformedFields.forEach((part, idx) => {
         if (part.isDelimiter) {
-            // Check if adjacent fields are empty
-            const prevField = idx > 0 ? transformedFields[idx - 1] : null;
-            const nextField = idx < transformedFields.length - 1 ? transformedFields[idx + 1] : null;
-            const prevIsEmpty = prevField && !prevField.isDelimiter && prevField.isEmpty;
-            const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
-            
-            // Only include delimiter if neither adjacent field is empty
-            if (!prevIsEmpty && !nextIsEmpty) {
-                transformedParts.push(part.text);
-                html += `<span style="color: #6b7280;">${part.text}</span>`;
+            // Always include delimiters (even if adjacent fields are empty)
+            // They will be collapsed later if there are multiple consecutive ones
+            if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                transformedParts.push(newFieldDelimForDisplay);
+            } else {
+                transformedParts.push(newSubfieldDelimForDisplay);
             }
         } else {
             // Only include non-empty fields
             if (!part.isEmpty) {
                 transformedParts.push(part.transformed);
-                // Apply same color scheme as original
-                const fieldColor = getFieldColor(part.fieldIndex, part.subfieldIndex);
-                html += `<span style="background: ${fieldColor}; padding: 2px 4px; border-radius: 3px; color: #000000;">${part.transformed}</span>`;
             }
         }
     });
     
-    const transformedText = transformedParts.join('');
+    let transformedText = transformedParts.join('');
+    
+    // Don't collapse delimiters here - keep them as-is for mapping purposes
+    // Delimiter collapsing will be done on export
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    
+    // Rebuild HTML - split by delimiter and handle empty fields as "deleted"
+    const parts = transformedText.split(newFieldDelim);
+    html = '';
+    parts.forEach((part, idx) => {
+        if (idx > 0) {
+            html += `<span style="color: #6b7280;">${newFieldDelim}</span>`;
+        }
+        if (part === '') {
+            // Empty field - show as "deleted"
+            html += `<span style="background: #e5e7eb; padding: 2px 4px; border-radius: 3px; color: #6b7280; font-style: italic;">deleted</span>`;
+        } else if (part) {
+            // Split by subfield delimiter for coloring
+            const subParts = part.split(newSubfieldDelim);
+            subParts.forEach((subPart, subIdx) => {
+                if (subIdx > 0) {
+                    html += `<span style="color: #6b7280;">${newSubfieldDelim}</span>`;
+                }
+                if (subPart) {
+                    // Use approximate field index for coloring
+                    const fieldColor = getFieldColor(idx, subIdx > 0 ? subIdx - 1 : null);
+                    html += `<span style="background: ${fieldColor}; padding: 2px 4px; border-radius: 3px; color: #000000;">${subPart}</span>`;
+                }
+            });
+        }
+    });
+    
     dom.filenameNewText.innerHTML = html;
 }
 
@@ -2745,6 +2898,16 @@ function matchFieldToStandardSpec(fieldValue, fieldIndex, allFields) {
     if (fieldParts.length > 1) {
         // Reconstruct full field including subfields
         fullFieldText = fieldParts.map(p => p.text).join(state.subfieldDelimiter);
+    }
+    
+    // If this is an optional field position (fieldIndex >= 5), it must start with a valid flag
+    const validFlags = ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r'];
+    if (fieldIndex >= 5) {
+        const hasValidFlag = validFlags.some(flag => fullFieldText.startsWith(flag + '-'));
+        if (!hasValidFlag) {
+            // Invalid optional field - don't try to match it
+            return [];
+        }
     }
     
     // Check ALL standard filename spec fields, not just by position
@@ -2890,12 +3053,13 @@ function updateLegend() {
     // Create mapping from new field indices to original field indices
     // Use the actual transformed filename to get accurate positions
     const newToOriginalFieldMap = new Map(); // newFieldIdx -> originalFieldIdx
+    let transformedFilename = null; // Declare outside if block for use later
     if (state.currentFileName) {
         const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
         const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
         
         // Get the actual transformed filename (built the same way as getTransformedFilename)
-        const transformedFilename = getTransformedFilename();
+        transformedFilename = getTransformedFilename();
         if (transformedFilename) {
             // For each original field, find where its transformed value appears in the transformed filename
             let searchStartPos = 0;
@@ -2999,10 +3163,29 @@ function updateLegend() {
                             usedFilenameFields.add(firstMatch);
                         }
                     } else {
-                        originalFilenameFieldMap.set(originalFieldIdx, {
-                            color: color,
-                            matches: null
-                        });
+                        // Check if this field was removed (transformed to empty string)
+                        const originalFieldParts = originalFields.filter(p => !p.isDelimiter && p.fieldIndex === originalFieldIdx);
+                        if (originalFieldParts.length > 0) {
+                            const regex = state.filenameRegexMap.get(originalFieldIdx) || '(.*)';
+                            const transformed = applyRegexTransform(originalFieldParts[0].text, regex);
+                            if (transformed === '') {
+                                // Field was removed
+                                originalFilenameFieldMap.set(originalFieldIdx, {
+                                    color: color,
+                                    matches: 'deleted'
+                                });
+                            } else {
+                                originalFilenameFieldMap.set(originalFieldIdx, {
+                                    color: color,
+                                    matches: null
+                                });
+                            }
+                        } else {
+                            originalFilenameFieldMap.set(originalFieldIdx, {
+                                color: color,
+                                matches: null
+                            });
+                        }
                     }
                 }
         });
@@ -3257,10 +3440,29 @@ function updateLegend() {
                             usedSequenceFields.add(firstMatch);
                         }
                     } else {
-                        originalSequenceFieldMap.set(originalFieldIdx, {
-                            color: color,
-                            matches: null
-                        });
+                        // Check if this field was removed (transformed to empty string)
+                        const originalFieldParts = originalSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === originalFieldIdx);
+                        if (originalFieldParts.length > 0) {
+                            const regex = state.sequenceRegexMap.get(originalFieldIdx) || '(.*)';
+                            const transformed = applyRegexTransform(originalFieldParts[0].text, regex);
+                            if (transformed === '') {
+                                // Field was removed
+                                originalSequenceFieldMap.set(originalFieldIdx, {
+                                    color: color,
+                                    matches: 'deleted'
+                                });
+                            } else {
+                                originalSequenceFieldMap.set(originalFieldIdx, {
+                                    color: color,
+                                    matches: null
+                                });
+                            }
+                        } else {
+                            originalSequenceFieldMap.set(originalFieldIdx, {
+                                color: color,
+                                matches: null
+                            });
+                        }
                     }
                 }
             });
