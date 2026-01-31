@@ -1493,18 +1493,29 @@ function parseFasta(text) {
     const lines = text.split(/\r?\n/);
     const seqs = [];
     let name = null, buf = [];
+    // Get current field delimiter (default to '_' if not set)
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter || '_';
+    
     for(let line of lines) {
         line = line.trim();
         if(!line) continue;
         if(line.startsWith('>')) {
             if(name) seqs.push({name, seq: buf.join('').split('')});
             name = line.substring(1).trim();
+            // Replace all spaces with current field delimiter
+            if(name) {
+                name = name.replace(/\s+/g, fieldDelim);
+            }
             buf = [];
         } else {
             buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
         }
     }
-    if(name) seqs.push({name, seq: buf.join('').split('')});
+    if(name) {
+        // Replace all spaces with current field delimiter (in case name was set but not yet processed)
+        name = name.replace(/\s+/g, fieldDelim);
+        seqs.push({name, seq: buf.join('').split('')});
+    }
     
     // Check if this is an alignment (all sequences same length)
     let isAlignment = true;
@@ -1528,9 +1539,16 @@ function parseFasta(text) {
 function parseFastq(text) {
     const lines = text.split(/\r?\n/);
     const seqs = [];
+    // Get current field delimiter (default to '_' if not set)
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter || '_';
+    
     for(let i = 0; i < lines.length; i += 4) {
         if(i + 1 < lines.length && lines[i].startsWith('@')) {
-            const name = lines[i].substring(1).trim();
+            let name = lines[i].substring(1).trim();
+            // Replace all spaces with current field delimiter
+            if(name) {
+                name = name.replace(/\s+/g, fieldDelim);
+            }
             const seq = lines[i + 1].toUpperCase().replace(/[^A-Z-]/g, '').split('');
             seqs.push({name, seq});
         }
@@ -1813,6 +1831,9 @@ function getTransformedFilename() {
     });
     
     let result = transformedParts.join('');
+    
+    // Amalgamate repeated optional fields
+    result = amalgamateOptionalFields(result, newFieldDelim, newSubfieldDelim);
     
     // Don't collapse delimiters here - keep them as-is for mapping purposes
     // Delimiter collapsing will be done on export
@@ -2642,6 +2663,75 @@ function applyRegexTransform(text, regexPattern) {
     }
 }
 
+function amalgamateOptionalFields(text, fieldDelim, subfieldDelim) {
+    /**
+     * Amalgamate repeated optional fields in a transformed string.
+     * Example: "_e-05_e-07" becomes "_e-05-07"
+     * 
+     * @param {string} text - The transformed text
+     * @param {string} fieldDelim - Field delimiter
+     * @param {string} subfieldDelim - Subfield delimiter
+     * @returns {string} - Text with repeated optional fields amalgamated
+     */
+    if (!text) return text;
+    
+    const validFlags = ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r'];
+    const fields = text.split(fieldDelim);
+    const groupedFields = new Map(); // flag -> array of values
+    const resultFields = [];
+    
+    for (let i = 0; i < fields.length; i++) {
+        const field = fields[i];
+        if (!field) {
+            // Empty field, keep as is
+            resultFields.push(field);
+            continue;
+        }
+        
+        // Check if this is an optional field (starts with flag-)
+        let isOptional = false;
+        let flag = null;
+        let value = null;
+        
+        for (const f of validFlags) {
+            if (field.startsWith(f + subfieldDelim)) {
+                isOptional = true;
+                flag = f;
+                value = field.substring(f.length + subfieldDelim.length);
+                break;
+            }
+        }
+        
+        if (isOptional) {
+            // Group this optional field
+            if (!groupedFields.has(flag)) {
+                groupedFields.set(flag, []);
+            }
+            groupedFields.get(flag).push(value);
+        } else {
+            // Non-optional field - flush any grouped optional fields before this one
+            if (groupedFields.size > 0) {
+                for (const [f, values] of groupedFields.entries()) {
+                    const amalgamated = f + subfieldDelim + values.join(subfieldDelim);
+                    resultFields.push(amalgamated);
+                }
+                groupedFields.clear();
+            }
+            resultFields.push(field);
+        }
+    }
+    
+    // Flush any remaining grouped optional fields at the end
+    if (groupedFields.size > 0) {
+        for (const [f, values] of groupedFields.entries()) {
+            const amalgamated = f + subfieldDelim + values.join(subfieldDelim);
+            resultFields.push(amalgamated);
+        }
+    }
+    
+    return resultFields.join(fieldDelim);
+}
+
 function transformSequenceName(seqName, sequenceIndex) {
     if (!seqName) return seqName;
     
@@ -2698,6 +2788,9 @@ function transformSequenceName(seqName, sequenceIndex) {
     });
     
     let result = transformedParts.join('');
+    
+    // Amalgamate repeated optional fields
+    result = amalgamateOptionalFields(result, newFieldDelim, newSubfieldDelim);
     
     // Don't collapse delimiters here - keep them as-is for mapping purposes
     // Delimiter collapsing will be done on export
@@ -3048,7 +3141,13 @@ function updateLegend() {
     // Build filename legend with standard spec matches (using ORIGINAL field indices)
     // Map: originalFieldIndex -> {color, matches, regex}
     const originalFilenameFieldMap = new Map(); // originalFieldIndex -> {color, matches}
-    const usedFilenameFields = new Set(); // Track which standard fields have been used
+    const usedFilenameFields = new Set(); // Track which standard fields have been used (non-optional only)
+    
+    // Helper function to check if a field is optional (can be repeated)
+    const isOptionalFilenameField = (fieldName) => {
+        const optionalFields = ['alignment', 'filters', 'modifiers', 'additions', 'removals', 'sequencing', 'processing', 'extras', 'reviewed'];
+        return optionalFields.includes(fieldName);
+    };
     
     // Create mapping from new field indices to original field indices
     // Use the actual transformed filename to get accurate positions
@@ -3126,22 +3225,28 @@ function updateLegend() {
                 const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
                 const subParts = splitData.transformedValue.split(newFieldDelim);
                 const allMatches = [];
-                subParts.forEach((subPart, partIdx) => {
-                    const matches = matchFieldToStandardSpec(subPart, originalFieldIdx, transformedFilenameFields);
-                    if (allMatches.length < subParts.length) {
-                        for (const m of matches) {
-                            if (!allMatches.includes(m) && !usedFilenameFields.has(m)) {
-                                allMatches.push(m);
-                                break;
+                    subParts.forEach((subPart, partIdx) => {
+                        const matches = matchFieldToStandardSpec(subPart, originalFieldIdx, transformedFilenameFields);
+                        if (allMatches.length < subParts.length) {
+                            for (const m of matches) {
+                                // Allow optional fields to be matched multiple times
+                                if (!allMatches.includes(m) && (isOptionalFilenameField(m) || !usedFilenameFields.has(m))) {
+                                    allMatches.push(m);
+                                    break;
+                                }
                             }
                         }
-                    }
-                });
-                originalFilenameFieldMap.set(originalFieldIdx, {
-                    color: color,
-                    matches: allMatches.length > 0 ? allMatches : null
-                });
-                allMatches.forEach(m => usedFilenameFields.add(m));
+                    });
+                    originalFilenameFieldMap.set(originalFieldIdx, {
+                        color: color,
+                        matches: allMatches.length > 0 ? allMatches : null
+                    });
+                    // Only mark non-optional fields as used
+                    allMatches.forEach(m => {
+                        if (!isOptionalFilenameField(m)) {
+                            usedFilenameFields.add(m);
+                        }
+                    });
                 } else {
                     // Normal field - find the corresponding new field and match it
                     const newFieldIdx = Array.from(newToOriginalFieldMap.entries())
@@ -3153,13 +3258,15 @@ function updateLegend() {
                         const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
                         const fieldValue = fieldParts.map(p => p.text).join(newSubfieldDelim);
                         const allMatches = matchFieldToStandardSpec(fieldValue, newFieldIdx, transformedFilenameFields);
-                        const availableMatches = allMatches.filter(m => !usedFilenameFields.has(m));
+                        // Allow optional fields to be matched multiple times
+                        const availableMatches = allMatches.filter(m => isOptionalFilenameField(m) || !usedFilenameFields.has(m));
                         const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
                         originalFilenameFieldMap.set(originalFieldIdx, {
                             color: color,
                             matches: firstMatch
                         });
-                        if (firstMatch) {
+                        // Only mark non-optional fields as used
+                        if (firstMatch && !isOptionalFilenameField(firstMatch)) {
                             usedFilenameFields.add(firstMatch);
                         }
                     } else {
@@ -3310,7 +3417,13 @@ function updateLegend() {
     // Build sequence legend with standard spec matches (using ORIGINAL field indices)
     // Map: originalFieldIndex -> {color, matches, regex}
     const originalSequenceFieldMap = new Map(); // originalFieldIndex -> {color, matches}
-    const usedSequenceFields = new Set(); // Track which standard fields have been used
+    const usedSequenceFields = new Set(); // Track which standard fields have been used (non-optional only)
+    
+    // Helper function to check if a field is optional (can be repeated)
+    const isOptionalField = (fieldName) => {
+        const optionalFields = ['alignment', 'filters', 'modifiers', 'additions', 'removals', 'sequencing', 'processing', 'extras', 'reviewed', 'collapsed'];
+        return optionalFields.includes(fieldName);
+    };
     
     // Create mapping from new field indices to original field indices
     // Use the actual transformed sequence name to get accurate positions
@@ -3407,7 +3520,8 @@ function updateLegend() {
                         const matches = matchSequenceFieldToStandardSpec(subPart, originalFieldIdx, transformedSequenceFields);
                         if (allMatches.length < subParts.length) {
                             for (const m of matches) {
-                                if (!allMatches.includes(m) && !usedSequenceFields.has(m)) {
+                                // Allow optional fields to be matched multiple times
+                                if (!allMatches.includes(m) && (isOptionalField(m) || !usedSequenceFields.has(m))) {
                                     allMatches.push(m);
                                     break;
                                 }
@@ -3418,51 +3532,47 @@ function updateLegend() {
                         color: color,
                         matches: allMatches.length > 0 ? allMatches : null
                     });
-                    allMatches.forEach(m => usedSequenceFields.add(m));
-                } else {
-                    // Normal field - find the corresponding new field and match it
-                    const newFieldIdx = Array.from(newToOriginalSequenceFieldMap.entries())
-                        .find(([newIdx, origIdx]) => origIdx === originalFieldIdx)?.[0];
-                    
-                    if (newFieldIdx !== undefined) {
-                        const fieldParts = transformedSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === newFieldIdx);
-                        // Use NEW subfield delimiter for joining since transformed fields use new delimiters
-                        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
-                        const fieldValue = fieldParts.map(p => p.text).join(newSubfieldDelim);
-                        const allMatches = matchSequenceFieldToStandardSpec(fieldValue, newFieldIdx, transformedSequenceFields);
-                        const availableMatches = allMatches.filter(m => !usedSequenceFields.has(m));
-                        const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
-                        originalSequenceFieldMap.set(originalFieldIdx, {
-                            color: color,
-                            matches: firstMatch
-                        });
-                        if (firstMatch) {
-                            usedSequenceFields.add(firstMatch);
+                    // Only mark non-optional fields as used
+                    allMatches.forEach(m => {
+                        if (!isOptionalField(m)) {
+                            usedSequenceFields.add(m);
                         }
-                    } else {
-                        // Check if this field was removed (transformed to empty string)
-                        const originalFieldParts = originalSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === originalFieldIdx);
-                        if (originalFieldParts.length > 0) {
-                            const regex = state.sequenceRegexMap.get(originalFieldIdx) || '(.*)';
-                            const transformed = applyRegexTransform(originalFieldParts[0].text, regex);
-                            if (transformed === '') {
-                                // Field was removed
-                                originalSequenceFieldMap.set(originalFieldIdx, {
-                                    color: color,
-                                    matches: 'deleted'
-                                });
-                            } else {
-                                originalSequenceFieldMap.set(originalFieldIdx, {
-                                    color: color,
-                                    matches: null
-                                });
-                            }
-                        } else {
+                    });
+                } else {
+                    // Normal field - match based on transformed value BEFORE amalgamation
+                    // Get the transformed value for this original field directly
+                    const originalFieldParts = originalSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === originalFieldIdx);
+                    if (originalFieldParts.length > 0) {
+                        const regex = state.sequenceRegexMap.get(originalFieldIdx) || '(.*)';
+                        const transformed = applyRegexTransform(originalFieldParts[0].text, regex);
+                        
+                        if (transformed === '') {
+                            // Field was removed
                             originalSequenceFieldMap.set(originalFieldIdx, {
                                 color: color,
-                                matches: null
+                                matches: 'deleted'
                             });
+                        } else {
+                            // Match the transformed value (before amalgamation) directly
+                            // This ensures we can match optional fields even after they're amalgamated
+                            const allMatches = matchSequenceFieldToStandardSpec(transformed, originalFieldIdx, []);
+                            // Allow optional fields to be matched multiple times
+                            const availableMatches = allMatches.filter(m => isOptionalField(m) || !usedSequenceFields.has(m));
+                            const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
+                            originalSequenceFieldMap.set(originalFieldIdx, {
+                                color: color,
+                                matches: firstMatch
+                            });
+                            // Only mark non-optional fields as used
+                            if (firstMatch && !isOptionalField(firstMatch)) {
+                                usedSequenceFields.add(firstMatch);
+                            }
                         }
+                    } else {
+                        originalSequenceFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: null
+                        });
                     }
                 }
             });
