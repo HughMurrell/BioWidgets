@@ -1135,6 +1135,7 @@ const state = {
     filenameRegexMap: new Map(), // fieldIndex -> regex string (identity by default)
     sequenceRegexMap: new Map(), // fieldIndex -> regex string (identity by default)
     skipSequences: 0, // Number of header sequences to skip from transformations
+    overriddenTransformedFilename: null, // Override for transformed filename (e.g., from visit replacement)
 };
 
 // --- DOM ---
@@ -1311,6 +1312,9 @@ function init() {
     // Apply transformations button
     if (dom.btnApplyTransformations) {
         dom.btnApplyTransformations.addEventListener('click', () => {
+            // Clear any overridden transformed filename when transformations are reapplied
+            state.overriddenTransformedFilename = null;
+            
             // Update skip value from input
             if (dom.inpSkipSequences) {
                 state.skipSequences = parseInt(dom.inpSkipSequences.value) || 0;
@@ -1783,6 +1787,11 @@ function updateColorLegend() {
 function getTransformedFilename() {
     if (!state.currentFileName) return null;
     
+    // Check if there's an overridden transformed filename (e.g., from visit replacement)
+    if (state.overriddenTransformedFilename) {
+        return state.overriddenTransformedFilename;
+    }
+    
     const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
     const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
     const filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
@@ -1889,8 +1898,67 @@ function runValidation() {
         // Pass skipCount so sequence numbers in error messages reflect actual sequence numbers
         const errors = validateFastaFile(transformedFilename, transformedSequences, skipCount);
         
+        let visitReplacementMessage = null;
+        
+        // If validation succeeds and visit field is "0000", replace it with sorted union of sequence visits
+        if (errors['standard'] && errors['standard'].valid) {
+            // Parse the transformed filename to get the visit field (field index 2)
+            const filenameParts = transformedFilename.split(newFieldDelim);
+            if (filenameParts.length >= 3) {
+                const visitField = filenameParts[2];
+                
+                // Check if visit is "0000"
+                if (visitField === '0000') {
+                    // Collect all visit fields from sequence names (excluding skipped sequences)
+                    const visitSet = new Set();
+                    transformedSequences.forEach(seq => {
+                        const seqParts = seq.name.split(newFieldDelim);
+                        if (seqParts.length >= 3) {
+                            const seqVisit = seqParts[2];
+                            // Visit can be a single value or dash-separated (e.g., "0050-0070")
+                            // Split by subfield delimiter and add each part
+                            const visitParts = seqVisit.split(newSubfieldDelim);
+                            visitParts.forEach(v => {
+                                if (v && v.trim()) {
+                                    visitSet.add(v.trim());
+                                }
+                            });
+                        }
+                    });
+                    
+                    // Sort visits and join with subfield delimiter
+                    const sortedVisits = Array.from(visitSet).sort().join(newSubfieldDelim);
+                    
+                    if (sortedVisits && sortedVisits !== '0000') {
+                        // Update the transformed filename's visit field directly (field index 2)
+                        // Store the old visit value
+                        const oldVisit = filenameParts[2];
+                        
+                        // Replace visit in transformed filename
+                        filenameParts[2] = sortedVisits;
+                        transformedFilename = filenameParts.join(newFieldDelim);
+                        
+                        // Store the updated transformed filename in state so it persists
+                        state.overriddenTransformedFilename = transformedFilename;
+                        
+                        // Re-validate with updated transformed filename
+                        const revalidationErrors = validateFastaFile(transformedFilename, transformedSequences, skipCount);
+                        errors['standard'] = revalidationErrors['standard'];
+                        
+                        visitReplacementMessage = `Visit field "${oldVisit}" was replaced with "${sortedVisits}" (sorted union of visits from sequence names).`;
+                    }
+                }
+            }
+        }
+        
         // Display results (show total count but note skipped sequences)
-        displayValidationResults(transformedFilename, errors, transformedSequences.length, skipCount);
+        displayValidationResults(transformedFilename, errors, transformedSequences.length, skipCount, visitReplacementMessage);
+        
+        // Update filename display if it changed
+        if (visitReplacementMessage) {
+            updateColoredFilename();
+            updateTransformedFilename();
+        }
         
         showOverlay(false);
     } catch (error) {
@@ -1900,7 +1968,7 @@ function runValidation() {
     }
 }
 
-function displayValidationResults(filename, validationResults, seqCount, skipCount = 0) {
+function displayValidationResults(filename, validationResults, seqCount, skipCount = 0, visitReplacementMessage = null) {
     const resultsDiv = dom.validationResults;
     let html = '';
     
@@ -1910,6 +1978,12 @@ function displayValidationResults(filename, validationResults, seqCount, skipCou
     } else {
         html += `<div style="margin-bottom: 15px;"><strong>Sequences:</strong> ${seqCount}</div>`;
     }
+    
+    // Display visit replacement message if present
+    if (visitReplacementMessage) {
+        html += `<div style="margin-bottom: 15px; padding: 10px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px; color: #92400e; font-size: 13px;"><strong>Note:</strong> ${visitReplacementMessage}</div>`;
+    }
+    
     html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #e5e7eb;">';
     
     // Display results for standard convention
