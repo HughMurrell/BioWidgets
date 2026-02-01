@@ -536,32 +536,43 @@ def convert_fasta(
     try:
         for i, record in enumerate(SeqIO.parse(input_fasta_path, "fasta")):
             # Use record.description to get the full sequence name (record.id only gets up to first space)
-            # Replace spaces in sequence name with current field delimiter before transformations
+            # Replace spaces in sequence name with current field delimiter (applies to all sequences)
             seq_name = record.description if record.description else record.id
             if seq_name:
                 seq_name = re.sub(r'\s+', current_field_delim, seq_name)
             
-            # Transform sequence name
-            transformed_name = transform_sequence_name(
-                seq_name,
-                sequence_regex_map,
-                current_field_delim,
-                current_subfield_delim,
-                new_field_delim,
-                new_subfield_delim
-            )
-            
-            # Collapse delimiters
-            collapsed_name = collapse_delimiters(transformed_name, new_field_delim, new_subfield_delim)
-            
-            # Create new record with transformed name
-            new_record = SeqRecord(
-                seq=record.seq,
-                id=collapsed_name,
-                description=""
-            )
-            transformed_records.append(new_record)
-            all_transformed_sequences.append((collapsed_name, str(record.seq)))
+            # Skip regex transformations for header sequences (first skip_sequences sequences)
+            if i < skip_sequences:
+                # Keep sequence name with spaces replaced, but no regex transformations
+                new_record = SeqRecord(
+                    seq=record.seq,
+                    id=seq_name,
+                    description=""
+                )
+                transformed_records.append(new_record)
+                all_transformed_sequences.append((seq_name, str(record.seq)))
+            else:
+                # Transform sequence name with regex transformations
+                transformed_name = transform_sequence_name(
+                    seq_name,
+                    sequence_regex_map,
+                    current_field_delim,
+                    current_subfield_delim,
+                    new_field_delim,
+                    new_subfield_delim
+                )
+                
+                # Collapse delimiters
+                collapsed_name = collapse_delimiters(transformed_name, new_field_delim, new_subfield_delim)
+                
+                # Create new record with transformed name
+                new_record = SeqRecord(
+                    seq=record.seq,
+                    id=collapsed_name,
+                    description=""
+                )
+                transformed_records.append(new_record)
+                all_transformed_sequences.append((collapsed_name, str(record.seq)))
     except Exception as e:
         return False, [f"Error reading FASTA file: {e}"], None
     
@@ -642,9 +653,16 @@ def convert_fasta(
             # Use transformed filename with _compliant suffix in input directory
             output_fasta_path = input_fasta_path.parent / f"{collapsed_filename}_compliant.fasta"
     
-    # Write output FASTA file
+    # Write output FASTA file with 80 characters per line (matching compliance app)
     try:
-        SeqIO.write(transformed_records, output_fasta_path, "fasta")
+        with open(output_fasta_path, 'w') as f:
+            for record in transformed_records:
+                # Write header line
+                f.write(f">{record.id}\n")
+                # Write sequence in 80-character lines
+                seq_str = str(record.seq)
+                for i in range(0, len(seq_str), 80):
+                    f.write(seq_str[i:i+80] + "\n")
         print(f"✓ Converted FASTA file written to: {output_fasta_path}")
         if validate and not errors:
             print("✓ Validation passed: File is compliant with standard convention")

@@ -3754,16 +3754,25 @@ function render() {
         ctxRuler.fillStyle = '#f3f4f6';
         ctxRuler.fillRect(0, 0, dom.cvsRuler.width, dom.cvsRuler.height);
         
-        // Draw watermark "Compliance" if no file loaded
+        // Draw watermark if no file loaded
         if (!state.currentFileName) {
             ctxSeq.save();
             ctxSeq.fillStyle = 'rgba(0, 0, 0, 0.1)';
-            ctxSeq.font = 'bold 72px Arial';
             ctxSeq.textAlign = 'center';
             ctxSeq.textBaseline = 'middle';
             const centerX = dom.cvsSeq.width / 2;
             const centerY = dom.cvsSeq.height / 2;
-            ctxSeq.fillText('Compliance', centerX, centerY);
+            
+            // Draw three lines of text, stacked and centered
+            ctxSeq.font = 'bold 72px Arial';
+            const lineHeight = 90; // Spacing between lines
+            const startY = centerY - lineHeight; // Start above center
+            
+            ctxSeq.fillText('fasta', centerX, startY);
+            ctxSeq.fillText('COMPLIANCE', centerX, startY + lineHeight);
+            ctxSeq.font = 'bold 48px Arial'; // Smaller font for the group name
+            ctxSeq.fillText('HIVDiversity Group', centerX, startY + (lineHeight * 2));
+            
             ctxSeq.restore();
         }
         return;
