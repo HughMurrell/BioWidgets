@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FASTA to Standard Compliance Converter
+FASTA to HIVDiversity Group Standard Compliance Converter
 
 This script reads a JSON transformation file exported from fastaCompliance.html
 and applies those transformations to a FASTA file to convert it to standard compliance.

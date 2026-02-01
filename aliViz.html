@@ -5540,19 +5540,29 @@ function onResize() {
 
 function render() {
     if(!state.viewSequences.length && state.rawSequences.length === 0) {
-        // Draw watermark "aliViz" on white background when no alignment is loaded
+        // Draw watermark on white background when no alignment is loaded
         const vW = dom.cvsSeq.width, vH = dom.cvsSeq.height;
         ctxSeq.fillStyle = '#ffffff';
         ctxSeq.fillRect(0, 0, vW, vH);
         
-        // Draw watermark text
+        // Draw watermark text - two lines stacked and centered
         ctxSeq.save();
         ctxSeq.fillStyle = '#b0b0b0'; // Darker grey for watermark
-        ctxSeq.font = 'bold 144px Arial, sans-serif';
         ctxSeq.textAlign = 'center';
         ctxSeq.textBaseline = 'middle';
         ctxSeq.globalAlpha = 0.5; // More visible watermark
-        ctxSeq.fillText('aliViz', vW / 2, vH / 2);
+        const centerX = vW / 2;
+        const centerY = vH / 2;
+        
+        // Draw two lines of text, stacked and centered
+        ctxSeq.font = 'bold 144px Arial, sans-serif';
+        const lineHeight = 180; // Spacing between lines
+        const startY = centerY - (lineHeight / 2); // Start above center
+        
+        ctxSeq.fillText('aliViz', centerX, startY);
+        ctxSeq.font = 'bold 72px Arial, sans-serif'; // Smaller font for the group name
+        ctxSeq.fillText('HIVDiversity Group', centerX, startY + lineHeight);
+        
         ctxSeq.restore();
         return;
     }
@@ -6312,7 +6322,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     
     // Check group labels
     for (const groupData of groupFrequencies) {
-        const groupLabel = `Variants at ${groupData.groupValue} (${groupData.count})`;
+        const groupLabel = `Variant frequency ${groupData.groupValue} (${groupData.count})`;
         const groupLabelWidth = groupLabel.length * pixelsPerChar;
         maxLabelWidth = Math.max(maxLabelWidth, groupLabelWidth);
     }
@@ -6548,8 +6558,8 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
             label.setAttribute('font-family', 'sans-serif');
             label.setAttribute('font-size', '10');
             label.setAttribute('fill', '#666');
-            // Rotate text 90 degrees counter-clockwise around the center point
-            label.setAttribute('transform', `rotate(-90 ${labelX} ${labelY})`);
+            // Rotate text 90 degrees clockwise around the center point (reads top to bottom)
+            label.setAttribute('transform', `rotate(90 ${labelX} ${labelY})`);
             label.textContent = boundaryCoord.toString();
             svg.appendChild(label);
         }
@@ -6649,7 +6659,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         // Groups sorted alphabetically, use COLOR_PALETTE starting from index 1
         const labelColor = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
         rowLabel.setAttribute('fill', labelColor);
-        rowLabel.textContent = `Variants at ${groupData.groupValue} (${groupData.count})`;
+        rowLabel.textContent = `Variant frequency ${groupData.groupValue} (${groupData.count})`;
         svg.appendChild(rowLabel);
     }
     

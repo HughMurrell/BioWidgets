@@ -1136,6 +1136,8 @@ const state = {
     sequenceRegexMap: new Map(), // fieldIndex -> regex string (identity by default)
     skipSequences: 0, // Number of header sequences to skip from transformations
     overriddenTransformedFilename: null, // Override for transformed filename (e.g., from visit replacement)
+    validationHasRun: false, // Track if validation has been run
+    validationPassed: false // Track if validation passed
 };
 
 // --- DOM ---
@@ -1201,10 +1203,15 @@ function init() {
     });
     document.getElementById('btn-run-group').addEventListener('click', runGroupTask);
     
-    // Initially disable export buttons (will be enabled after successful validation)
+    // Enable FASTA export button (no longer requires validation)
     if (dom.btnDownload) {
-        dom.btnDownload.disabled = true;
+        dom.btnDownload.disabled = false;
         dom.btnDownload.addEventListener('click', () => exportAlignment('download'));
+    }
+    
+    // JSON export button requires validation - keep disabled initially
+    if (dom.btnExportSettings) {
+        dom.btnExportSettings.disabled = true;
     }
     
     dom.btnNt.addEventListener('click', () => setMode('NT'));
@@ -1619,13 +1626,19 @@ function finalizeLoad(seqs, isAlignment) {
         dom.btnParse.disabled = false;
     }
     
-    // Disable export buttons until validation passes
+    // Enable FASTA export button (validation no longer required)
     if (dom.btnDownload) {
-        dom.btnDownload.disabled = true;
+        dom.btnDownload.disabled = false;
     }
+    
+    // JSON export button requires validation - keep disabled until validation passes
     if (dom.btnExportSettings) {
         dom.btnExportSettings.disabled = true;
     }
+    
+    // Reset validation state when new file is loaded
+    state.validationHasRun = false;
+    state.validationPassed = false;
     
     // Display filename with colored fields
     if (state.currentFileName) {
@@ -1994,13 +2007,14 @@ function displayValidationResults(filename, validationResults, seqCount, skipCou
     html += ` ${result.name} Convention`;
     html += `</div>`;
     
+    // Update validation state
+    state.validationHasRun = true;
+    state.validationPassed = result.valid;
+    
     if (result.valid) {
         html += `<div style="color: #166534; font-size: 13px;">Valid - File conforms to ${result.name} naming convention.</div>`;
         
-        // Enable export buttons on successful validation
-        if (dom.btnDownload) {
-            dom.btnDownload.disabled = false;
-        }
+        // Enable JSON export button only when validation passes
         if (dom.btnExportSettings) {
             dom.btnExportSettings.disabled = false;
         }
@@ -2012,10 +2026,7 @@ function displayValidationResults(filename, validationResults, seqCount, skipCou
         });
         html += '</ul>';
         
-        // Disable export buttons on validation failure
-        if (dom.btnDownload) {
-            dom.btnDownload.disabled = true;
-        }
+        // Disable JSON export button when validation fails
         if (dom.btnExportSettings) {
             dom.btnExportSettings.disabled = true;
         }
@@ -2353,22 +2364,41 @@ function collapseDelimiters(text, fieldDelim, subfieldDelim) {
 function exportAlignment(target) {
     if (!state.viewSequences.length) return;
     
-    // Get transformed filename and sequence names
+    // Check if validation has run and passed
+    let isCompliant = false;
+    if (state.validationHasRun && state.validationPassed) {
+        isCompliant = true;
+    } else {
+        // Show warning if validation hasn't run or failed
+        const message = state.validationHasRun 
+            ? "Validation has been run but the file is not compliant. Do you want to export anyway? The filename will be appended with '_notCompliant'."
+            : "Validation has not been run. Do you want to export anyway? The filename will be appended with '_notCompliant'.";
+        
+        if (!confirm(message)) {
+            return; // User cancelled
+        }
+    }
+    
+    // Get transformed filename and sequence names (as they appear in the display)
     let transformedFilename = getTransformedFilename();
     let transformedSequences = getTransformedSequenceNames();
     
-    // Collapse delimiters on export
     const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
     const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
     
-    if (transformedFilename) {
-        transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+    // For compliant files, collapse delimiters (as validation expects)
+    // For non-compliant files, use names exactly as displayed (without collapsing)
+    if (isCompliant) {
+        if (transformedFilename) {
+            transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+        }
+        
+        transformedSequences = transformedSequences.map(seq => ({
+            ...seq,
+            name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+        }));
     }
-    
-    transformedSequences = transformedSequences.map(seq => ({
-        ...seq,
-        name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
-    }));
+    // For non-compliant files, use names as-is (matching what's displayed in the UI)
     
     // Build FASTA content using transformed sequence names
     const lines = [];
@@ -2389,15 +2419,16 @@ function exportAlignment(target) {
     const a = document.createElement("a");
     a.href = url;
     
-    // Generate filename: use transformed filename with _compliant added to basename
+    // Generate filename: use transformed filename with _compliant or _notCompliant added to basename
     let downloadName;
+    const suffix = isCompliant ? '_compliant' : '_notCompliant';
     if (transformedFilename) {
         const lastDot = transformedFilename.lastIndexOf('.');
         const basename = lastDot > 0 ? transformedFilename.substring(0, lastDot) : transformedFilename;
         const extension = lastDot > 0 ? transformedFilename.substring(lastDot) : '.fasta';
-        downloadName = `${basename}_compliant${extension}`;
+        downloadName = `${basename}${suffix}${extension}`;
     } else {
-        downloadName = `alignment_compliant.fasta`;
+        downloadName = `alignment${suffix}.fasta`;
     }
     
     a.download = downloadName;
