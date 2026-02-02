@@ -6021,10 +6021,14 @@ function showSequenceLogo() {
         select.appendChild(opt);
     }
     
+    // Always add AllGaps option
+    const optAllGaps = document.createElement('option');
+    optAllGaps.value = 'allgaps';
+    optAllGaps.textContent = 'AllGaps';
+    select.appendChild(optAllGaps);
+    
     if (!hasReference && !hasSubtype && !hasFounder) {
-        alert("No reference, subtype, or founder sequence available.");
-        selectorOverlay.remove();
-        return;
+        // Even if no other sequences, AllGaps is always available
     }
     
     selectorModal.appendChild(select);
@@ -6062,6 +6066,16 @@ function showSequenceLogo() {
             bottomIndex = founderIndex;
             bottomSeq = state.rawSequences[bottomIndex];
             bottomLabel = `Founder (${bottomSeq.name})`;
+        } else if (selectedType === 'allgaps') {
+            // Create a sequence consisting entirely of gap characters
+            // Use the length of the reference sequence or the longest sequence
+            const maxLength = Math.max(...state.rawSequences.map(seq => seq.seq ? seq.seq.length : 0));
+            bottomSeq = {
+                name: 'AllGaps',
+                seq: '-'.repeat(maxLength)
+            };
+            bottomIndex = -1; // Not a real sequence index
+            bottomLabel = 'AllGaps';
         }
         
         if (!bottomSeq) {
