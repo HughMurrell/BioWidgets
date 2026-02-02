@@ -6076,9 +6076,6 @@ function showSequenceLogo() {
             return;
         }
         
-        // Generate the logo
-        const svg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel);
-        
         // Show in a modal
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;';
@@ -6090,26 +6087,71 @@ function showSequenceLogo() {
         const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
         const epitopeName = epitope.name; // Capture epitope name for export closure
         
+        // Power transformation slider
+        let powerValue = 1.0; // Initialize to 1 (no transformation)
+        const sliderContainer = document.createElement('div');
+        sliderContainer.style.cssText = 'margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 4px;';
+        
+        const sliderLabel = document.createElement('label');
+        sliderLabel.textContent = 'Power Transform: ';
+        sliderLabel.style.cssText = 'display: inline-block; margin-right: 10px; font-weight: bold;';
+        
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0';
+        slider.max = '2';
+        slider.step = '0.05';
+        slider.value = '1.0';
+        slider.style.cssText = 'width: 200px; margin-right: 10px;';
+        
+        const sliderValue = document.createElement('span');
+        sliderValue.textContent = '1.00';
+        sliderValue.style.cssText = 'display: inline-block; min-width: 50px; font-weight: bold;';
+        
+        slider.addEventListener('input', (e) => {
+            powerValue = parseFloat(e.target.value);
+            sliderValue.textContent = powerValue.toFixed(2);
+            // Regenerate logo with new power value
+            const oldSvg = modal.querySelector('svg');
+            if (oldSvg) oldSvg.remove();
+            const newSvg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
+            modal.insertBefore(newSvg, sliderContainer.nextSibling);
+            // Update title with current power value
+            const titleLine1 = newSvg.querySelector('text');
+            if (titleLine1) {
+                titleLine1.textContent = `Epitope: ${epitope.name} (power: ${powerValue.toFixed(2)})`;
+            }
+        });
+        
+        sliderContainer.appendChild(sliderLabel);
+        sliderContainer.appendChild(slider);
+        sliderContainer.appendChild(sliderValue);
+        modal.appendChild(sliderContainer);
+        
+        // Generate the logo with initial power value
+        const svg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
         modal.appendChild(svg);
         
         // Create button container
         const buttonContainer = document.createElement('div');
         buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px;';
         
-        // Export SVG button
+        // Export SVG button - get current SVG from modal
         const exportSvgBtn = document.createElement('button');
         exportSvgBtn.textContent = 'Export SVG';
         exportSvgBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
         exportSvgBtn.onclick = () => {
-            exportLogoAsSVG(svg, epitopeName, fileName);
+            const currentSvg = modal.querySelector('svg');
+            if (currentSvg) exportLogoAsSVG(currentSvg, epitopeName, fileName);
         };
         
-        // Export PDF button
+        // Export PDF button - get current SVG from modal
         const exportPdfBtn = document.createElement('button');
         exportPdfBtn.textContent = 'Export PDF';
         exportPdfBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
         exportPdfBtn.onclick = () => {
-            exportLogoAsPDF(svg, epitopeName, fileName);
+            const currentSvg = modal.querySelector('svg');
+            if (currentSvg) exportLogoAsPDF(currentSvg, epitopeName, fileName);
         };
         
         // Close button
@@ -6136,7 +6178,7 @@ function showSequenceLogo() {
     document.body.appendChild(selectorOverlay);
 }
 
-function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel) {
+function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerTransform = 1.0) {
     // Amino acid color mapping
     const aaColors = {
         'D': '#e74c3c', 'E': '#e74c3c', // Red - acidic
@@ -6305,8 +6347,11 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     const charWidth = 18;
     const baseFontSize = 16;
     const baseHeight = baseFontSize; // Base height matches font size
-    const logoHeight = charWidth * 1.5; // Each logo height is 1.5 times the character width (30px)
-    const padding = 40;
+    const capHeightRatio = 0.68; // Typical cap-height to font-size ratio for Courier New monospace font (baseline to top of capital letters)
+    const logoHeight = charWidth * 1.0; // Bottom logo height equals the character width (18px)
+    const groupLogoHeight = logoHeight * 3; // Group logo height is 3x larger to show rare mutations (90px)
+    const padding_horizontal = 40; // Horizontal padding (left and right)
+    const padding_vertical = 40;   // Vertical padding (top and bottom)
     
     // Calculate required label width based on all labels
     // Estimate text width: approximately 6-7 pixels per character for 12px font
@@ -6334,13 +6379,13 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Calculate SVG dimensions
     const numGroups = groupFrequencies.length;
     const numLogos = numGroups + 1; // Groups + bottom sequence
-    const svgWidth = sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap + padding * 2 + leftLabelWidth;
+    const svgWidth = sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap + padding_horizontal * 2 + leftLabelWidth;
     
     // Title height: first line (18px) + spacing (5px) + second line (9px) + bottom margin (15px)
     const titleHeight = 18 + 5 + 9 + 15;
     
-    // Height = title + (number of logos * logoHeight) + padding top and bottom
-    const svgHeight = titleHeight + numLogos * logoHeight + padding * 2;
+    // Height = title + (number of group logos * groupLogoHeight) + bottom logo height + padding top and bottom
+    const svgHeight = titleHeight + (numGroups * groupLogoHeight) + logoHeight + padding_vertical * 2;
     
     // Create SVG element
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -6353,21 +6398,21 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Get file name from state or file input
     const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
     
-    // First title line: "Epitope: <epitope name>"
+    // First title line: "Epitope: <epitope name> (power: <value>)"
     const titleLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    titleLine1.setAttribute('x', padding + 10); // Align with logo labels
-    titleLine1.setAttribute('y', padding + 18); // 18px font size, align to baseline
+    titleLine1.setAttribute('x', padding_horizontal + 10); // Align with logo labels
+    titleLine1.setAttribute('y', padding_vertical + 18); // 18px font size, align to baseline
     titleLine1.setAttribute('font-family', 'sans-serif');
     titleLine1.setAttribute('font-size', '18');
     titleLine1.setAttribute('font-weight', 'bold');
     titleLine1.setAttribute('fill', '#000');
-    titleLine1.textContent = `Epitope: ${epitope.name}`;
+    titleLine1.textContent = `Epitope: ${epitope.name} (power: ${powerTransform.toFixed(2)})`;
     svg.appendChild(titleLine1);
     
     // Second title line: "Alignment: <file name>"
     const titleLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    titleLine2.setAttribute('x', padding + 10); // Align with logo labels
-    titleLine2.setAttribute('y', padding + 18 + 5 + 9); // First line + spacing (5px) + second line font size (9px)
+    titleLine2.setAttribute('x', padding_horizontal + 10); // Align with logo labels
+    titleLine2.setAttribute('y', padding_vertical + 18 + 5 + 9); // First line + spacing (5px) + second line font size (9px)
     titleLine2.setAttribute('font-family', 'sans-serif');
     titleLine2.setAttribute('font-size', '9');
     titleLine2.setAttribute('font-weight', 'bold');
@@ -6378,56 +6423,78 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Draw horizontal separators: at top of uppermost logo and at bottom of each logo
     const separatorColor = '#d0d0d0'; // Lighter grey for all separators
     
-    // Top separator (at top of uppermost logo)
+    // Top separator (at top of uppermost logo, where the next group's baseline would be)
     if (groupFrequencies.length > 0) {
-        // Topmost logo's bottom is at: svgHeight - padding - logoHeight - ((groupFrequencies.length - 1) * logoHeight)
-        // Top of that logo is at: bottom + logoHeight
-        const topmostLogoBottom = svgHeight - padding - logoHeight - ((groupFrequencies.length - 1) * logoHeight);
-        const topmostLogoTop = topmostLogoBottom + logoHeight;
+        // Topmost logo is at rowIdx = groupFrequencies.length - 1
+        // The separator should be at the top of this logo, which is where rowIdx = groupFrequencies.length's baseline would be
+        // That baseline would be at: svgHeight - padding_vertical - logoHeight - (groupFrequencies.length * groupLogoHeight)
+        const topSeparatorY = svgHeight - padding_vertical - logoHeight - (groupFrequencies.length * groupLogoHeight);
         const topSeparator = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        topSeparator.setAttribute('x1', padding + leftLabelWidth);
-        topSeparator.setAttribute('y1', topmostLogoTop);
-        topSeparator.setAttribute('x2', svgWidth - padding);
-        topSeparator.setAttribute('y2', topmostLogoTop);
+        topSeparator.setAttribute('x1', padding_horizontal + leftLabelWidth);
+        topSeparator.setAttribute('y1', topSeparatorY);
+        topSeparator.setAttribute('x2', svgWidth - padding_horizontal);
+        topSeparator.setAttribute('y2', topSeparatorY);
         topSeparator.setAttribute('stroke', separatorColor);
         topSeparator.setAttribute('stroke-width', '1');
         svg.appendChild(topSeparator);
     }
     
     // Bottom separator for each logo (at the bottom of each logo row)
-    // Bottom logo bottom: svgHeight - padding - logoHeight
-    // Each group logo bottom: svgHeight - padding - logoHeight - (rowIdx * logoHeight)
+    // Bottom logo bottom: svgHeight - padding_vertical - logoHeight
+    // Each group logo bottom: svgHeight - padding_vertical - logoHeight - (rowIdx * groupLogoHeight)
+    // Draw separators from bottom to top
+    // i=0: bottom logo separator
+    // i=1: first group logo bottom separator (rowIdx=0) - use same calculation as yBase
+    // i=2: second group logo bottom separator (rowIdx=1) - use same calculation as yBase
     for (let i = 0; i <= groupFrequencies.length; i++) {
-        const separatorY = svgHeight - padding - logoHeight - (i * logoHeight);
+        const separatorY = i === 0 
+            ? svgHeight - padding_vertical  // Bottom logo separator at the very bottom
+            : svgHeight - padding_vertical - logoHeight - ((i - 1) * groupLogoHeight);  // Group logo separators (i=1 for rowIdx=0, i=2 for rowIdx=1)
         const separator = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        separator.setAttribute('x1', padding + leftLabelWidth);
+        separator.setAttribute('x1', padding_horizontal + leftLabelWidth);
         separator.setAttribute('y1', separatorY);
-        separator.setAttribute('x2', svgWidth - padding);
+        separator.setAttribute('x2', svgWidth - padding_horizontal);
         separator.setAttribute('y2', separatorY);
         separator.setAttribute('stroke', separatorColor);
         separator.setAttribute('stroke-width', '1');
         svg.appendChild(separator);
     }
     
+    // Add top boundary line at the top of the topmost logo (where the next group's baseline would be)
+    if (groupFrequencies.length > 0) {
+        // Topmost logo is at rowIdx = groupFrequencies.length - 1
+        // The separator should be at the top of this logo, which is where rowIdx = groupFrequencies.length's baseline would be
+        // That baseline would be at: svgHeight - padding_vertical - logoHeight - (groupFrequencies.length * groupLogoHeight)
+        const topSeparatorY = svgHeight - padding_vertical - logoHeight - (groupFrequencies.length * groupLogoHeight);
+        const topBoundary = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        topBoundary.setAttribute('x1', padding_horizontal + leftLabelWidth);
+        topBoundary.setAttribute('y1', topSeparatorY);
+        topBoundary.setAttribute('x2', svgWidth - padding_horizontal);
+        topBoundary.setAttribute('y2', topSeparatorY);
+        topBoundary.setAttribute('stroke', separatorColor);
+        topBoundary.setAttribute('stroke-width', '1');
+        svg.appendChild(topBoundary);
+    }
+    
     // Additional horizontal line at the very bottom of the bottom logo (after coordinate labels)
     const bottomLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    bottomLine.setAttribute('x1', padding + leftLabelWidth);
-    bottomLine.setAttribute('y1', svgHeight - padding);
-    bottomLine.setAttribute('x2', svgWidth - padding);
-    bottomLine.setAttribute('y2', svgHeight - padding);
+    bottomLine.setAttribute('x1', padding_horizontal + leftLabelWidth);
+    bottomLine.setAttribute('y1', svgHeight - padding_vertical);
+    bottomLine.setAttribute('x2', svgWidth - padding_horizontal);
+    bottomLine.setAttribute('y2', svgHeight - padding_vertical);
     bottomLine.setAttribute('stroke', separatorColor);
     bottomLine.setAttribute('stroke-width', '1');
     svg.appendChild(bottomLine);
     
     // Draw vertical lines: before first region, between regions, and after last region
-    let xOffset = padding + leftLabelWidth;
+    let xOffset = padding_horizontal + leftLabelWidth;
     
     // Draw line before first region
     const startLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     startLine.setAttribute('x1', xOffset);
-    startLine.setAttribute('y1', titleHeight + padding); // Start after title
+    startLine.setAttribute('y1', titleHeight + padding_vertical); // Start after title
     startLine.setAttribute('x2', xOffset);
-    startLine.setAttribute('y2', svgHeight - padding);
+    startLine.setAttribute('y2', svgHeight - padding_vertical);
     startLine.setAttribute('stroke', separatorColor);
     startLine.setAttribute('stroke-width', '2');
     svg.appendChild(startLine);
@@ -6441,9 +6508,9 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         // Draw vertical line (lighter grey)
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', xOffset);
-        line.setAttribute('y1', titleHeight + padding); // Start after title
+        line.setAttribute('y1', titleHeight + padding_vertical); // Start after title
         line.setAttribute('x2', xOffset);
-        line.setAttribute('y2', svgHeight - padding);
+        line.setAttribute('y2', svgHeight - padding_vertical);
         line.setAttribute('stroke', separatorColor);
         line.setAttribute('stroke-width', '2');
         svg.appendChild(line);
@@ -6455,13 +6522,13 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Calculate end position: add positions in last region
     if (epitope.regions.length > 0) {
         const lastRange = regionColumnRanges[regionColumnRanges.length - 1];
-        const endX = padding + leftLabelWidth + sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap;
+        const endX = padding_horizontal + leftLabelWidth + sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap;
         
         const endLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         endLine.setAttribute('x1', endX);
-        endLine.setAttribute('y1', titleHeight + padding); // Start after title
+        endLine.setAttribute('y1', titleHeight + padding_vertical); // Start after title
         endLine.setAttribute('x2', endX);
-        endLine.setAttribute('y2', svgHeight - padding);
+        endLine.setAttribute('y2', svgHeight - padding_vertical);
         endLine.setAttribute('stroke', separatorColor);
         endLine.setAttribute('stroke-width', '2');
         svg.appendChild(endLine);
@@ -6475,9 +6542,9 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     }
     
     // Draw bottom sequence row
-    // Bottom logo starts at svgHeight - padding - logoHeight
-    const bottomLogoY = svgHeight - padding - logoHeight;
-    xOffset = padding + leftLabelWidth;
+    // Bottom logo starts at svgHeight - padding_vertical - logoHeight
+    const bottomLogoY = svgHeight - padding_vertical;  // Bottom logo characters align with bottom separator
+    xOffset = padding_horizontal + leftLabelWidth;
     let currentRegionRangeIdx = 0;
     
     // Iterate through all selected alignment columns (not just coordinates)
@@ -6511,12 +6578,12 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         // Position text so its bottom aligns with the separator line below (same approach as group logos)
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', xOffset + charWidth / 2);
-        // Position at bottomLogoY + logoHeight (same as separator position) with text-after-edge alignment
-        const textY = bottomLogoY + logoHeight;
+        // Position at bottomLogoY (same as separator position) with text-after-edge alignment
+        const textY = bottomLogoY;
         text.setAttribute('y', textY);
         text.setAttribute('text-anchor', 'middle');
-        text.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text to y position (same as group logos)
-        text.setAttribute('font-family', 'monospace');
+        text.setAttribute('dominant-baseline', 'alphabetic'); // Use alphabetic baseline like labels
+        text.setAttribute('font-family', 'Courier New, Courier, monospace'); // Fixed-width font for consistent character alignment
         text.setAttribute('font-size', '16');
         text.setAttribute('font-weight', 'bold');
         if (isGap) {
@@ -6550,7 +6617,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         if (isBoundary && boundaryCoord !== null) {
             const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             const labelX = xOffset + charWidth / 2;
-            const labelY = svgHeight - padding + 20;
+            const labelY = svgHeight - padding_vertical + 20;
             label.setAttribute('x', labelX);
             label.setAttribute('y', labelY);
             label.setAttribute('text-anchor', 'middle');
@@ -6571,10 +6638,22 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     for (let rowIdx = 0; rowIdx < groupFrequencies.length; rowIdx++) {
         const groupData = groupFrequencies[rowIdx];
         // First group (rowIdx=0) is just above bottom logo, second group (rowIdx=1) is above first, etc.
-        // Calculate yBase: start from bottom, go up by bottom logo height, then up by (rowIdx * logoHeight)
-        const yBase = svgHeight - padding - logoHeight - (rowIdx * logoHeight);
+        // Calculate yBase: yBase should align with the bottom separator line for this logo row
+        // Separator i=1 (first group bottom) is at: svgHeight - padding_vertical - logoHeight - (1 * groupLogoHeight)
+        // Separator i=2 (second group bottom) is at: svgHeight - padding_vertical - logoHeight - (2 * groupLogoHeight)
+        // For rowIdx=0, yBase should match separator i=1: svgHeight - padding_vertical - logoHeight - (1 * groupLogoHeight)
+        // For rowIdx=1, yBase should match separator i=2: svgHeight - padding_vertical - logoHeight - (2 * groupLogoHeight)
+        // yBase should align with separator i=(rowIdx+1)
+        // Separator i=1 is at: svgHeight - padding_vertical - logoHeight - (1 * groupLogoHeight)
+        // Separator i=2 is at: svgHeight - padding_vertical - logoHeight - (2 * groupLogoHeight)
+        // yBase should match separator i=(rowIdx+1)
+        // Separator i=1 (rowIdx=0) is at: svgHeight - padding_vertical - logoHeight - (1 * groupLogoHeight)
+        // Separator i=1 (rowIdx=0) is at: svgHeight - padding_vertical - logoHeight - (0 * groupLogoHeight) = svgHeight - padding_vertical - logoHeight
+        // Separator i=2 (rowIdx=1) is at: svgHeight - padding_vertical - logoHeight - (1 * groupLogoHeight)
+        // So yBase = svgHeight - padding_vertical - logoHeight - (rowIdx * groupLogoHeight)
+        const yBase = svgHeight - padding_vertical - logoHeight - (rowIdx * groupLogoHeight);
         
-        xOffset = padding + leftLabelWidth;
+        xOffset = padding_horizontal + leftLabelWidth;
         currentRegionRangeIdx = 0;
         
         // Iterate through all selected alignment columns (same as bottom row)
@@ -6603,13 +6682,38 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                 const sortedAAs = Array.from(colFreqMap.entries())
                     .sort((a, b) => b[1] - a[1]);
                 
+                // Calculate raw frequencies for variants
+                const rawFrequencies = sortedAAs.map(([aa, count]) => count / totalGroupSize);
+                
+                // Calculate the sum of variant frequencies
+                const variantSum = rawFrequencies.reduce((a, b) => a + b, 0);
+                
+                // The difference from 1 is the frequency of the bottom sequence character
+                const bottomFreq = 1 - variantSum;
+                
+                // Create complete frequency list including bottom sequence
+                const allFrequencies = [...rawFrequencies, bottomFreq];
+                
+                // Apply power transformation if powerTransform !== 1.0
+                let frequencies = rawFrequencies;
+                if (powerTransform !== 1.0) {
+                    // Transform all frequencies (variants + bottom)
+                    const transformed = allFrequencies.map(f => Math.pow(f, powerTransform));
+                    const sum = transformed.reduce((a, b) => a + b, 0);
+                    const transformedNormalized = transformed.map(f => f / sum);
+                    // Discard the transformed bottom frequency (last element), keep only variants
+                    frequencies = transformedNormalized.slice(0, -1);
+                }
+                
                 // Draw amino acids stacked by frequency (from bottom to top, no gaps)
                 // Start from the bottom (yBase) and stack upward
                 let yCurrentBottom = yBase; // Current bottom position for stacking
-                for (const [aa, count] of sortedAAs) {
-                    // Frequency within the group (count / total group size)
-                    const frequency = count / totalGroupSize;
-                    const charHeight = baseHeight * frequency; // Height proportional to within-group frequency
+                for (let i = 0; i < sortedAAs.length; i++) {
+                    const [aa, count] = sortedAAs[i];
+                    // Use transformed frequency
+                    const frequency = frequencies[i];
+                    // Height proportional to within-group frequency, multiplied by 3 for better visibility of rare mutations
+                    const charHeight = baseHeight * frequency * 3;
                     
                     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                     const centerX = xOffset + charWidth / 2;
@@ -6618,8 +6722,8 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                     text.setAttribute('x', centerX);
                     text.setAttribute('y', yCurrentBottom);
                     text.setAttribute('text-anchor', 'middle');
-                    text.setAttribute('dominant-baseline', 'text-after-edge'); // Align to bottom edge
-                    text.setAttribute('font-family', 'monospace');
+                    text.setAttribute('dominant-baseline', 'alphabetic'); // Use alphabetic baseline like labels
+                    text.setAttribute('font-family', 'Courier New, Courier, monospace'); // Fixed-width font for consistent character alignment
                     text.setAttribute('font-size', baseFontSize.toString());
                     text.setAttribute('font-weight', 'bold');
                     // Handle gaps (nabla character) with grey color
@@ -6629,15 +6733,19 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                         text.setAttribute('fill', aaColors[aa] || '#000');
                     }
                     
-                    // Scale vertically from the bottom edge
-                    // Transform: translate to bottom point, scale upward, translate back
+                    // Scale vertically from the baseline
+                    // Transform: translate to baseline point, scale upward, translate back
                     const scaleY = charHeight / baseHeight;
                     text.setAttribute('transform', `translate(${centerX}, ${yCurrentBottom}) scale(1, ${scaleY}) translate(${-centerX}, ${-yCurrentBottom})`);
                     text.textContent = aa;
                     svg.appendChild(text);
                     
-                    // Move up for next character (no gap - next character starts exactly where this one's top ends)
-                    yCurrentBottom -= charHeight;
+                    // Position next character's baseline = previous character's baseline + previous character's visual height
+                    // Previous character's baseline is at yCurrentBottom
+                    // Previous character's visual height (cap-height) is approximately capHeightRatio * charHeight
+                    // For sans-serif fonts, cap-height (baseline to top of capitals) is typically 0.68-0.72 of font size
+                    // Using 0.72 as a good middle ground for sans-serif fonts
+                    yCurrentBottom = yCurrentBottom - capHeightRatio * charHeight;
                 }
             }
             
@@ -6647,7 +6755,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         // Row label with color coding (shifted left out of logo area)
         // Align label bottom with logo bottom (yBase)
         const rowLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        rowLabel.setAttribute('x', padding + 10);
+        rowLabel.setAttribute('x', padding_horizontal + 10);
         rowLabel.setAttribute('y', yBase);
         rowLabel.setAttribute('text-anchor', 'start');
         rowLabel.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text with yBase
@@ -6666,8 +6774,8 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     // Bottom row label (colored based on sequence type: Cyan for Reference, Magenta for Subtype, Yellow for Founder)
     // Align label bottom with logo bottom (same y as bottom logo characters)
     const bottomLabelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    bottomLabelEl.setAttribute('x', padding + 10);
-    bottomLabelEl.setAttribute('y', bottomLogoY + logoHeight); // Align with bottom of bottom logo
+    bottomLabelEl.setAttribute('x', padding_horizontal + 10);
+    bottomLabelEl.setAttribute('y', bottomLogoY); // Align with bottom of bottom logo (same as separator)
     bottomLabelEl.setAttribute('text-anchor', 'start');
     bottomLabelEl.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text with logo bottom
     bottomLabelEl.setAttribute('font-family', 'sans-serif');
