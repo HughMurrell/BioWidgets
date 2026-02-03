@@ -6021,11 +6021,11 @@ function showSequenceLogo() {
         select.appendChild(opt);
     }
     
-    // Always add AllGaps option
-    const optAllGaps = document.createElement('option');
-    optAllGaps.value = 'allgaps';
-    optAllGaps.textContent = 'AllGaps';
-    select.appendChild(optAllGaps);
+    // Always add None option
+    const optNone = document.createElement('option');
+    optNone.value = 'none';
+    optNone.textContent = 'None';
+    select.appendChild(optNone);
     
     if (!hasReference && !hasSubtype && !hasFounder) {
         // Even if no other sequences, AllGaps is always available
@@ -6066,16 +6066,16 @@ function showSequenceLogo() {
             bottomIndex = founderIndex;
             bottomSeq = state.rawSequences[bottomIndex];
             bottomLabel = `Founder (${bottomSeq.name})`;
-        } else if (selectedType === 'allgaps') {
-            // Create a sequence consisting entirely of gap characters
+        } else if (selectedType === 'none') {
+            // Create a sequence consisting entirely of dots
             // Use the length of the reference sequence or the longest sequence
             const maxLength = Math.max(...state.rawSequences.map(seq => seq.seq ? seq.seq.length : 0));
             bottomSeq = {
-                name: 'AllGaps',
-                seq: '-'.repeat(maxLength)
+                name: 'None',
+                seq: '.'.repeat(maxLength)
             };
             bottomIndex = -1; // Not a real sequence index
-            bottomLabel = 'AllGaps';
+            bottomLabel = null; // No label for None option
         }
         
         if (!bottomSeq) {
@@ -6130,11 +6130,6 @@ function showSequenceLogo() {
             if (oldSvg) oldSvg.remove();
             const newSvg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
             modal.insertBefore(newSvg, sliderContainer.nextSibling);
-            // Update title with current power value
-            const titleLine1 = newSvg.querySelector('text');
-            if (titleLine1) {
-                titleLine1.textContent = `Epitope: ${epitope.name} (power: ${powerValue.toFixed(2)})`;
-            }
         });
         
         sliderContainer.appendChild(sliderLabel);
@@ -6395,8 +6390,90 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     const numLogos = numGroups + 1; // Groups + bottom sequence
     const svgWidth = sortedColumns.length * charWidth + (regionColumnRanges.length - 1) * regionGap + padding_horizontal * 2 + leftLabelWidth;
     
-    // Title height: first line (18px) + spacing (5px) + second line (9px) + bottom margin (15px)
-    const titleHeight = 18 + 5 + 9 + 15;
+    // Get file name from state or file input
+    const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
+    
+    // Calculate available width for titles (SVG width minus padding and margins)
+    const availableWidth = svgWidth - (padding_horizontal + 10) * 2; // Left padding + margin, and right padding
+    
+    // Calculate power percentage (distance from 1)
+    const powerPercentage = ((powerTransform - 1) * 100);
+    const absPowerPercentage = Math.abs(powerPercentage).toFixed(0);
+    
+    // Build bias text
+    let biasText;
+    if (Math.abs(powerPercentage) < 0.5) {
+        // Effectively zero (within rounding)
+        biasText = 'with zero bias';
+    } else if (powerPercentage < 0) {
+        // Negative bias (towards rare bases)
+        biasText = `with ${absPowerPercentage}% bias towards rare bases`;
+    } else {
+        // Positive bias (towards abundant bases)
+        biasText = `with ${absPowerPercentage}% bias towards abundant bases`;
+    }
+    
+    // Build title based on start sequence selection
+    let titleText;
+    if (bottomLabel && bottomLabel !== 'None') {
+        // Extract sequence type from label (e.g., "Reference (V806_...)" -> "Reference", "Founder (consensus_of_...)" -> "Founder")
+        const sequenceType = bottomLabel.split(' ')[0];
+        titleText = `Logogram for ${epitope.name}, showing escape from ${sequenceType}, ${biasText}`;
+    } else {
+        // None option - omit the middle part
+        titleText = `Logogram for ${epitope.name}, ${biasText}`;
+    }
+    
+    // Calculate font sizes for both title lines before creating SVG
+    // Use temporary SVG elements to measure text width
+    const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    tempSvg.style.position = 'absolute';
+    tempSvg.style.visibility = 'hidden';
+    tempSvg.style.width = '0';
+    tempSvg.style.height = '0';
+    document.body.appendChild(tempSvg);
+    
+    // Find appropriate font size for first line that fits the width
+    let fontSize = 18; // Start with default size
+    const tempText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tempText.setAttribute('font-family', 'sans-serif');
+    tempText.setAttribute('font-weight', 'bold');
+    tempText.textContent = titleText;
+    tempSvg.appendChild(tempText);
+    
+    // Try different font sizes until text fits
+    while (fontSize > 8) { // Minimum font size of 8px
+        tempText.setAttribute('font-size', fontSize.toString());
+        const textWidth = tempText.getBBox().width;
+        if (textWidth <= availableWidth) {
+            break;
+        }
+        fontSize -= 0.5; // Reduce by 0.5px increments
+    }
+    
+    // Find appropriate font size for second line that fits the width
+    const alignmentText = `Alignment: ${fileName}`;
+    let fontSize2 = fontSize; // Start with same size as first line
+    const tempText2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tempText2.setAttribute('font-family', 'sans-serif');
+    tempText2.setAttribute('font-weight', 'bold');
+    tempText2.textContent = alignmentText;
+    tempSvg.appendChild(tempText2);
+    
+    // Try different font sizes until text fits
+    while (fontSize2 > 8) { // Minimum font size of 8px
+        tempText2.setAttribute('font-size', fontSize2.toString());
+        const textWidth2 = tempText2.getBBox().width;
+        if (textWidth2 <= availableWidth) {
+            break;
+        }
+        fontSize2 -= 0.5; // Reduce by 0.5px increments
+    }
+    
+    document.body.removeChild(tempSvg);
+    
+    // Calculate title height with actual font sizes
+    const titleHeight = fontSize + 5 + fontSize2 + 15; // First line + spacing (5px) + second line + bottom margin (15px)
     
     // Height = title + (number of group logos * groupLogoHeight) + bottom logo height + padding top and bottom
     const svgHeight = titleHeight + (numGroups * groupLogoHeight) + logoHeight + padding_vertical * 2;
@@ -6408,30 +6485,26 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     svg.style.border = '1px solid #ccc';
     svg.style.background = 'white';
     
-    // Add title lines inside SVG
-    // Get file name from state or file input
-    const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
-    
-    // First title line: "Epitope: <epitope name> (power: <value>)"
+    // First title line: "Logogram for <epitope>, showing escape from <start sequence>, with <power percentage> bias"
     const titleLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     titleLine1.setAttribute('x', padding_horizontal + 10); // Align with logo labels
-    titleLine1.setAttribute('y', padding_vertical + 18); // 18px font size, align to baseline
+    titleLine1.setAttribute('y', padding_vertical + fontSize); // Adjust Y position based on font size
     titleLine1.setAttribute('font-family', 'sans-serif');
-    titleLine1.setAttribute('font-size', '18');
+    titleLine1.setAttribute('font-size', fontSize.toString());
     titleLine1.setAttribute('font-weight', 'bold');
     titleLine1.setAttribute('fill', '#000');
-    titleLine1.textContent = `Epitope: ${epitope.name} (power: ${powerTransform.toFixed(2)})`;
+    titleLine1.textContent = titleText;
     svg.appendChild(titleLine1);
     
     // Second title line: "Alignment: <file name>"
     const titleLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     titleLine2.setAttribute('x', padding_horizontal + 10); // Align with logo labels
-    titleLine2.setAttribute('y', padding_vertical + 18 + 5 + 9); // First line + spacing (5px) + second line font size (9px)
+    titleLine2.setAttribute('y', padding_vertical + fontSize + 5 + fontSize2); // First line + spacing (5px) + second line font size
     titleLine2.setAttribute('font-family', 'sans-serif');
-    titleLine2.setAttribute('font-size', '9');
+    titleLine2.setAttribute('font-size', fontSize2.toString());
     titleLine2.setAttribute('font-weight', 'bold');
     titleLine2.setAttribute('fill', '#000');
-    titleLine2.textContent = `Alignment: ${fileName}`;
+    titleLine2.textContent = alignmentText;
     svg.appendChild(titleLine2);
     
     // Draw horizontal separators: at top of uppermost logo and at bottom of each logo
@@ -6579,16 +6652,19 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         // Get amino acid from bottom sequence at this alignment column
         let bottomAA = null;
         let isGap = false;
+        let isDot = false;
         if (col < bottomSeq.seq.length) {
             const aa = bottomSeq.seq[col];
             if (aa === '-') {
                 isGap = true;
+            } else if (aa === '.') {
+                isDot = true;
             } else {
                 bottomAA = aa;
             }
         }
         
-        // Draw bottom sequence character (amino acid or gap)
+        // Draw bottom sequence character (amino acid, gap, or dot)
         // Position text so its bottom aligns with the separator line below (same approach as group logos)
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', xOffset + charWidth / 2);
@@ -6603,11 +6679,14 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         if (isGap) {
             text.setAttribute('fill', '#808080'); // Grey for gaps
             text.textContent = '∇'; // Nabla character for gaps
+        } else if (isDot) {
+            text.setAttribute('fill', '#808080'); // Grey for dots (None option)
+            text.textContent = '.'; // Dot character
         } else if (bottomAA) {
             text.setAttribute('fill', aaColors[bottomAA] || '#000');
             text.textContent = bottomAA;
         }
-        if (isGap || bottomAA) {
+        if (isGap || isDot || bottomAA) {
             svg.appendChild(text);
         }
         
@@ -6787,18 +6866,21 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     
     // Bottom row label (colored based on sequence type: Cyan for Reference, Magenta for Subtype, Yellow for Founder)
     // Align label bottom with logo bottom (same y as bottom logo characters)
-    const bottomLabelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    bottomLabelEl.setAttribute('x', padding_horizontal + 10);
-    bottomLabelEl.setAttribute('y', bottomLogoY); // Align with bottom of bottom logo (same as separator)
-    bottomLabelEl.setAttribute('text-anchor', 'start');
-    bottomLabelEl.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text with logo bottom
-    bottomLabelEl.setAttribute('font-family', 'sans-serif');
-    bottomLabelEl.setAttribute('font-size', '12');
-    bottomLabelEl.setAttribute('font-weight', 'bold');
-    // Use magenta for all special sequences (Reference, Subtype, Founder)
-    bottomLabelEl.setAttribute('fill', '#ff00ff'); // Magenta
-    bottomLabelEl.textContent = bottomLabel;
-    svg.appendChild(bottomLabelEl);
+    // Only show label if bottomLabel is not null (None option has no label)
+    if (bottomLabel) {
+        const bottomLabelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        bottomLabelEl.setAttribute('x', padding_horizontal + 10);
+        bottomLabelEl.setAttribute('y', bottomLogoY); // Align with bottom of bottom logo (same as separator)
+        bottomLabelEl.setAttribute('text-anchor', 'start');
+        bottomLabelEl.setAttribute('dominant-baseline', 'text-after-edge'); // Align bottom of text with logo bottom
+        bottomLabelEl.setAttribute('font-family', 'sans-serif');
+        bottomLabelEl.setAttribute('font-size', '12');
+        bottomLabelEl.setAttribute('font-weight', 'bold');
+        // Use magenta for all special sequences (Reference, Subtype, Founder)
+        bottomLabelEl.setAttribute('fill', '#ff00ff'); // Magenta
+        bottomLabelEl.textContent = bottomLabel;
+        svg.appendChild(bottomLabelEl);
+    }
     
     return svg;
 }
