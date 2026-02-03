@@ -6213,34 +6213,57 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     const coordToCol = new Map(); // Map from reference coordinate to alignment column(s)
     
     for (const region of epitope.regions) {
-        // Find first alignment column where refCoord == region.start
-        let startCol = null;
-        for (let col = 0; col < state.refMap.length; col++) {
-            if (state.refMap[col] === region.start) {
-                startCol = col;
-                break;
+        // Special case: if start === end, this is a single coordinate
+        // We should only include the column where the reference has a non-gap character
+        if (region.start === region.end) {
+            // Find the single column where refCoord == region.start AND refSeq has a non-gap
+            let singleCol = null;
+            for (let col = 0; col < state.refMap.length; col++) {
+                if (state.refMap[col] === region.start && refSeq[col] !== '-') {
+                    singleCol = col;
+                    break;
+                }
             }
-        }
-        
-        // Find last alignment column where refCoord == region.end
-        let endCol = null;
-        for (let col = state.refMap.length - 1; col >= 0; col--) {
-            if (state.refMap[col] === region.end) {
-                endCol = col;
-                break;
-            }
-        }
-        
-        if (startCol !== null && endCol !== null && startCol <= endCol) {
-            regionColumnRanges.push({ start: startCol, end: endCol, region: region });
-            // Add all columns from start to end (inclusive)
-            for (let col = startCol; col <= endCol; col++) {
-                allColumns.add(col);
-                const coord = state.refMap[col];
+            
+            if (singleCol !== null) {
+                regionColumnRanges.push({ start: singleCol, end: singleCol, region: region });
+                allColumns.add(singleCol);
+                const coord = state.refMap[singleCol];
                 if (!coordToCol.has(coord)) {
                     coordToCol.set(coord, []);
                 }
-                coordToCol.get(coord).push(col);
+                coordToCol.get(coord).push(singleCol);
+            }
+        } else {
+            // Range: find first alignment column where refCoord == region.start
+            let startCol = null;
+            for (let col = 0; col < state.refMap.length; col++) {
+                if (state.refMap[col] === region.start) {
+                    startCol = col;
+                    break;
+                }
+            }
+            
+            // Find last alignment column where refCoord == region.end
+            let endCol = null;
+            for (let col = state.refMap.length - 1; col >= 0; col--) {
+                if (state.refMap[col] === region.end) {
+                    endCol = col;
+                    break;
+                }
+            }
+            
+            if (startCol !== null && endCol !== null && startCol <= endCol) {
+                regionColumnRanges.push({ start: startCol, end: endCol, region: region });
+                // Add all columns from start to end (inclusive)
+                for (let col = startCol; col <= endCol; col++) {
+                    allColumns.add(col);
+                    const coord = state.refMap[col];
+                    if (!coordToCol.has(coord)) {
+                        coordToCol.set(coord, []);
+                    }
+                    coordToCol.get(coord).push(col);
+                }
             }
         }
     }
