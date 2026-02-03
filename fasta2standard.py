@@ -398,6 +398,38 @@ def transform_sequence_name(
     return result
 
 
+def detect_sequence_type(sequences: List[Tuple[str, str]], skip_count: int = 0) -> str:
+    """
+    Detect if sequences are amino acid (AA) or nucleotide (NT).
+    
+    Args:
+        sequences: List of (name, sequence) tuples
+        skip_count: Number of header sequences to skip
+        
+    Returns:
+        'AA' or 'NT'
+    """
+    if not sequences or len(sequences) <= skip_count:
+        return 'NT'
+    
+    # Get sample from first non-skipped sequence (up to 100 characters, excluding gaps)
+    sample_seq = sequences[skip_count][1]
+    sample = ''.join(c for c in sample_seq[:100] if c.upper() not in ['-', 'N', 'X']).upper()
+    
+    if not sample:
+        return 'NT'
+    
+    # Check for AA-only characters: E, F, I, L, P, Q
+    aa_only_chars = set(['E', 'F', 'I', 'L', 'P', 'Q'])
+    has_aa_only = any(c in aa_only_chars for c in sample)
+    
+    if has_aa_only:
+        return 'AA'
+    
+    # Default to NT if no AA-only characters found
+    return 'NT'
+
+
 def validate_transformed_file(
     transformed_filename: str,
     transformed_sequences: List[Tuple[str, str]],
@@ -424,8 +456,28 @@ def validate_transformed_file(
     collapsed_filename = collapse_delimiters(transformed_filename, new_field_delim, new_subfield_delim)
     
     # Validate filename
+    filename_obj = None
     try:
         filename_obj = parse_fasta_filename(collapsed_filename)
+        
+        # Check that molecule field matches detected file mode
+        if transformed_sequences and len(transformed_sequences) > skip_count:
+            detected_mode = detect_sequence_type(transformed_sequences, skip_count).lower()
+            filename_mode = filename_obj.molecule.lower()
+            if filename_mode != detected_mode:
+                errors.append(f"Filename error: Molecule field '{filename_obj.molecule}' does not match detected file type '{detected_mode.upper()}'")
+        
+        # Check that if filename has a- (alignment) field, sequences are actually aligned
+        if filename_obj.alignment and transformed_sequences:
+            # Check if all sequences have the same length
+            if len(transformed_sequences) > 0:
+                first_length = len(transformed_sequences[0][1])
+                all_same_length = all(len(seq[1]) == first_length for seq in transformed_sequences)
+                
+                if not all_same_length:
+                    # alignment is a dict with 'main', 'sub', 'subsub' keys
+                    alignment_value = filename_obj.alignment.get('main', '') if isinstance(filename_obj.alignment, dict) else str(filename_obj.alignment)
+                    errors.append(f"Filename error: Filename contains alignment field 'a-{alignment_value}', but sequences are not aligned (have different lengths)")
     except ValueError as e:
         errors.append(f"Filename error: {e}")
         # Continue to validate sequences even if filename fails

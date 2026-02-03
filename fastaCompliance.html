@@ -1068,6 +1068,34 @@ function validateFastaFile(filename, sequences, skipCount = 0) {
     let filenameObj = null;
     try {
         filenameObj = parseFastaFilename(filename);
+        
+        // Check that molecule field matches detected file mode
+        if (state.rawSequences.length > 0) {
+            const detectedMode = state.isAASequence ? 'aa' : 'nt';
+            const filenameMode = filenameObj.molecule.toLowerCase();
+            if (filenameMode !== detectedMode) {
+                conventionResults.errors.push(`Filename error: Molecule field '${filenameObj.molecule}' does not match detected file type '${detectedMode.toUpperCase()}'`);
+                conventionResults.valid = false;
+            }
+        }
+        
+        // Check that if filename has a- (alignment) field, sequences are actually aligned
+        if (filenameObj.alignment && sequences.length > 0) {
+            // Check if all sequences have the same length
+            const firstLength = sequences[0].seq.length;
+            let allSameLength = true;
+            for (let i = 1; i < sequences.length; i++) {
+                if (sequences[i].seq.length !== firstLength) {
+                    allSameLength = false;
+                    break;
+                }
+            }
+            
+            if (!allSameLength) {
+                conventionResults.errors.push(`Filename error: Filename contains alignment field 'a-${filenameObj.alignment.main || ''}', but sequences are not aligned (have different lengths)`);
+                conventionResults.valid = false;
+            }
+        }
     } catch (e) {
         conventionResults.errors.push(`Filename error: ${e.message}`);
         conventionResults.valid = false;
@@ -1214,8 +1242,8 @@ function init() {
         dom.btnExportSettings.disabled = true;
     }
     
-    dom.btnNt.addEventListener('click', () => setMode('NT'));
-    dom.btnAa.addEventListener('click', () => setMode('AA'));
+    // AA/NT buttons are now display-only - they show the file type but don't allow switching
+    // Event listeners removed - buttons will be disabled after file load
     
     dom.selHighlight.addEventListener('change', (e) => {
         state.highlightMatches = e.target.value;
@@ -1605,9 +1633,28 @@ function finalizeLoad(seqs, isAlignment) {
     state.isAASequence = (detectSequenceType(seqs) === 'AA');
     state.isAlignment = isAlignment;
     
-    if(state.isAASequence && state.mode === 'NT') {
-        setMode('AA', true);
+    // Set mode based on detected sequence type and disable both buttons (display-only)
+    const detectedMode = state.isAASequence ? 'AA' : 'NT';
+    state.mode = detectedMode;
+    
+    // Update button display to show the detected mode
+    if (detectedMode === 'NT') {
+        dom.btnNt.classList.add('active');
+        dom.btnAa.classList.remove('active');
+    } else {
+        dom.btnAa.classList.add('active');
+        dom.btnNt.classList.remove('active');
     }
+    
+    // Disable both buttons - they are now display-only
+    dom.btnNt.disabled = true;
+    dom.btnAa.disabled = true;
+    dom.btnNt.style.cursor = 'default';
+    dom.btnAa.style.cursor = 'default';
+    
+    // Recalculate display with the correct mode
+    state.selection = null;
+    recalc();
     
     // Enable/disable highlighter based on whether it's an alignment
     if (dom.selHighlight) {
