@@ -464,7 +464,7 @@
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <label style="font-size: 11px; color: #6b7280; min-width: 80px;">Min Neighbors:</label>
-                    <input type="range" id="mds-minpts-slider" min="1" max="10" step="1" value="2" style="flex: 1;">
+                    <input type="range" id="mds-minpts-slider" min="0" max="5" step="1" value="2" style="flex: 1;">
                     <span id="mds-minpts-value" style="font-size: 11px; color: #374151; min-width: 50px; text-align: right;">2</span>
                 </div>
             </div>
@@ -472,8 +472,8 @@
                 <label style="font-size: 12px; color: #374151;">UMAP Parameters:</label>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <label style="font-size: 11px; color: #6b7280; min-width: 80px;">nNeighbors:</label>
-                    <input type="range" id="umap-nneighbors-slider" min="2" max="100" step="1" value="15" style="flex: 1;">
-                    <span id="umap-nneighbors-value" style="font-size: 11px; color: #374151; min-width: 50px; text-align: right;">15</span>
+                    <input type="range" id="umap-nneighbors-slider" min="0" max="5" step="1" value="2" style="flex: 1;">
+                    <span id="umap-nneighbors-value" style="font-size: 11px; color: #374151; min-width: 50px; text-align: right;">2</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <label style="font-size: 11px; color: #6b7280; min-width: 80px;">Spread:</label>
@@ -3190,12 +3190,12 @@ function showProjectionPlot(selectedMethod) {
     const spreadValue = document.getElementById('umap-spread-value');
     const minDistValue = document.getElementById('umap-mindist-value');
     
-    // Calculate initial nNeighbors (adaptive based on data size)
+    // Calculate initial nNeighbors (clamped to 0-5 range)
     const n = distanceMatrix.length;
-    const initialNNeighbors = Math.min(15, Math.max(2, Math.floor(Math.sqrt(n))));
+    const initialNNeighbors = Math.min(5, Math.max(0, Math.floor(Math.sqrt(n))));
     if (nNeighborsSlider) {
-        // Set max to number of data points
-        nNeighborsSlider.max = n.toString();
+        // Keep max at 5 (slider range is 0-5)
+        nNeighborsSlider.max = '5';
         nNeighborsSlider.value = initialNNeighbors.toString();
     }
     
@@ -6163,6 +6163,15 @@ function showSequenceLogo() {
             if (currentSvg) exportLogoAsPDF(currentSvg, epitopeName, fileName);
         };
         
+        // Export PNG button - get current SVG from modal
+        const exportPngBtn = document.createElement('button');
+        exportPngBtn.textContent = 'Export PNG';
+        exportPngBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer; border-radius: 4px;';
+        exportPngBtn.onclick = () => {
+            const currentSvg = modal.querySelector('svg');
+            if (currentSvg) exportLogoAsPNG(currentSvg, epitopeName, fileName);
+        };
+        
         // Close button
         const closeBtn = document.createElement('button');
         closeBtn.textContent = 'Close';
@@ -6171,6 +6180,7 @@ function showSequenceLogo() {
         
         buttonContainer.appendChild(exportSvgBtn);
         buttonContainer.appendChild(exportPdfBtn);
+        buttonContainer.appendChild(exportPngBtn);
         buttonContainer.appendChild(closeBtn);
         modal.appendChild(buttonContainer);
         
@@ -6399,7 +6409,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     
     // Check group labels
     for (const groupData of groupFrequencies) {
-        const groupLabel = `Variant frequency ${groupData.groupValue} (${groupData.count})`;
+        const groupLabel = `${groupData.groupValue} (${groupData.count})`;
         const groupLabelWidth = groupLabel.length * pixelsPerChar;
         maxLabelWidth = Math.max(maxLabelWidth, groupLabelWidth);
     }
@@ -6427,13 +6437,13 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     let biasText;
     if (Math.abs(powerPercentage) < 0.5) {
         // Effectively zero (within rounding)
-        biasText = 'with zero bias';
+        biasText = 'with zero frequency bias';
     } else if (powerPercentage < 0) {
         // Negative bias (towards rare bases)
-        biasText = `with ${absPowerPercentage}% bias towards rare bases`;
+        biasText = `with ${absPowerPercentage}% frequency bias towards rare bases`;
     } else {
         // Positive bias (towards abundant bases)
-        biasText = `with ${absPowerPercentage}% bias towards abundant bases`;
+        biasText = `with ${absPowerPercentage}% frequency bias towards abundant bases`;
     }
     
     // Build title based on start sequence selection
@@ -6883,7 +6893,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         // Groups sorted alphabetically, use COLOR_PALETTE starting from index 1
         const labelColor = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
         rowLabel.setAttribute('fill', labelColor);
-        rowLabel.textContent = `Variant frequency ${groupData.groupValue} (${groupData.count})`;
+        rowLabel.textContent = `${groupData.groupValue} (${groupData.count})`;
         svg.appendChild(rowLabel);
     }
     
@@ -6995,6 +7005,69 @@ function exportLogoAsPDF(svgElement, epitopeName, fileName) {
     } catch (error) {
         console.error('Error exporting PDF:', error);
         alert('Error exporting PDF: ' + error.message + '. Please try downloading as SVG instead.');
+    }
+}
+
+function exportLogoAsPNG(svgElement, epitopeName, fileName) {
+    try {
+        // Clone the SVG to avoid modifying the original
+        const clonedSvg = svgElement.cloneNode(true);
+        
+        // Get SVG dimensions
+        const svgWidth = svgElement.width.baseVal.value;
+        const svgHeight = svgElement.height.baseVal.value;
+        
+        // Create filename: escape_from_<epitope name>_<file name>.png
+        const baseFileName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
+        // Sanitize filename
+        const sanitizedEpitope = epitopeName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFile = baseFileName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const pngFileName = `escape_from_${sanitizedEpitope}_${sanitizedFile}.png`;
+        
+        // Convert SVG to string
+        const serializer = new XMLSerializer();
+        const svgString = serializer.serializeToString(clonedSvg);
+        
+        // Create image from SVG data URL
+        const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const svgUrl = URL.createObjectURL(svgBlob);
+        
+        const img = new Image();
+        img.onload = () => {
+            // Create canvas with SVG dimensions
+            const canvas = document.createElement('canvas');
+            canvas.width = svgWidth;
+            canvas.height = svgHeight;
+            
+            // Draw image on canvas
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            
+            // Convert canvas to PNG
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = pngFileName;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                } else {
+                    alert('Error: Failed to create PNG image.');
+                }
+                URL.revokeObjectURL(svgUrl);
+            }, 'image/png');
+        };
+        
+        img.onerror = () => {
+            alert('Error: Failed to load SVG image for PNG conversion.');
+            URL.revokeObjectURL(svgUrl);
+        };
+        
+        img.src = svgUrl;
+    } catch (error) {
+        console.error('Error exporting PNG:', error);
+        alert('Error exporting PNG: ' + error.message + '. Please try downloading as SVG instead.');
     }
 }
 
