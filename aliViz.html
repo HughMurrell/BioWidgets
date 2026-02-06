@@ -1480,17 +1480,20 @@ function calculateFounder(sequences) {
         sequences.forEach(seq => {
             if (pos < seq.length) {
                 const char = seq[pos].toUpperCase();
-                if (char !== '-') {
-                    counts[char] = (counts[char] || 0) + 1;
-                    total++;
-                }
+                // Include all characters including gaps
+                counts[char] = (counts[char] || 0) + 1;
+                total++;
+            } else {
+                // If sequence is shorter than this position, count it as a gap
+                counts['-'] = (counts['-'] || 0) + 1;
+                total++;
             }
         });
         
         if (total === 0) {
             founder.push('-');
         } else {
-            // Find the most common character
+            // Find the most common character (including gaps)
             let maxCount = 0;
             let founderChar = '-';
             
@@ -1499,11 +1502,6 @@ function calculateFounder(sequences) {
                     maxCount = count;
                     founderChar = char;
                 }
-            }
-            
-            // If there's a tie, prefer non-gap characters
-            if (founderChar === '-' && Object.keys(counts).length > 0) {
-                founderChar = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
             }
             
             founder.push(founderChar);
