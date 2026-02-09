@@ -1,0 +1,94 @@
+#!/bin/bash
+#
+# mafftProfileMerge - Merge multiple aligned FASTA files using MAFFT profile merging
+#
+# Usage: mafftProfileMerge subMSA1.fasta subMSA2.fasta ... > output.fasta
+#
+# This script:
+# 1. Concatenates all input FASTA files into a temporary input.fasta
+# 2. Creates a merge table (subMSAtable) mapping sequence numbers to their source subMSA
+# 3. Calls mafft --merge to merge the alignments
+#
+
+set -e  # Exit on error
+
+# Check if at least one input file is provided
+if [ $# -eq 0 ]; then
+    echo "Error: No input files provided" >&2
+    echo "Usage: $0 subMSA1.fasta subMSA2.fasta ... > output.fasta" >&2
+    exit 1
+fi
+
+# Temporary files
+TEMP_INPUT="input.fasta"
+TEMP_TABLE="subMSAtable"
+
+# Clean up temporary files on exit
+trap "rm -f $TEMP_INPUT $TEMP_TABLE" EXIT
+
+# Initialize counters
+seq_count=1
+table_lines=()
+
+# Process each input file
+for input_file in "$@"; do
+    # Check if file exists
+    if [ ! -f "$input_file" ]; then
+        echo "Error: File not found: $input_file" >&2
+        exit 1
+    fi
+    
+    # Count sequences in this file (lines starting with '>')
+    num_seqs=$(grep -c '^>' "$input_file" || echo "0")
+    
+    if [ "$num_seqs" -eq 0 ]; then
+        echo "Warning: No sequences found in $input_file, skipping" >&2
+        continue
+    fi
+    
+    # Calculate sequence range for this subMSA
+    start_seq=$seq_count
+    end_seq=$((seq_count + num_seqs - 1))
+    
+    # Build the range string for the merge table (list all sequence numbers)
+    range=""
+    i=$start_seq
+    while [ $i -le $end_seq ]; do
+        if [ -z "$range" ]; then
+            range="$i"
+        else
+            range="$range $i"
+        fi
+        i=$((i + 1))
+    done
+    
+    # Add line to merge table
+    table_lines+=("$range")
+    
+    # Append this file to the concatenated input
+    cat "$input_file" >> "$TEMP_INPUT"
+    
+    # Update sequence counter for next file
+    seq_count=$((seq_count + num_seqs))
+done
+
+# Check if we have any sequences
+if [ ! -s "$TEMP_INPUT" ]; then
+    echo "Error: No sequences found in any input file" >&2
+    exit 1
+fi
+
+# Write the merge table
+for line in "${table_lines[@]}"; do
+    echo "$line"
+done > "$TEMP_TABLE"
+
+# Check if mafft is available
+if ! command -v mafft &> /dev/null; then
+    echo "Error: mafft command not found. Please install MAFFT." >&2
+    exit 1
+fi
+
+# Call mafft to merge the alignments
+mafft --merge "$TEMP_TABLE" "$TEMP_INPUT"
+
