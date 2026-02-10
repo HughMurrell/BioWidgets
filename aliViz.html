@@ -194,12 +194,16 @@
 <div id="app">
     <div id="controls">
         <div class="control-group">
+            <label>Info</label>
+            <button id="btn-help" class="btn-icon">?</button>
+        </div>
+        <div class="control-group">
             <label>Sequences</label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
-                <button id="btn-sort-sequences" title="Sort sequences by name (REF and SUBTYPE remain first)">Sort</button>
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
                 <button id="btn-subtype" title="Add founder sequence from selected group">Add Founder</button>
+                <button id="btn-sort-sequences" title="Sort sequences by name (REF and SUBTYPE remain first)">Sort</button>
             </div>
         </div>
         <div class="control-group">
@@ -285,12 +289,6 @@
         </div>
         
 
-        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
-
-        <div class="control-group">
-            <label>Info</label>
-            <button id="btn-help" class="btn-icon">?</button>
-        </div>
     </div>
 
     <div id="viewer-grid">
@@ -790,6 +788,78 @@ function drawDiamond(ctx, x, y, size) {
     ctx.fill();
 }
 
+// --- Button State Management ---
+function disableButtonsOnStartup() {
+    // Disable all buttons except the help button and file input
+    if (dom.btnSortSequences) dom.btnSortSequences.disabled = true;
+    if (dom.btnGroupSequences) dom.btnGroupSequences.disabled = true;
+    if (dom.btnSubtype) dom.btnSubtype.disabled = true;
+    if (dom.btnInferTree) dom.btnInferTree.disabled = true;
+    if (dom.btnRerootTree) dom.btnRerootTree.disabled = true;
+    if (dom.btnLadderizeTree) dom.btnLadderizeTree.disabled = true;
+    if (dom.btnHistogram) dom.btnHistogram.disabled = true;
+    if (dom.btnMds) dom.btnMds.disabled = true;
+    if (dom.btnDownload) dom.btnDownload.disabled = true;
+    if (dom.btnExportTree) dom.btnExportTree.disabled = true;
+    if (dom.btnClearAlignment) dom.btnClearAlignment.disabled = true;
+    if (dom.btnClearTree) dom.btnClearTree.disabled = true;
+    if (dom.btnUndo) dom.btnUndo.disabled = true;
+    if (dom.btnNt) dom.btnNt.disabled = true;
+    if (dom.btnAa) dom.btnAa.disabled = true;
+    if (dom.selHighlight) dom.selHighlight.disabled = true;
+    if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = true;
+    if (dom.btnSelectEpitope) dom.btnSelectEpitope.disabled = true;
+    if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
+    // Help button should always be enabled, so we don't disable it
+}
+
+function enableButtonsAfterLoad() {
+    // Enable buttons that become usable after a file is loaded
+    // Group is enabled, but Add Founder and Sort require a successful grouping first
+    if (dom.btnGroupSequences) dom.btnGroupSequences.disabled = false;
+    if (dom.btnInferTree) dom.btnInferTree.disabled = false;
+    if (dom.btnDownload) dom.btnDownload.disabled = false;
+    if (dom.btnClearAlignment) dom.btnClearAlignment.disabled = false;
+    if (dom.selHighlight) dom.selHighlight.disabled = false;
+    if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = false;
+    // Add Founder and Sort remain disabled until grouping is done
+    // Histogram, Cluster, and tree export remain disabled until ladderize is done
+}
+
+function enableButtonsAfterGrouping() {
+    // Enable Add Founder and Sort after successful grouping
+    if (dom.btnSubtype) dom.btnSubtype.disabled = false;
+    if (dom.btnSortSequences) dom.btnSortSequences.disabled = false;
+}
+
+function enableButtonsAfterInference() {
+    // Enable Reroot and Clear Tree buttons after successful tree inference
+    if (dom.btnRerootTree) dom.btnRerootTree.disabled = false;
+    if (dom.btnClearTree) dom.btnClearTree.disabled = false;
+}
+
+function enableButtonsAfterReroot() {
+    // Enable Ladderize button after successful rerooting
+    if (dom.btnLadderizeTree) dom.btnLadderizeTree.disabled = false;
+}
+
+function enableButtonsAfterLadderize() {
+    // Enable Histogram, Cluster, and tree export buttons after successful ladderize
+    if (dom.btnHistogram) dom.btnHistogram.disabled = false;
+    if (dom.btnMds) dom.btnMds.disabled = false;
+    if (dom.btnExportTree) dom.btnExportTree.disabled = false;
+}
+
+function enableButtonsAfterLoadEpitopes() {
+    // Enable Select Epitope button after successful epitope loading
+    if (dom.btnSelectEpitope) dom.btnSelectEpitope.disabled = false;
+}
+
+function enableButtonsAfterSelectEpitope() {
+    // Enable Show Logo button after successful epitope selection
+    if (dom.btnShowLogo) dom.btnShowLogo.disabled = false;
+}
+
 // --- Init ---
 async function init() {
     // Initialize Aioli with FastTree only
@@ -801,6 +871,9 @@ async function init() {
         console.error("Failed to initialize FastTree:", err);
         state.aioliCLI = null;
     }
+    
+    // Disable buttons that require a file to be loaded
+    disableButtonsOnStartup();
 
     dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
     if (dom.fileTree) {
@@ -1198,6 +1271,10 @@ function clearAlignment() {
     dom.sizer.style.height = '1px';
     setTreeWidth(0);
     updateColorLegend();
+    
+    // Disable buttons again after clearing alignment
+    disableButtonsOnStartup();
+    
     recalc();
     render();
 }
@@ -1211,6 +1288,20 @@ function clearTreeOnly() {
     }
     if (dom.btnMds) {
         dom.btnMds.disabled = true;
+    }
+    // Disable Clear Tree button after clearing the tree
+    if (dom.btnClearTree) {
+        dom.btnClearTree.disabled = true;
+    }
+    // Also disable buttons that depend on the tree
+    if (dom.btnRerootTree) {
+        dom.btnRerootTree.disabled = true;
+    }
+    if (dom.btnLadderizeTree) {
+        dom.btnLadderizeTree.disabled = true;
+    }
+    if (dom.btnExportTree) {
+        dom.btnExportTree.disabled = true;
     }
     updateColorLegend();
     render();
@@ -1427,6 +1518,9 @@ function runGroupTask() {
     state.groupDelimiter = delimiter;
     state.groupFieldNum = fieldNumOneBased; // Store 1-based field number
     state.groupNames = groupIdToValue; // Store group ID to value mapping for legend
+    
+    // Enable Add Founder and Sort buttons after successful grouping
+    enableButtonsAfterGrouping();
     
     // Update legend
     updateColorLegend();
@@ -1792,6 +1886,14 @@ function showInferModal() {
 function runInferTask() {
     const method = document.getElementById('sel-infer-method').value;
     document.getElementById('infer-overlay').style.display = 'none';
+
+    // Disable buttons that require ladderize (will be re-enabled after ladderize)
+    if (dom.btnHistogram) dom.btnHistogram.disabled = true;
+    if (dom.btnMds) dom.btnMds.disabled = true;
+    if (dom.btnExportTree) dom.btnExportTree.disabled = true;
+    // Disable reroot and ladderize buttons (will be re-enabled after inference/reroot)
+    if (dom.btnRerootTree) dom.btnRerootTree.disabled = true;
+    if (dom.btnLadderizeTree) dom.btnLadderizeTree.disabled = true;
 
     // Clear clustering state and remove cluster annotations before inferring a new tree
     if (state.leafClusters || state.hierarchicalActive) {
@@ -2170,6 +2272,9 @@ function finalizeLoad(seqs) {
         setMode('NT', false);
     }
     
+    // Enable buttons that become usable after a file is loaded
+    enableButtonsAfterLoad();
+    
     // Calculate and set names panel width to accommodate all names
     calculateNamesWidth();
     
@@ -2376,6 +2481,9 @@ function rerootTreeOnTarget(targetType) {
         state.tree.maxDepth = maxDepth;
         state.tree.useCladogram = useCladogram;
         
+        // Enable Ladderize button after successful rerooting (even if just adjusting branch lengths)
+        enableButtonsAfterReroot();
+        
         recalc();
         return; // Exit early since we've handled this case
     }
@@ -2464,6 +2572,9 @@ function rerootTreeOnTarget(targetType) {
         state.tree.maxDepth = maxDepth;
         state.tree.useCladogram = useCladogram2;
     }
+    
+    // Enable Ladderize button after successful rerooting
+    enableButtonsAfterReroot();
     
     recalc();
 }
@@ -2829,12 +2940,11 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
 
     state.tree = { root, maxDepth };
     setTreeWidth(200);
-    if (dom.btnHistogram) {
-        dom.btnHistogram.disabled = false;
-    }
-    if (dom.btnMds) {
-        dom.btnMds.disabled = false;
-    }
+    // Don't enable Histogram, Cluster, or tree export here - they require ladderize first
+    
+    // Enable Reroot button after successful tree inference/loading
+    enableButtonsAfterInference();
+    
     recalc();
     showOverlay(false);
 }
@@ -4860,7 +4970,49 @@ function ladderizeTree(mode) {
     }
     
     applyTreeOrder(state.tree.root);
+    
+    // Enable Histogram, Cluster, and tree export buttons after successful ladderize
+    enableButtonsAfterLadderize();
+    
     recalc();
+}
+
+// --- Temporary Notification ---
+function showTemporaryNotification(message, duration) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #2563eb;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 10001;
+        font-size: 14px;
+        font-weight: 500;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    // Fade in
+    setTimeout(() => {
+        notification.style.opacity = '1';
+    }, 10);
+    
+    // Fade out and remove after duration
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 300);
+    }, duration);
 }
 
 // --- Epitope Loading and Selection ---
@@ -4908,7 +5060,11 @@ function loadEpitopes(file) {
             
             state.epitopes = epitopes;
             
-            alert(`Loaded ${epitopes.length} epitope(s). Use "Select Epitope" to choose one.`);
+            // Enable Select Epitope button after successful loading
+            enableButtonsAfterLoadEpitopes();
+            
+            // Show temporary notification that disappears after 2 seconds
+            showTemporaryNotification(`Loaded ${epitopes.length} epitope(s). Use "Select Epitope" to choose one.`, 2000);
         } catch (err) {
             console.error("Error loading epitopes:", err);
             alert("Error loading epitopes: " + err.message);
@@ -4980,6 +5136,8 @@ function selectEpitope(epitopeName) {
     if (!epitopeName) {
         // Clear epitope selection - show all
         state.epitopeColumns = null;
+        // Disable Show Logo button when epitope selection is cleared
+        if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
         recalc();
         return;
     }
@@ -5050,6 +5208,9 @@ function selectEpitope(epitopeName) {
     }
     
     state.epitopeColumns = allowedColumns;
+    
+    // Enable Show Logo button after successful epitope selection
+    enableButtonsAfterSelectEpitope();
     
     recalc();
 }
