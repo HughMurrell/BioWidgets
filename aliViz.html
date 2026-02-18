@@ -6172,6 +6172,7 @@ const PDB_RESIDUE_TO_ONE = {
     'TYR':'Y','VAL':'V','SEC':'U','PYL':'O','UNK':'X','MSE':'M','HOH':'','WAT':'','NAG':'','CL':''
 };
 
+/** Returns { chains: [ { id, seq } ], flat } — seq per chain and concatenated flat array. */
 function parsePdbSequence(pdbText) {
     const lines = (pdbText || '').split(/\r?\n/);
     const byChain = new Map(); // chainId -> [{ resSeq, resName }]
@@ -6188,11 +6189,149 @@ function parsePdbSequence(pdbText) {
             if (!last || last.resSeq !== resSeq) arr.push({ resSeq, resName: one || 'X' });
         }
     }
-    const chains = Array.from(byChain.keys()).sort();
-    const out = [];
-    for (const c of chains) {
+    const chainIds = Array.from(byChain.keys()).sort();
+    const chains = [];
+    const flat = [];
+    for (const c of chainIds) {
         const arr = byChain.get(c).sort((a, b) => a.resSeq - b.resSeq);
-        for (const r of arr) out.push(r.resName);
+        const seq = arr.map(r => r.resName);
+        chains.push({ id: c, seq });
+        flat.push(...seq);
+    }
+    return { chains, flat };
+}
+
+function parseFastaToSeqs(text) {
+    const lines = (text || '').split(/\r?\n/);
+    const seqs = [];
+    let name = null, buf = [];
+    for (const line of lines) {
+        const t = line.trim();
+        if (!t) continue;
+        if (t.startsWith('>')) {
+            if (name) seqs.push({ name, seq: buf.join('').toUpperCase().replace(/[^A-Z.-]/g, '').split('') });
+            name = t.substring(1).trim();
+            buf = [];
+        } else {
+            buf.push(t.toUpperCase().replace(/[^A-Z.-]/g, ''));
+        }
+    }
+    if (name) seqs.push({ name, seq: buf.join('').toUpperCase().replace(/[^A-Z.-]/g, '').split('') });
+    return seqs;
+}
+
+/** Smith-Waterman local alignment. Returns { alignedRef, alignedChain, refStart, refEnd } (refStart/refEnd are 0-based in refNoGaps). */
+function smithWatermanLocal(refStr, chainStr, gapOpen, gapExtend, matchCost, mismatchCost) {
+    const r = refStr.split('');
+    const c = chainStr.split('');
+    const R = r.length, C = c.length;
+    const H = Array(R + 1).fill(0).map(() => Array(C + 1).fill(0));
+    const ptr = Array(R + 1).fill(0).map(() => Array(C + 1).fill(0)); // 1=diag, 2=up, 3=left
+    let bestScore = 0, bestI = 0, bestJ = 0;
+    for (let i = 1; i <= R; i++) {
+        for (let j = 1; j <= C; j++) {
+            const match = (r[i - 1] === c[j - 1]) ? matchCost : mismatchCost;
+            const diag = H[i - 1][j - 1] + match;
+            const up = H[i - 1][j] + (ptr[i - 1][j] === 2 ? gapExtend : gapOpen);
+            const left = H[i][j - 1] + (ptr[i][j - 1] === 3 ? gapExtend : gapOpen);
+            const max = Math.max(0, diag, up, left);
+            H[i][j] = max;
+            if (max === diag) ptr[i][j] = 1;
+            else if (max === up) ptr[i][j] = 2;
+            else if (max === left) ptr[i][j] = 3;
+            if (max > bestScore) { bestScore = max; bestI = i; bestJ = j; }
+        }
+    }
+    if (bestScore <= 0) return { alignedRef: '', alignedChain: '', refStart: -1, refEnd: -1 };
+    const outR = [], outC = [];
+    let i = bestI, j = bestJ;
+    let refStart = R, refEnd = -1;
+    while (i > 0 && j > 0 && H[i][j] > 0) {
+        const refIdx = i - 1;
+        if (ptr[i][j] === 1) {
+            outR.push(r[refIdx]); outC.push(c[j - 1]);
+            refStart = Math.min(refStart, refIdx); refEnd = Math.max(refEnd, refIdx);
+            i--; j--;
+        } else if (ptr[i][j] === 2) {
+            outR.push(r[refIdx]); outC.push('-');
+            refStart = Math.min(refStart, refIdx); refEnd = Math.max(refEnd, refIdx);
+            i--;
+        } else {
+            outR.push('-'); outC.push(c[j - 1]);
+            j--;
+        }
+    }
+    outR.reverse(); outC.reverse();
+    return { alignedRef: outR.join(''), alignedChain: outC.join(''), refStart: refStart <= refEnd ? refStart : -1, refEnd };
+}
+
+/** Align one chain to reference using local alignment; returns { row, minCol, maxCol } (row length = refSeqArr.length). */
+function alignOneChainToRef(refSeqArr, chainSeq) {
+    const refNoGaps = refSeqArr.filter(c => c !== '-' && c !== '.').join('');
+    const row = Array(refSeqArr.length).fill('-');
+    if (!refNoGaps.length || !chainSeq.length) return { row, minCol: -1, maxCol: -1 };
+    const chainStr = (typeof chainSeq === 'string') ? chainSeq : chainSeq.join('');
+    const gapOpen = -10, gapExtend = -0.5, matchCost = 1, mismatchCost = -0.7;
+    const local = smithWatermanLocal(refNoGaps, chainStr, gapOpen, gapExtend, matchCost, mismatchCost);
+    if (local.refStart < 0 || local.refEnd < 0) return { row, minCol: -1, maxCol: -1 };
+    const { alignedRef, alignedChain, refStart, refEnd } = local;
+    const outR = alignedRef.split('');
+    const outC = alignedChain.split('');
+    const refIdxToCol = [];
+    let refIdx = 0;
+    for (let i = 0; i < refSeqArr.length; i++) {
+        if (refSeqArr[i] !== '-' && refSeqArr[i] !== '.') {
+            refIdxToCol[refIdx] = i;
+            refIdx++;
+        }
+    }
+    let j = 0;
+    let minCol = -1, maxCol = -1;
+    for (let k = 0; k < outR.length; k++) {
+        if (outR[k] !== '-') {
+            const col = refIdxToCol[refStart + j];
+            if (col !== undefined && outC[k] !== '-') {
+                row[col] = outC[k];
+                if (minCol < 0) minCol = col;
+                maxCol = col;
+            }
+            j++;
+        }
+    }
+    return { row, minCol, maxCol };
+}
+
+/** 1-based reference coordinate at alignment column col (count of non-gap ref residues up to col inclusive). */
+function refCoordAtCol(refSeqArr, col) {
+    let c = 0;
+    for (let i = 0; i <= col && i < refSeqArr.length; i++) {
+        if (refSeqArr[i] !== '-' && refSeqArr[i] !== '.') c++;
+    }
+    return c;
+}
+
+/** Align each PDB chain to reference, then merge into one row ordered by reference position (gaps between chains). */
+function alignChainsToReference(refSeqArr, chains) {
+    if (!refSeqArr.length) return [];
+    const refLen = refSeqArr.length;
+    const aligned = [];
+    for (const ch of chains) {
+        if (!ch.seq || !ch.seq.length) continue;
+        const { row, minCol, maxCol } = alignOneChainToRef(refSeqArr, ch.seq);
+        if (minCol >= 0) {
+            const startRefCoord = refCoordAtCol(refSeqArr, minCol);
+            const endRefCoord = refCoordAtCol(refSeqArr, maxCol);
+            console.log('PDB chain local alignment: chain=', ch.id, 'startRefCoord=', startRefCoord, 'endRefCoord=', endRefCoord);
+            aligned.push({ id: ch.id, row, minCol, maxCol });
+        }
+    }
+    if (!aligned.length) return Array(refLen).fill('-');
+    aligned.sort((a, b) => a.minCol - b.minCol);
+    const out = Array(refLen).fill('-');
+    for (const { row } of aligned) {
+        for (let i = 0; i < refLen; i++) {
+            if (row[i] !== '-' && out[i] === '-') out[i] = row[i];
+        }
     }
     return out;
 }
@@ -6202,8 +6341,8 @@ function loadPdbFile(file) {
     const reader = new FileReader();
     reader.onload = function () {
         const pdbText = reader.result;
-        const seqArr = parsePdbSequence(pdbText);
-        if (!seqArr.length) {
+        const { chains, flat } = parsePdbSequence(pdbText);
+        if (!flat.length) {
             alert('No amino acid sequence found in the PDB file.');
             if (dom.inpPdb) dom.inpPdb.value = '';
             return;
@@ -6214,23 +6353,24 @@ function loadPdbFile(file) {
         setMode('AA', state.isAASequence);
         const subtypeName = state.rawSequences[state.subtypeIndex]?.name;
         const raw = state.rawSequences.filter(s => s.name !== 'PDB');
-        const insertIndex = raw.length > 0 ? 1 : 0;
-        const maxLen = raw.length > 0
-            ? Math.max(...raw.map(s => (s.seq && s.seq.length) || 0))
-            : seqArr.length;
-        const pdbSeq = seqArr.slice(0, maxLen);
-        while (pdbSeq.length < maxLen) pdbSeq.push('-');
-        const pdbEntry = { name: 'PDB', seq: pdbSeq };
+
         if (raw.length === 0) {
-            state.rawSequences = [pdbEntry];
+            state.rawSequences = [{ name: 'PDB', seq: flat }];
             state.refIndex = 0;
             state.subtypeIndex = 0;
         } else {
-            raw.splice(insertIndex, 0, pdbEntry);
+            showOverlay(true);
+            if (dom.overlayMsg) dom.overlayMsg.textContent = 'Aligning PDB chains to reference...';
+            if (dom.overlaySub) dom.overlaySub.textContent = '';
+            const refSeq = (raw[0] && raw[0].seq) ? raw[0].seq : [];
+            const pdbRow = alignChainsToReference(refSeq, chains);
+            const pdbEntry = { name: 'PDB', seq: pdbRow };
+            raw.splice(1, 0, pdbEntry);
             state.rawSequences = raw;
             state.refIndex = 0;
             const newSubtypeIdx = raw.findIndex(s => s.name === subtypeName);
             state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 0;
+            showOverlay(false);
         }
         state.viewSequences = [...state.rawSequences];
         state.selection = null;
