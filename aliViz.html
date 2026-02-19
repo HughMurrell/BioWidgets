@@ -573,7 +573,7 @@
         <div class="help-row"><span class="help-key">Load Epitopes</span> <span>Load epitope descriptions from CSV file</span></div>
         <div class="help-row"><span class="help-key">Select Epitope</span> <span>Select an epitope to restrict display</span></div>
         <div class="help-row"><span class="help-key">Show Logo</span> <span>Generate sequence logo for selected epitope</span></div>
-        <div class="help-row"><span class="help-key">Load PDB</span> <span>Load a PDB file and add its sequence as &quot;PDB&quot; after the reference (switches to AA mode)</span></div>
+        <div class="help-row"><span class="help-key">Load PDB</span> <span>Load a PDB file and add one sequence per chain (PDB_xxxx_Chain_y) after the reference using local alignment (AA mode)</span></div>
         <div class="help-row"><span class="help-key">View 3D</span> <span>Display the loaded PDB structure in a 3D viewer window</span></div>
         <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view</span></div>
         <button class="close-help" onclick="document.getElementById('help-overlay').classList.remove('active')">Close</button>
@@ -586,12 +586,39 @@
 </div>
 
 <div id="pdb3d-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 10001;">
-    <div style="background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); width: 90vw; max-width: 900px; height: 85vh; display: flex; flex-direction: column; overflow: hidden;">
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color, #d1d5db);">
+    <div id="pdb3d-window" style="position: fixed; left: 5%; top: 5%; width: 75vw; max-width: 800px; height: 80vh; background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden;">
+        <div id="pdb3d-title-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color, #d1d5db); cursor: move; user-select: none;">
             <span id="pdb3d-title" style="font-weight: 600;">PDB 3D Structure</span>
-            <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px;">Close</button>
+            <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
         </div>
         <div id="pdb3d-viewer" style="flex: 1; min-height: 0; width: 100%;"></div>
+    </div>
+    <div id="pdb3d-chains-panel" style="display: none; position: fixed; right: 20px; top: 100px; width: 220px; background: var(--panel-bg, #fff); border: 1px solid var(--border-color, #d1d5db); border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.15); flex-direction: column; overflow: hidden; z-index: 10002;">
+        <div id="pdb3d-chains-drag-handle" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-color, #d1d5db); background: #f0f0f0; cursor: move; user-select: none; font-size: 12px; font-weight: 600;">
+            <span>Chains</span>
+            <button type="button" id="pdb3d-panel-close" style="padding: 2px 8px; font-size: 11px; cursor: pointer;">Close</button>
+        </div>
+        <div style="flex-direction: column; gap: 4px; padding: 10px 12px; display: flex;">
+            <span id="pdb3d-chains-list"></span>
+        </div>
+        <div style="padding: 6px 12px; border-top: 1px solid #eee;">
+            <button type="button" id="pdb3d-select-all" style="margin-right: 6px; padding: 4px 8px; font-size: 11px;">All</button>
+            <button type="button" id="pdb3d-select-none" style="padding: 4px 8px; font-size: 11px;">None</button>
+        </div>
+        <div style="padding: 8px 12px 10px; border-top: 1px solid #eee;">
+            <label style="font-size: 11px; color: #374151; display: block; margin-bottom: 4px;">View</label>
+            <select id="pdb3d-view-style" style="width: 100%; padding: 6px 8px; font-size: 12px;">
+                <option value="cartoon" selected>Cartoon</option>
+                <option value="sphere">Sphere</option>
+                <option value="stick">Stick</option>
+                <option value="line">Line</option>
+                <option value="trace">Trace</option>
+                <option value="cross">Cross</option>
+            </select>
+            <div style="margin-top: 8px;">
+                <button type="button" id="pdb3d-show-aas" style="width: 100%; padding: 6px 8px; font-size: 12px;">Show AAs</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -945,6 +972,7 @@ async function init() {
     }
     const btnClosePdb3d = document.getElementById('btn-close-pdb3d');
     if (btnClosePdb3d && dom.pdbOverlay) {
+        btnClosePdb3d.addEventListener('mousedown', e => e.stopPropagation());
         btnClosePdb3d.addEventListener('click', closePdbViewer);
     }
     if (dom.pdbOverlay) {
@@ -5361,14 +5389,22 @@ function recalc() {
     let allViewSequences;
     if(state.mode === 'NT') {
         const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
-        const nonRefViews = nonRefSequences.map(s => ({ name: s.name, seq: s.seq }));
+        const nonRefViews = nonRefSequences.map(s => {
+            const v = { name: s.name, seq: s.seq };
+            if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
+            return v;
+        });
         allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
     } else {
         // AA mode
         if (state.isAASequence) {
-            // Sequences are already amino acids, use them directly
+            // Sequences are already amino acids, use them directly (preserve chainStart for PDB chains)
             const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
-            const nonRefViews = nonRefSequences.map(s => ({ name: s.name, seq: s.seq }));
+            const nonRefViews = nonRefSequences.map(s => {
+                const v = { name: s.name, seq: s.seq };
+                if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
+                return v;
+            });
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
         } else {
             // Sequences are DNA, translate to AA
@@ -6242,15 +6278,17 @@ function smithWatermanLocal(refStr, chainStr, gapOpen, gapExtend, matchCost, mis
             if (max > bestScore) { bestScore = max; bestI = i; bestJ = j; }
         }
     }
-    if (bestScore <= 0) return { alignedRef: '', alignedChain: '', refStart: -1, refEnd: -1 };
+    if (bestScore <= 0) return { alignedRef: '', alignedChain: '', refStart: -1, refEnd: -1, chainStart: -1, chainEnd: -1 };
     const outR = [], outC = [];
     let i = bestI, j = bestJ;
     let refStart = R, refEnd = -1;
+    let chainStart = Infinity, chainEnd = -1;
     while (i > 0 && j > 0 && H[i][j] > 0) {
         const refIdx = i - 1;
         if (ptr[i][j] === 1) {
             outR.push(r[refIdx]); outC.push(c[j - 1]);
             refStart = Math.min(refStart, refIdx); refEnd = Math.max(refEnd, refIdx);
+            chainStart = Math.min(chainStart, j - 1); chainEnd = Math.max(chainEnd, j - 1);
             i--; j--;
         } else if (ptr[i][j] === 2) {
             outR.push(r[refIdx]); outC.push('-');
@@ -6258,11 +6296,13 @@ function smithWatermanLocal(refStr, chainStr, gapOpen, gapExtend, matchCost, mis
             i--;
         } else {
             outR.push('-'); outC.push(c[j - 1]);
+            chainStart = Math.min(chainStart, j - 1); chainEnd = Math.max(chainEnd, j - 1);
             j--;
         }
     }
     outR.reverse(); outC.reverse();
-    return { alignedRef: outR.join(''), alignedChain: outC.join(''), refStart: refStart <= refEnd ? refStart : -1, refEnd };
+    if (chainStart === Infinity) chainStart = -1;
+    return { alignedRef: outR.join(''), alignedChain: outC.join(''), refStart: refStart <= refEnd ? refStart : -1, refEnd, chainStart, chainEnd };
 }
 
 /** Align one chain to reference using local alignment; returns { row, minCol, maxCol } (row length = refSeqArr.length). */
@@ -6273,8 +6313,8 @@ function alignOneChainToRef(refSeqArr, chainSeq) {
     const chainStr = (typeof chainSeq === 'string') ? chainSeq : chainSeq.join('');
     const gapOpen = -10, gapExtend = -0.5, matchCost = 1, mismatchCost = -0.7;
     const local = smithWatermanLocal(refNoGaps, chainStr, gapOpen, gapExtend, matchCost, mismatchCost);
-    if (local.refStart < 0 || local.refEnd < 0) return { row, minCol: -1, maxCol: -1 };
-    const { alignedRef, alignedChain, refStart, refEnd } = local;
+    if (local.refStart < 0 || local.refEnd < 0) return { row, minCol: -1, maxCol: -1, chainStart: 0 };
+    const { alignedRef, alignedChain, refStart, refEnd, chainStart } = local;
     const outR = alignedRef.split('');
     const outC = alignedChain.split('');
     const refIdxToCol = [];
@@ -6298,7 +6338,7 @@ function alignOneChainToRef(refSeqArr, chainSeq) {
             j++;
         }
     }
-    return { row, minCol, maxCol };
+    return { row, minCol, maxCol, chainStart: chainStart >= 0 ? chainStart : 0 };
 }
 
 /** 1-based reference coordinate at alignment column col (count of non-gap ref residues up to col inclusive). */
@@ -6310,30 +6350,43 @@ function refCoordAtCol(refSeqArr, col) {
     return c;
 }
 
-/** Align each PDB chain to reference, then merge into one row ordered by reference position (gaps between chains). */
-function alignChainsToReference(refSeqArr, chains) {
+/** Extract 4-character PDB code from HEADER record in PDB file contents (columns 63-66). */
+function pdbCodeFromHeader(pdbText) {
+    const lines = (pdbText || '').split(/\r?\n/);
+    for (const line of lines) {
+        if (line.startsWith('HEADER')) {
+            const code = (line.substring(62, 66) || '').trim().toUpperCase();
+            if (code.length === 4 && /^[A-Z0-9]{4}$/.test(code)) {
+                return code;
+            }
+            const padded = (code + '____').slice(0, 4).replace(/[^A-Z0-9]/g, '_');
+            return padded;
+        }
+    }
+    return 'UNKN';
+}
+
+/** Align each PDB chain to reference with local alignment; return array of { name, seq } (one per chain), names PDB_xxxx_Chain_y. */
+function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
     if (!refSeqArr.length) return [];
     const refLen = refSeqArr.length;
     const aligned = [];
     for (const ch of chains) {
         if (!ch.seq || !ch.seq.length) continue;
-        const { row, minCol, maxCol } = alignOneChainToRef(refSeqArr, ch.seq);
+        const { row, minCol, maxCol, chainStart } = alignOneChainToRef(refSeqArr, ch.seq);
         if (minCol >= 0) {
             const startRefCoord = refCoordAtCol(refSeqArr, minCol);
             const endRefCoord = refCoordAtCol(refSeqArr, maxCol);
-            console.log('PDB chain local alignment: chain=', ch.id, 'startRefCoord=', startRefCoord, 'endRefCoord=', endRefCoord);
-            aligned.push({ id: ch.id, row, minCol, maxCol });
+            console.log('PDB chain local alignment: chain=', ch.id, 'startRefCoord=', startRefCoord, 'endRefCoord=', endRefCoord, 'chainStart_0based=', chainStart);
+            aligned.push({ id: ch.id, row, minCol, maxCol, chainStart: chainStart >= 0 ? chainStart : 0 });
         }
     }
-    if (!aligned.length) return Array(refLen).fill('-');
     aligned.sort((a, b) => a.minCol - b.minCol);
-    const out = Array(refLen).fill('-');
-    for (const { row } of aligned) {
-        for (let i = 0; i < refLen; i++) {
-            if (row[i] !== '-' && out[i] === '-') out[i] = row[i];
-        }
-    }
-    return out;
+    return aligned.map(a => ({
+        name: 'PDB_' + pdbCode + '_Chain_' + a.id,
+        seq: a.row,
+        chainStart: a.chainStart
+    }));
 }
 
 function loadPdbFile(file) {
@@ -6352,10 +6405,17 @@ function loadPdbFile(file) {
         if (dom.inpPdb) dom.inpPdb.value = '';
         setMode('AA', state.isAASequence);
         const subtypeName = state.rawSequences[state.subtypeIndex]?.name;
-        const raw = state.rawSequences.filter(s => s.name !== 'PDB');
+        const pdbCode = pdbCodeFromHeader(pdbText);
+        const raw = state.rawSequences.filter(s => !(s.name && s.name.startsWith('PDB_')));
 
         if (raw.length === 0) {
-            state.rawSequences = [{ name: 'PDB', seq: flat }];
+            const maxLen = Math.max(...chains.map(ch => (ch.seq && ch.seq.length) || 0));
+            const pdbSeqs = chains.map(ch => {
+                const seq = (ch.seq || []).slice();
+                while (seq.length < maxLen) seq.push('-');
+                return { name: 'PDB_' + pdbCode + '_Chain_' + ch.id, seq };
+            });
+            state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: 'PDB_' + pdbCode + '_Chain_?', seq: flat }];
             state.refIndex = 0;
             state.subtypeIndex = 0;
         } else {
@@ -6363,9 +6423,10 @@ function loadPdbFile(file) {
             if (dom.overlayMsg) dom.overlayMsg.textContent = 'Aligning PDB chains to reference...';
             if (dom.overlaySub) dom.overlaySub.textContent = '';
             const refSeq = (raw[0] && raw[0].seq) ? raw[0].seq : [];
-            const pdbRow = alignChainsToReference(refSeq, chains);
-            const pdbEntry = { name: 'PDB', seq: pdbRow };
-            raw.splice(1, 0, pdbEntry);
+            const pdbEntries = alignChainsToReferenceSequences(refSeq, chains, pdbCode);
+            for (let i = 0; i < pdbEntries.length; i++) {
+                raw.splice(1 + i, 0, pdbEntries[i]);
+            }
             state.rawSequences = raw;
             state.refIndex = 0;
             const newSubtypeIdx = raw.findIndex(s => s.name === subtypeName);
@@ -6393,6 +6454,266 @@ function closePdbViewer() {
     }
 }
 
+/** Make element draggable by its handle. Element must have position: fixed and initial left/top set. */
+function makeDraggable(element, handle) {
+    if (!element || !handle) return;
+    handle.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const rect = element.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        const offsetY = e.clientY - rect.top;
+        function onMove(ev) {
+            element.style.left = (ev.clientX - offsetX) + 'px';
+            element.style.top = (ev.clientY - offsetY) + 'px';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+}
+
+/** Return sorted list of chain IDs that contain at least one amino-acid residue (same logic as sequence extraction). */
+function getPdbChainIds(pdbText) {
+    const seen = new Set();
+    const lines = (pdbText || '').split(/\r?\n/);
+    for (const line of lines) {
+        if (line.startsWith('ATOM ') || line.startsWith('HETATM ')) {
+            const resName = (line.substring(17, 20) || '').trim();
+            const one = PDB_RESIDUE_TO_ONE[resName];
+            if (one === '') continue; // skip water/ligand so list matches sequence chains
+            const ch = (line.substring(21, 22) || ' ').trim() || 'A';
+            seen.add(ch);
+        }
+    }
+    return Array.from(seen).sort();
+}
+
+/** Filter PDB text to only include ATOM/HETATM lines for the given chain IDs. */
+function filterPdbByChains(pdbText, chainIds) {
+    const set = new Set(chainIds);
+    const lines = (pdbText || '').split(/\r?\n/);
+    const out = [];
+    for (const line of lines) {
+        if (line.startsWith('ATOM ') || line.startsWith('HETATM ')) {
+            const ch = (line.substring(21, 22) || ' ').trim() || 'A';
+            if (set.has(ch)) out.push(line);
+        } else {
+            out.push(line);
+        }
+    }
+    return out.join('\n');
+}
+
+/** Color by amino acid (residue): use CONFIG.colors.AA from alignment view. Atom.resn is 3-letter code. */
+function pdb3dColorByResidue(atom) {
+    const one = (PDB_RESIDUE_TO_ONE[atom.resn] || 'X').toUpperCase();
+    const hex = (CONFIG.colors.AA[one] || CONFIG.colors.AA['default'] || '#ffffff').replace(/^#/, '');
+    return parseInt(hex, 16);
+}
+
+const PDB3D_EPITOPE_GRAY = 0x9e9e9e; // neutral gray for non-epitope residues in sphere mode
+let pdb3dShowAAs = false;
+let pdb3dAALabels = []; // labels for epitope residues when Show AAs is on
+
+/** Reference coordinate for PDB residue (chainId, resSeq), or null if not in alignment. */
+function getRefCoordForPdbResidue(chainId, resSeq) {
+    if (!state.viewSequences || !state.refMap) return null;
+    const resSeqLists = getPdbChainResSeqLists(state.pdbFileContent);
+    const resSeqs = resSeqLists.get(chainId);
+    if (!resSeqs) return null;
+    const residueIndex = resSeqs.indexOf(parseInt(resSeq, 10));
+    if (residueIndex < 0) return null;
+    for (const view of state.viewSequences) {
+        const m = (view.name || '').match(/^PDB_[^_]+_Chain_(.)$/);
+        if (!m || m[1] !== chainId) continue;
+        const row = view.seq || [];
+        let count = 0;
+        for (let col = 0; col < row.length; col++) {
+            if (row[col] === '-' || row[col] === '.') continue;
+            if (count === residueIndex) {
+                return col < state.refMap.length ? state.refMap[col] : null;
+            }
+            count++;
+        }
+    }
+    return null;
+}
+
+/** Per chain, ordered list of resSeq (same order as parsePdbSequence: sorted by resSeq so alignment row index matches). */
+function getPdbChainResSeqLists(pdbText) {
+    const byChain = new Map(); // chainId -> Set or list of resSeq (we'll sort to match parsePdbSequence)
+    const lines = (pdbText || '').split(/\r?\n/);
+    for (const line of lines) {
+        if (line.startsWith('ATOM ') || line.startsWith('HETATM ')) {
+            const resName = (line.substring(17, 20) || '').trim();
+            const one = PDB_RESIDUE_TO_ONE[resName];
+            if (one === '') continue;
+            const ch = (line.substring(21, 22) || ' ').trim() || 'A';
+            const resSeq = parseInt(line.substring(22, 26), 10) || 0;
+            if (!byChain.has(ch)) byChain.set(ch, []);
+            const arr = byChain.get(ch);
+            const last = arr.length ? arr[arr.length - 1] : null;
+            if (!last || last !== resSeq) arr.push(resSeq);
+        }
+    }
+    // parsePdbSequence sorts each chain by resSeq; alignment row order is that order. Sort so residueIndex matches.
+    const out = new Map();
+    for (const [ch, arr] of byChain) {
+        out.set(ch, arr.slice().sort((a, b) => a - b));
+    }
+    return out;
+}
+
+/** 0-based index of the PDB residue at alignment column col (count of non-gaps in row from 0 to col inclusive, minus 1). */
+function pdbRowResidueIndexAtColumn(row, col) {
+    let count = 0;
+    for (let i = 0; i <= col && i < row.length; i++) {
+        if (row[i] !== '-' && row[i] !== '.') count++;
+    }
+    return count > 0 ? count - 1 : -1;
+}
+
+/** Normalize to 1-letter code for comparison (handles 1-letter or 3-letter in view). */
+function normToOneLetter(c) {
+    if (c == null || c === '-' || c === '.') return null;
+    const s = String(c).trim();
+    if (s.length === 1) return s.toUpperCase();
+    return (PDB_RESIDUE_TO_ONE[s] || '').toUpperCase() || null;
+}
+
+/** Residues in the selected epitope and their reference coordinate. Only consider columns where the REFERENCE has a residue (not a gap) AND this is the first column for that ref coord (refMap[col] !== refMap[col-1]). Add every PDB chain residue at those columns (show residues and labels irrespective of match with reference). Same set is used for sphere coloring and labels. */
+function getPdb3dEpitopeResidues() {
+    if (!state.selectedEpitope || !state.epitopeColumns || state.epitopeColumns.size === 0 || !state.viewSequences || !state.refMap) return null;
+    const refView = state.viewSequences[state.refIndex];
+    const refSeq = refView && refView.seq ? refView.seq : [];
+    const resSeqLists = getPdbChainResSeqLists(state.pdbFileContent);
+    const residues = new Set();
+    const refCoordByKey = new Map();
+    for (const col of state.epitopeColumns) {
+        if (col >= refSeq.length || col >= state.refMap.length) continue;
+        if (refSeq[col] === '-' || refSeq[col] === '.') continue;
+        if (col > 0 && state.refMap[col] === state.refMap[col - 1]) continue;
+        const refCoord = state.refMap[col];
+        for (const view of state.viewSequences) {
+            const name = view.name || '';
+            const m = name.match(/^PDB_[^_]+_Chain_(.)$/);
+            if (!m) continue;
+            const chainId = m[1];
+            const row = view.seq || [];
+            if (col >= row.length || row[col] === '-' || row[col] === '.') continue;
+            const rowChar = normToOneLetter(row[col]);
+            if (rowChar === null || rowChar === '') continue;
+            const residueIndex = pdbRowResidueIndexAtColumn(row, col);
+            const chainStart = (view.chainStart != null && view.chainStart >= 0) ? view.chainStart : 0;
+            const fullChainIndex = chainStart + residueIndex;
+            const resSeqs = resSeqLists.get(chainId);
+            if (!resSeqs || fullChainIndex < 0 || fullChainIndex >= resSeqs.length) continue;
+            const pdbResSeq = resSeqs[fullChainIndex];
+            const key = chainId + ':' + pdbResSeq;
+            residues.add(key);
+            refCoordByKey.set(key, refCoord);
+            console.log('[PDB3D epitope] add for coloring/labels: chain=%s AA=%s refCoord=%s PDB_resSeq=%s residueIndex_in_row_0based=%s chainStart_0based=%s fullChainIndex_0based=%s (residueIndex=position in aligned row; fullChainIndex=chainStart+residueIndex; PDB_resSeq is from PDB file, typically 1-based)', chainId, rowChar, refCoord, pdbResSeq, residueIndex, chainStart, fullChainIndex);
+        }
+    }
+    return residues.size ? { residues, refCoordByKey } : null;
+}
+
+/** Return 3Dmol style spec. Sphere: if epitope selected, only color epitope residues (amino colors), others gray. */
+function getPdb3dStyleSpec(styleKey, epitopeResidues) {
+    const gray = PDB3D_EPITOPE_GRAY;
+    let style;
+    switch (String(styleKey).toLowerCase()) {
+        case 'sphere': {
+            const resSet = epitopeResidues && epitopeResidues.residues ? epitopeResidues.residues : (epitopeResidues && epitopeResidues.size ? epitopeResidues : null);
+            if (resSet && resSet.size > 0) {
+                style = (function () {
+                    const logged = new Set();
+                    return {
+                    sphere: {
+                        colorfunc: function (atom) {
+                            const ch = (atom.chain || ' ').trim() || 'A';
+                            const key = ch + ':' + String(atom.resi);
+                            if (resSet.has(key)) {
+                                if (!logged.has(key)) {
+                                    logged.add(key);
+                                    const one = (PDB_RESIDUE_TO_ONE[atom.resn] || 'X').toUpperCase();
+                                    console.log('[PDB3D color] coloring residue: chain=%s AA=%s (resn=%s) atom.resi=%s (atom.resi is PDB residue number, typically 1-based; no 0-based chain index here)', ch, one, atom.resn || '?', atom.resi);
+                                }
+                                return pdb3dColorByResidue(atom);
+                            }
+                            return gray;
+                        }
+                    }
+                };
+                })();
+            } else {
+                style = { sphere: { colorfunc: pdb3dColorByResidue } };
+            }
+            break;
+        }
+        case 'stick': style = { stick: { colorscheme: 'spectrum' } }; break;
+        case 'line': style = { line: { colorscheme: 'spectrum' } }; break;
+        case 'trace': style = { trace: { colorscheme: 'spectrum' } }; break;
+        case 'cross': style = { cross: { colorscheme: 'spectrum' } }; break;
+        default: style = { cartoon: { color: 'spectrum' } }; break;
+    }
+    return style;
+}
+
+/** Remove all Show AAs labels and add new ones for epitope residues (one-letter + ref coord). Labels use atom position so they move with the model. */
+function updatePdb3dAALabels(viewer) {
+    if (!viewer) return;
+    pdb3dAALabels.forEach(function(lab) {
+        try { viewer.removeLabel(lab); } catch (e) {}
+    });
+    pdb3dAALabels = [];
+    if (!pdb3dShowAAs) return;
+    const epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
+    if (!epitopeData || !epitopeData.residues || epitopeData.residues.size === 0) return;
+    if (!viewer.selectedAtoms) return;
+    const labelOpts = { backgroundColor: 0x333333, backgroundOpacity: 0.85, fontColor: 0xffffff, fontSize: 12, showBackground: true };
+    const refCoordByKey = epitopeData.refCoordByKey || new Map();
+    epitopeData.residues.forEach(function(key) {
+        const parts = key.split(':');
+        const chain = parts[0] || 'A';
+        const resi = parseInt(parts[1], 10);
+        if (isNaN(resi)) return;
+        const atoms = viewer.selectedAtoms({ chain: chain, resi: resi });
+        if (!atoms || atoms.length === 0) return;
+        const atom = atoms.find(function(a) { return (a.atom || '').trim() === 'CA'; }) || atoms[0];
+        const resn = atom.resn || '?';
+        const one = (PDB_RESIDUE_TO_ONE[resn] || 'X').toUpperCase();
+        const refCoord = refCoordByKey.get(key);
+        const refStr = (refCoord !== undefined && refCoord !== null) ? String(refCoord) : '—';
+        const text = one + ' ' + refStr;
+        const lab = viewer.addLabel(text, { position: atom, fontColor: labelOpts.fontColor, fontSize: labelOpts.fontSize, showBackground: labelOpts.showBackground, backgroundColor: labelOpts.backgroundColor, backgroundOpacity: labelOpts.backgroundOpacity });
+        pdb3dAALabels.push(lab);
+    });
+    viewer.render();
+}
+
+function renderPdb3dWithChains(selectedChainIds, styleKey) {
+    if (!state.pdbFileContent || !pdb3dViewerInstance || !dom.pdbViewerContainer) return;
+    const filtered = filterPdbByChains(state.pdbFileContent, selectedChainIds);
+    const isSphere = String(styleKey || '').toLowerCase() === 'sphere';
+    const epitopeData = (state.selectedEpitope && state.epitopeColumns) ? getPdb3dEpitopeResidues() : null;
+    const epitopeResiduesForStyle = epitopeData && epitopeData.residues ? epitopeData : null;
+    const style = getPdb3dStyleSpec(styleKey || 'cartoon', epitopeResiduesForStyle);
+    pdb3dViewerInstance.clear();
+    pdb3dViewerInstance.addModel(filtered, 'pdb');
+    pdb3dViewerInstance.setStyle({}, style);
+    pdb3dViewerInstance.zoomTo();
+    pdb3dViewerInstance.render();
+    updatePdb3dAALabels(pdb3dViewerInstance);
+    requestAnimationFrame(() => {
+        if (pdb3dViewerInstance && pdb3dViewerInstance.resize) pdb3dViewerInstance.resize();
+    });
+}
+
 function openPdbViewerFromState() {
     if (!state.pdbFileContent || !dom.pdbOverlay || !dom.pdbViewerContainer) {
         alert('Load a PDB file first (use Load PDB).');
@@ -6401,19 +6722,79 @@ function openPdbViewerFromState() {
     closePdbViewer();
     if (dom.pdbTitle) dom.pdbTitle.textContent = state.pdbFileName || 'PDB 3D Structure';
     dom.pdbOverlay.style.display = 'flex';
-    if (typeof $3Dmol !== 'undefined') {
-        dom.pdbViewerContainer.innerHTML = '';
-        pdb3dViewerInstance = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
-        pdb3dViewerInstance.addModel(state.pdbFileContent, 'pdb');
-        pdb3dViewerInstance.setStyle({}, { cartoon: { color: 'spectrum' } });
-        pdb3dViewerInstance.zoomTo();
-        pdb3dViewerInstance.render();
-        requestAnimationFrame(() => {
-            if (pdb3dViewerInstance && pdb3dViewerInstance.resize) pdb3dViewerInstance.resize();
-        });
-    } else {
-        dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
+
+    const chainIds = getPdbChainIds(state.pdbFileContent);
+    const panel = document.getElementById('pdb3d-chains-panel');
+    const listEl = document.getElementById('pdb3d-chains-list');
+    const styleSelect = document.getElementById('pdb3d-view-style');
+    const panelCloseBtn = document.getElementById('pdb3d-panel-close');
+    if (panelCloseBtn) {
+        panelCloseBtn.onmousedown = e => e.stopPropagation();
+        panelCloseBtn.onclick = closePdbViewer; // dismiss 3D window and chain panel
     }
+    if (chainIds.length > 0 && panel && listEl) {
+        panel.style.display = 'flex';
+        listEl.innerHTML = '';
+        const checkboxes = {};
+        const getSelected = () => chainIds.filter(id => checkboxes[id] && checkboxes[id].checked);
+        const updateView = () => {
+            const styleKey = styleSelect ? styleSelect.value : 'cartoon';
+            renderPdb3dWithChains(getSelected(), styleKey);
+        };
+        chainIds.forEach(id => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = true;
+            cb.dataset.chain = id;
+            cb.addEventListener('change', updateView);
+            checkboxes[id] = cb;
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode('Chain ' + id));
+            listEl.appendChild(label);
+        });
+        const btnAll = document.getElementById('pdb3d-select-all');
+        const btnNone = document.getElementById('pdb3d-select-none');
+        if (btnAll) btnAll.onclick = () => { chainIds.forEach(id => { checkboxes[id].checked = true; }); updateView(); };
+        if (btnNone) btnNone.onclick = () => { chainIds.forEach(id => { checkboxes[id].checked = false; }); updateView(); };
+        if (styleSelect) styleSelect.onchange = updateView;
+        const showAasBtn = document.getElementById('pdb3d-show-aas');
+        if (showAasBtn) {
+            showAasBtn.onclick = function() {
+                pdb3dShowAAs = !pdb3dShowAAs;
+                showAasBtn.textContent = pdb3dShowAAs ? 'Hide AAs' : 'Show AAs';
+                if (showAasBtn.classList) showAasBtn.classList.toggle('active', pdb3dShowAAs);
+                updateView();
+            };
+        }
+        if (typeof $3Dmol !== 'undefined') {
+            dom.pdbViewerContainer.innerHTML = '';
+            pdb3dViewerInstance = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
+            updateView();
+        } else {
+            dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
+        }
+        makeDraggable(panel, document.getElementById('pdb3d-chains-drag-handle'));
+    } else {
+        if (panel) panel.style.display = 'none';
+        if (typeof $3Dmol !== 'undefined') {
+            dom.pdbViewerContainer.innerHTML = '';
+            pdb3dViewerInstance = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
+            pdb3dViewerInstance.addModel(state.pdbFileContent, 'pdb');
+            pdb3dViewerInstance.setStyle({}, { cartoon: { color: 'spectrum' } });
+            pdb3dViewerInstance.zoomTo();
+            pdb3dViewerInstance.render();
+            requestAnimationFrame(() => {
+                if (pdb3dViewerInstance && pdb3dViewerInstance.resize) pdb3dViewerInstance.resize();
+            });
+        } else {
+            dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
+        }
+    }
+    const win = document.getElementById('pdb3d-window');
+    const titleBar = document.getElementById('pdb3d-title-bar');
+    if (win && titleBar) makeDraggable(win, titleBar);
 }
 
 // --- Sequence Logo Generation ---
