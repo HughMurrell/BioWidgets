@@ -16,8 +16,8 @@
     <script src="https://biowasm.com/cdn/v3/aioli.js"></script>
      <!-- Included html2pdf.js for PDF export (includes jsPDF and svg2pdf internally) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <!-- 3Dmol.js for PDB 3D structure viewing -->
-    <script src="https://3Dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
+    <!-- 3Dmol.js for PDB 3D structure viewing (epitope coloring without molstar.lib) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.1/3Dmol-min.js"></script>
     <style>
         :root {
             --bg-color: #f8f9fa;
@@ -586,39 +586,28 @@
 </div>
 
 <div id="pdb3d-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 10001;">
-    <div id="pdb3d-window" style="position: fixed; left: 5%; top: 5%; width: 75vw; max-width: 800px; height: 80vh; background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden;">
-        <div id="pdb3d-title-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color, #d1d5db); cursor: move; user-select: none;">
+    <div id="pdb3d-window" style="position: fixed; left: 5%; top: 5%; width: 90vw; max-width: 1000px; height: 85vh; background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; z-index: 10002;">
+        <div id="pdb3d-title-bar" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color, #d1d5db); cursor: move; user-select: none; background: #fff; z-index: 10;">
             <span id="pdb3d-title" style="font-weight: 600;">PDB 3D Structure</span>
             <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
         </div>
-        <div id="pdb3d-viewer" style="flex: 1; min-height: 0; width: 100%;"></div>
-    </div>
-    <div id="pdb3d-chains-panel" style="display: none; position: fixed; right: 20px; top: 100px; width: 220px; background: var(--panel-bg, #fff); border: 1px solid var(--border-color, #d1d5db); border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.15); flex-direction: column; overflow: hidden; z-index: 10002;">
-        <div id="pdb3d-chains-drag-handle" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-color, #d1d5db); background: #f0f0f0; cursor: move; user-select: none; font-size: 12px; font-weight: 600;">
-            <span>Chains</span>
-            <button type="button" id="pdb3d-panel-close" style="padding: 2px 8px; font-size: 11px; cursor: pointer;">Close</button>
-        </div>
-        <div style="flex-direction: column; gap: 4px; padding: 10px 12px; display: flex;">
-            <span id="pdb3d-chains-list"></span>
-        </div>
-        <div style="padding: 6px 12px; border-top: 1px solid #eee;">
-            <button type="button" id="pdb3d-select-all" style="margin-right: 6px; padding: 4px 8px; font-size: 11px;">All</button>
-            <button type="button" id="pdb3d-select-none" style="padding: 4px 8px; font-size: 11px;">None</button>
-        </div>
-        <div style="padding: 8px 12px 10px; border-top: 1px solid #eee;">
-            <label style="font-size: 11px; color: #374151; display: block; margin-bottom: 4px;">View</label>
-            <select id="pdb3d-view-style" style="width: 100%; padding: 6px 8px; font-size: 12px;">
-                <option value="cartoon" selected>Cartoon</option>
+        <div id="pdb3d-hint" style="flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 11px; color: #374151; background: #f3f4f6; border-bottom: 1px solid var(--border-color, #e5e7eb); z-index: 10;">Epitope residues are colored automatically (residue colors, rest gray). Use <strong>Chains</strong> to show/hide chains.</div>
+        <div id="pdb3d-toolbar" style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border-color, #e5e7eb); background: #fff; z-index: 10;">
+            <span style="font-size: 12px; font-weight: 600;">Style:</span>
+            <select id="pdb3d-style-select" style="padding: 4px 8px; font-size: 12px;">
+                <option value="cartoon">Cartoon</option>
                 <option value="sphere">Sphere</option>
                 <option value="stick">Stick</option>
                 <option value="line">Line</option>
                 <option value="trace">Trace</option>
                 <option value="cross">Cross</option>
             </select>
-            <div style="margin-top: 8px;">
-                <button type="button" id="pdb3d-show-aas" style="width: 100%; padding: 6px 8px; font-size: 12px;">Show AAs</button>
-            </div>
+            <span style="font-size: 12px; font-weight: 600; margin-left: 8px;">Chains:</span>
+            <span id="pdb3d-chains-list" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
+            <button type="button" id="pdb3d-select-all" style="padding: 4px 8px; font-size: 11px;">All</button>
+            <button type="button" id="pdb3d-select-none" style="padding: 4px 8px; font-size: 11px;">None</button>
         </div>
+        <div id="pdb3d-viewer" style="flex: 1; min-height: 0; width: 100%; position: relative; z-index: 1;"></div>
     </div>
 </div>
 
@@ -6199,8 +6188,9 @@ function render() {
     }
 }
 
-// --- PDB 3D Viewer ---
+// --- PDB 3D Viewer (3Dmol.js: epitope = residue colors, rest = gray) ---
 let pdb3dViewerInstance = null;
+var pdb3dCurrentStyle = 'cartoon';
 
 const PDB_RESIDUE_TO_ONE = {
     'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLN':'Q','GLU':'E','GLY':'G','HIS':'H',
@@ -6449,6 +6439,8 @@ function closePdbViewer() {
     if (!dom.pdbOverlay) return;
     dom.pdbOverlay.style.display = 'none';
     if (pdb3dViewerInstance && dom.pdbViewerContainer) {
+        if (typeof pdb3dViewerInstance.destroy === 'function') pdb3dViewerInstance.destroy();
+        else if (typeof pdb3dViewerInstance.dispose === 'function') pdb3dViewerInstance.dispose();
         dom.pdbViewerContainer.innerHTML = '';
         pdb3dViewerInstance = null;
     }
@@ -6630,43 +6622,66 @@ function getPdb3dStyleSpec(styleKey, epitopeResidues) {
         case 'sphere': {
             const resSet = epitopeResidues && epitopeResidues.residues ? epitopeResidues.residues : (epitopeResidues && epitopeResidues.size ? epitopeResidues : null);
             if (resSet && resSet.size > 0) {
-                style = (function () {
-                    const logged = new Set();
-                    return {
+                style = {
                     sphere: {
                         colorfunc: function (atom) {
-                            const ch = (atom.chain || ' ').trim() || 'A';
-                            const key = ch + ':' + String(atom.resi);
-                            if (resSet.has(key)) {
-                                if (!logged.has(key)) {
-                                    logged.add(key);
-                                    const one = (PDB_RESIDUE_TO_ONE[atom.resn] || 'X').toUpperCase();
-                                    console.log('[PDB3D color] coloring residue: chain=%s AA=%s (resn=%s) atom.resi=%s (atom.resi is PDB residue number, typically 1-based; no 0-based chain index here)', ch, one, atom.resn || '?', atom.resi);
-                                }
-                                return pdb3dColorByResidue(atom);
-                            }
-                            return gray;
+                            var ch = (atom.chain || ' ').trim() || 'A';
+                            var key = ch + ':' + String(atom.resi);
+                            return resSet.has(key) ? pdb3dColorByResidue(atom) : gray;
                         }
                     }
                 };
-                })();
             } else {
                 style = { sphere: { colorfunc: pdb3dColorByResidue } };
             }
             break;
         }
-        case 'stick': style = { stick: { colorscheme: 'spectrum' } }; break;
-        case 'line': style = { line: { colorscheme: 'spectrum' } }; break;
-        case 'trace': style = { trace: { colorscheme: 'spectrum' } }; break;
-        case 'cross': style = { cross: { colorscheme: 'spectrum' } }; break;
-        default: style = { cartoon: { color: 'spectrum' } }; break;
+        case 'stick':
+        case 'line':
+        case 'trace':
+        case 'cross': {
+            var resSetOther = epitopeResidues && epitopeResidues.residues ? epitopeResidues.residues : (epitopeResidues && epitopeResidues.size ? epitopeResidues : null);
+            var subStyle = styleKey === 'stick' ? 'stick' : styleKey === 'line' ? 'line' : styleKey === 'trace' ? 'trace' : 'cross';
+            if (resSetOther && resSetOther.size > 0) {
+                style = {};
+                style[subStyle] = {
+                    colorfunc: function (atom) {
+                        var ch = (atom.chain || ' ').trim() || 'A';
+                        var key = ch + ':' + String(atom.resi);
+                        return resSetOther.has(key) ? pdb3dColorByResidue(atom) : gray;
+                    }
+                };
+            } else {
+                style = {};
+                style[subStyle] = { colorscheme: 'spectrum' };
+            }
+            break;
+        }
+        default: {
+            var resSetDefault = epitopeResidues && epitopeResidues.residues ? epitopeResidues.residues : (epitopeResidues && epitopeResidues.size ? epitopeResidues : null);
+            if (resSetDefault && resSetDefault.size > 0) {
+                style = {
+                    cartoon: {
+                        colorfunc: function (atom) {
+                            var ch = (atom.chain || ' ').trim() || 'A';
+                            var key = ch + ':' + String(atom.resi);
+                            return resSetDefault.has(key) ? pdb3dColorByResidue(atom) : gray;
+                        }
+                    }
+                };
+            } else {
+                style = { cartoon: { color: 'spectrum' } };
+            }
+            break;
+        }
     }
     return style;
 }
 
-/** Remove all Show AAs labels and add new ones for epitope residues (one-letter + ref coord). Labels use atom position so they move with the model. */
+/** Remove all Show AAs labels and add new ones for epitope residues (one-letter + ref coord). Labels use atom position so they move with the model. No-op for Mol* (different API). */
 function updatePdb3dAALabels(viewer) {
     if (!viewer) return;
+    if (viewer.plugin && typeof viewer.addLabel !== 'function') return;
     pdb3dAALabels.forEach(function(lab) {
         try { viewer.removeLabel(lab); } catch (e) {}
     });
@@ -6696,22 +6711,65 @@ function updatePdb3dAALabels(viewer) {
     viewer.render();
 }
 
-function renderPdb3dWithChains(selectedChainIds, styleKey) {
-    if (!state.pdbFileContent || !pdb3dViewerInstance || !dom.pdbViewerContainer) return;
-    const filtered = filterPdbByChains(state.pdbFileContent, selectedChainIds);
-    const isSphere = String(styleKey || '').toLowerCase() === 'sphere';
-    const epitopeData = (state.selectedEpitope && state.epitopeColumns) ? getPdb3dEpitopeResidues() : null;
-    const epitopeResiduesForStyle = epitopeData && epitopeData.residues ? epitopeData : null;
-    const style = getPdb3dStyleSpec(styleKey || 'cartoon', epitopeResiduesForStyle);
-    pdb3dViewerInstance.clear();
-    pdb3dViewerInstance.addModel(filtered, 'pdb');
-    pdb3dViewerInstance.setStyle({}, style);
-    pdb3dViewerInstance.zoomTo();
+/** Re-apply current style to the open 3D viewer (no reload). Call when user changes Style dropdown. */
+function applyPdb3dStyleToViewer() {
+    if (!pdb3dViewerInstance) return;
+    var epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
+    pdb3dViewerInstance.setStyle({}, getPdb3dStyleSpec(pdb3dCurrentStyle, epitopeData));
     pdb3dViewerInstance.render();
-    updatePdb3dAALabels(pdb3dViewerInstance);
-    requestAnimationFrame(() => {
-        if (pdb3dViewerInstance && pdb3dViewerInstance.resize) pdb3dViewerInstance.resize();
-    });
+}
+
+function renderPdb3dWithChains(selectedChainIds) {
+    if (!state.pdbFileContent || !dom.pdbViewerContainer) return;
+    var filtered = (selectedChainIds && selectedChainIds.length > 0)
+        ? filterPdbByChains(state.pdbFileContent, selectedChainIds)
+        : state.pdbFileContent;
+    if (typeof $3Dmol === 'undefined') {
+        dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
+        return;
+    }
+    if (pdb3dViewerInstance) {
+        if (typeof pdb3dViewerInstance.destroy === 'function') pdb3dViewerInstance.destroy();
+        else if (typeof pdb3dViewerInstance.dispose === 'function') pdb3dViewerInstance.dispose();
+        pdb3dViewerInstance = null;
+    }
+    dom.pdbViewerContainer.innerHTML = '';
+    var viewer = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
+    pdb3dViewerInstance = viewer;
+    viewer.addModel(filtered, 'pdb');
+    var styleSelect = document.getElementById('pdb3d-style-select');
+    if (styleSelect) {
+        pdb3dCurrentStyle = styleSelect.value || pdb3dCurrentStyle;
+        styleSelect.value = pdb3dCurrentStyle;
+    }
+    var epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
+    viewer.setStyle({}, getPdb3dStyleSpec(pdb3dCurrentStyle, epitopeData));
+    viewer.zoomTo();
+    viewer.render();
+
+    var hoverEl = document.createElement('div');
+    hoverEl.id = 'pdb3d-hover-info';
+    hoverEl.setAttribute('style', 'position:absolute;bottom:10px;left:10px;padding:6px 10px;font-size:12px;font-family:monospace;background:rgba(0,0,0,0.75);color:#fff;border-radius:4px;pointer-events:none;z-index:5;max-width:90%;');
+    dom.pdbViewerContainer.appendChild(hoverEl);
+    function formatResidue(atom) {
+        if (!atom) return '';
+        var ch = (atom.chain || ' ').trim() || 'A';
+        var resn = (atom.resn || '').trim() || '?';
+        var one = (PDB_RESIDUE_TO_ONE[resn] || 'X').toUpperCase();
+        return one + ' ' + resn + ' ' + ch + ' ' + atom.resi;
+    }
+    try {
+        viewer.setHoverable({}, true,
+            function (atom, viewer, event, container) {
+                hoverEl.textContent = atom ? formatResidue(atom) : '';
+            },
+            function (atom) {
+                hoverEl.textContent = '';
+            }
+        );
+    } catch (e) { /* 3Dmol version may not support setHoverable */ }
+
+    updatePdb3dAALabels(viewer);
 }
 
 function openPdbViewerFromState() {
@@ -6723,77 +6781,55 @@ function openPdbViewerFromState() {
     if (dom.pdbTitle) dom.pdbTitle.textContent = state.pdbFileName || 'PDB 3D Structure';
     dom.pdbOverlay.style.display = 'flex';
 
-    const chainIds = getPdbChainIds(state.pdbFileContent);
-    const panel = document.getElementById('pdb3d-chains-panel');
-    const listEl = document.getElementById('pdb3d-chains-list');
-    const styleSelect = document.getElementById('pdb3d-view-style');
-    const panelCloseBtn = document.getElementById('pdb3d-panel-close');
-    if (panelCloseBtn) {
-        panelCloseBtn.onmousedown = e => e.stopPropagation();
-        panelCloseBtn.onclick = closePdbViewer; // dismiss 3D window and chain panel
+    var chainIds = getPdbChainIds(state.pdbFileContent);
+    var listEl = document.getElementById('pdb3d-chains-list');
+    var btnAll = document.getElementById('pdb3d-select-all');
+    var btnNone = document.getElementById('pdb3d-select-none');
+    var checkboxes = {};
+
+    function getSelected() {
+        return chainIds.filter(function (id) { return checkboxes[id] && checkboxes[id].checked; });
     }
-    if (chainIds.length > 0 && panel && listEl) {
-        panel.style.display = 'flex';
-        listEl.innerHTML = '';
-        const checkboxes = {};
-        const getSelected = () => chainIds.filter(id => checkboxes[id] && checkboxes[id].checked);
-        const updateView = () => {
-            const styleKey = styleSelect ? styleSelect.value : 'cartoon';
-            renderPdb3dWithChains(getSelected(), styleKey);
+    function updateView() {
+        renderPdb3dWithChains(getSelected());
+    }
+
+    var styleSelect = document.getElementById('pdb3d-style-select');
+    if (styleSelect) {
+        styleSelect.value = pdb3dCurrentStyle;
+        styleSelect.onchange = function () {
+            pdb3dCurrentStyle = this.value;
+            applyPdb3dStyleToViewer();
         };
-        chainIds.forEach(id => {
-            const label = document.createElement('label');
+    }
+
+    if (listEl && chainIds.length > 0) {
+        listEl.innerHTML = '';
+        chainIds.forEach(function (id) {
+            var label = document.createElement('label');
             label.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;';
-            const cb = document.createElement('input');
+            var cb = document.createElement('input');
             cb.type = 'checkbox';
             cb.checked = true;
             cb.dataset.chain = id;
             cb.addEventListener('change', updateView);
             checkboxes[id] = cb;
             label.appendChild(cb);
-            label.appendChild(document.createTextNode('Chain ' + id));
+            label.appendChild(document.createTextNode(id));
             listEl.appendChild(label);
         });
-        const btnAll = document.getElementById('pdb3d-select-all');
-        const btnNone = document.getElementById('pdb3d-select-none');
-        if (btnAll) btnAll.onclick = () => { chainIds.forEach(id => { checkboxes[id].checked = true; }); updateView(); };
-        if (btnNone) btnNone.onclick = () => { chainIds.forEach(id => { checkboxes[id].checked = false; }); updateView(); };
-        if (styleSelect) styleSelect.onchange = updateView;
-        const showAasBtn = document.getElementById('pdb3d-show-aas');
-        if (showAasBtn) {
-            showAasBtn.onclick = function() {
-                pdb3dShowAAs = !pdb3dShowAAs;
-                showAasBtn.textContent = pdb3dShowAAs ? 'Hide AAs' : 'Show AAs';
-                if (showAasBtn.classList) showAasBtn.classList.toggle('active', pdb3dShowAAs);
-                updateView();
-            };
-        }
-        if (typeof $3Dmol !== 'undefined') {
-            dom.pdbViewerContainer.innerHTML = '';
-            pdb3dViewerInstance = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
-            updateView();
-        } else {
-            dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
-        }
-        makeDraggable(panel, document.getElementById('pdb3d-chains-drag-handle'));
+        if (btnAll) btnAll.onclick = function () { chainIds.forEach(function (id) { checkboxes[id].checked = true; }); updateView(); };
+        if (btnNone) btnNone.onclick = function () { chainIds.forEach(function (id) { checkboxes[id].checked = false; }); updateView(); };
     } else {
-        if (panel) panel.style.display = 'none';
-        if (typeof $3Dmol !== 'undefined') {
-            dom.pdbViewerContainer.innerHTML = '';
-            pdb3dViewerInstance = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
-            pdb3dViewerInstance.addModel(state.pdbFileContent, 'pdb');
-            pdb3dViewerInstance.setStyle({}, { cartoon: { color: 'spectrum' } });
-            pdb3dViewerInstance.zoomTo();
-            pdb3dViewerInstance.render();
-            requestAnimationFrame(() => {
-                if (pdb3dViewerInstance && pdb3dViewerInstance.resize) pdb3dViewerInstance.resize();
-            });
-        } else {
-            dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
-        }
+        if (listEl) listEl.textContent = '(no chains)';
+        if (btnAll) btnAll.style.display = 'none';
+        if (btnNone) btnNone.style.display = 'none';
     }
-    const win = document.getElementById('pdb3d-window');
-    const titleBar = document.getElementById('pdb3d-title-bar');
+
+    updateView();
+
+    var win = document.getElementById('pdb3d-window');
+    var titleBar = document.getElementById('pdb3d-title-bar');
     if (win && titleBar) makeDraggable(win, titleBar);
 }
 
