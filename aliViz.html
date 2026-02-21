@@ -1434,26 +1434,29 @@ function sortSequencesByName() {
         ? state.rawSequences[state.subtypeIndex] 
         : null;
     
-    // Get all other sequences (excluding REF and SUBTYPE)
+    // Get other sequences: non-PDB (for sorting) and PDB chains (kept in order, always after Reference)
     const otherSeqs = [];
+    const pdbChains = [];
     for (let i = 0; i < state.rawSequences.length; i++) {
-        if (i !== state.refIndex && i !== state.subtypeIndex) {
-            otherSeqs.push({
-                index: i,
-                seq: state.rawSequences[i]
-            });
+        if (i === state.refIndex || i === state.subtypeIndex) continue;
+        const s = state.rawSequences[i];
+        if (isPdbChainSequence(s.name)) {
+            pdbChains.push(s);
+        } else {
+            otherSeqs.push({ index: i, seq: s });
         }
     }
     
-    // Sort other sequences by name
+    // Sort non-PDB sequences by name
     otherSeqs.sort((a, b) => {
         const nameA = a.seq.name || '';
         const nameB = b.seq.name || '';
         return nameA.localeCompare(nameB);
     });
     
-    // Rebuild sequence list: REF at 0, SUBTYPE at 1, then sorted others
+    // Rebuild: REF at 0, then PDB chains, then SUBTYPE (if any), then sorted non-PDB
     const newSequences = [refSeq];
+    pdbChains.forEach(s => newSequences.push(s));
     if (subtypeSeq && subtypeSeq !== refSeq) {
         newSequences.push(subtypeSeq);
     }
@@ -1465,19 +1468,14 @@ function sortSequencesByName() {
     
     state.rawSequences = newSequences;
     
-    // Update indices
+    // Update indices (subtype position depends on how many PDB chains are after ref)
     state.refIndex = 0;
-    if (subtypeSeq && subtypeSeq !== refSeq) {
-        state.subtypeIndex = 1;
+    const subtypeName = subtypeSeq ? subtypeSeq.name : null;
+    if (subtypeName) {
+        const newSubtypeIdx = state.rawSequences.findIndex(s => s.name === subtypeName);
+        state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 0;
     } else {
-        // If subtype was the same as ref, find it in the new list
-        const subtypeName = subtypeSeq ? subtypeSeq.name : null;
-        if (subtypeName) {
-            const newSubtypeIdx = state.rawSequences.findIndex(s => s.name === subtypeName);
-            state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 1;
-        } else {
-            state.subtypeIndex = newSequences.length > 1 ? 1 : 0;
-        }
+        state.subtypeIndex = state.rawSequences.length > 1 ? 1 : 0;
     }
     
     // Recalculate view sequences
@@ -1527,8 +1525,8 @@ function runGroupTask() {
     
     // First pass: collect all unique group values
     for (let i = 0; i < state.rawSequences.length; i++) {
-        // Exclude REF and SUBTYPE
-        if (i === state.refIndex || i === state.subtypeIndex) {
+        // Exclude REF, SUBTYPE, and PDB chain sequences (3D only)
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i].name)) {
             continue;
         }
         
@@ -1557,8 +1555,8 @@ function runGroupTask() {
     
     // Second pass: assign group IDs to sequences
     for (let i = 0; i < state.rawSequences.length; i++) {
-        // Exclude REF and SUBTYPE
-        if (i === state.refIndex || i === state.subtypeIndex) {
+        // Exclude REF, SUBTYPE, and PDB chain sequences (3D only)
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i].name)) {
             continue;
         }
         
@@ -2008,12 +2006,13 @@ function inferTreeNJ() {
     
     setTimeout(() => {
         try {
-            // Exclude reference sequence from tree inference
+            // Exclude reference and PDB chain sequences from tree inference
             const refName = state.rawSequences[state.refIndex]?.name;
-            const nonRefSequences = state.rawSequences.filter((s, idx) => idx !== state.refIndex);
+            const nonRefSequences = state.rawSequences.filter((s, idx) =>
+                idx !== state.refIndex && !isPdbChainSequence(s.name));
             
             if (nonRefSequences.length < 2) {
-                alert("Need at least 2 non-reference sequences to infer a tree.");
+                alert("Need at least 2 non-reference, non-PDB sequences to infer a tree.");
                 showOverlay(false);
                 return;
             }
@@ -2052,21 +2051,21 @@ async function runFastTreeTask() {
     dom.overlaySub.textContent = "via bioWASM";
 
     try {
-        // Exclude reference sequence from tree inference
-        const nonRefSequences = state.rawSequences.filter((s, idx) => idx !== state.refIndex);
+        // Exclude reference and PDB chain sequences from tree inference
+        const nonRefSequences = state.rawSequences.filter((s, idx) =>
+            idx !== state.refIndex && !isPdbChainSequence(s.name));
         
         if (nonRefSequences.length < 2) {
-            alert("Need at least 2 non-reference sequences to infer a tree.");
+            alert("Need at least 2 non-reference, non-PDB sequences to infer a tree.");
             showOverlay(false);
             return;
         }
         
-        // Use indices as temporary names to avoid truncation/special character issues
-        // Map original indices to new indices (excluding ref)
+        // Use indices as temporary names (excluding ref and PDB chains)
         const indexMap = new Map();
         let newIdx = 0;
         state.rawSequences.forEach((s, origIdx) => {
-            if (origIdx !== state.refIndex) {
+            if (origIdx !== state.refIndex && !isPdbChainSequence(s.name)) {
                 indexMap.set(newIdx, origIdx);
                 newIdx++;
             }
@@ -3034,29 +3033,32 @@ function applyTreeOrder(root) {
     const subtypeSeq = state.rawSequences[state.subtypeIndex];
     const subtypeName = subtypeSeq?.name;
     
-    // Create map of non-reference sequences
+    // Create map of non-reference sequences; collect PDB chains in order (they go right after reference)
     const seqMap = new Map();
+    const pdbChainsInOrder = [];
     state.rawSequences.forEach((s, idx) => {
-        if (idx !== state.refIndex) {
+        if (idx === state.refIndex) return;
+        if (isPdbChainSequence(s.name)) {
+            pdbChainsInOrder.push(s);
+        } else {
             seqMap.set(s.name, s);
         }
     });
     
-    // Reorder non-reference sequences according to tree (excluding ref name even if it appears in tree)
+    // Order: Reference first, then PDB chains, then tree-ordered non-PDB, then any remaining non-PDB
     const newSeqList = [];
     if (refSeq) {
         newSeqList.push(refSeq); // Reference always first
     }
-    
+    pdbChainsInOrder.forEach(s => newSeqList.push(s)); // PDB chains immediately after reference
     leafOrder.forEach(name => {
-        // Skip reference sequence even if it appears in the tree
         if (name !== refName && seqMap.has(name)) {
             newSeqList.push(seqMap.get(name));
             seqMap.delete(name);
         }
     });
-    // Add any remaining sequences that weren't in the tree
-    for(let s of seqMap.values()) newSeqList.push(s);
+    // Add any remaining non-PDB sequences that weren't in the tree
+    seqMap.forEach(s => newSeqList.push(s));
     
     state.rawSequences = newSeqList;
     state.refIndex = 0; // Reference is always at index 0
@@ -5904,6 +5906,8 @@ function render() {
         const isSubtype = state.viewSequences[r].name === state.rawSequences[state.subtypeIndex]?.name;
         // Check if this is a founder sequence
         const isFounder = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('consensus_of_');
+        // Check if this is a PDB chain sequence (3D visualization only)
+        const isPdbChain = isPdbChainSequence(state.viewSequences[r].name);
         
         // Determine background and text colors based on grouping only
         let bgColor, textColor;
@@ -5911,8 +5915,8 @@ function render() {
         const groupId = state.sequenceGroups ? state.sequenceGroups.get(seqName) : undefined;
         
         // Set background color: use group color if grouping exists, otherwise default
-        if(r === state.refIndex || isSubtype || isFounder) {
-            bgColor = '#fce7f3'; // Light magenta background for Reference, Subtype, and Founder
+        if(r === state.refIndex || isSubtype || isFounder || isPdbChain) {
+            bgColor = '#fce7f3'; // Light magenta background for Reference, Subtype, Founder, and PDB chains
         } else if (groupId !== undefined) {
             // Use group color for background (groups sorted alphabetically, use palette index groupId + 1)
             const lightBgIndex = (groupId + 1) % GROUP_LIGHT_BG.length;
@@ -5924,8 +5928,8 @@ function render() {
         }
         
         // Set text color: use group color if grouping exists, otherwise default
-        if(r === state.refIndex || isSubtype || isFounder) {
-            textColor = '#ff00ff'; // Magenta for Reference, Subtype, and Founder
+        if(r === state.refIndex || isSubtype || isFounder || isPdbChain) {
+            textColor = '#ff00ff'; // Magenta for Reference, Subtype, Founder, and PDB chains
         } else if (groupId !== undefined) {
             // Use group color for text (groups sorted alphabetically, use palette index groupId + 1)
             textColor = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
@@ -5942,6 +5946,8 @@ function render() {
         } else if(isSubtype) {
             ctxNames.font = "bold " + CONFIG.labelFont;
         } else if(isFounder) {
+            ctxNames.font = "bold " + CONFIG.labelFont;
+        } else if(isPdbChain) {
             ctxNames.font = "bold " + CONFIG.labelFont;
         } else {
             ctxNames.font = CONFIG.labelFont;
@@ -6356,6 +6362,11 @@ function pdbCodeFromHeader(pdbText) {
     return 'UNKN';
 }
 
+/** True if sequence name is a PDB chain row (PDB_xxxx_Chain_Y). These are for 3D only; exclude from sort/group/tree. */
+function isPdbChainSequence(name) {
+    return typeof name === 'string' && /^PDB_[^_]+_Chain_.+$/.test(name);
+}
+
 /** Align each PDB chain to reference with local alignment; return array of { name, seq } (one per chain), names PDB_xxxx_Chain_y. */
 function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
     if (!refSeqArr.length) return [];
@@ -6758,17 +6769,29 @@ function renderPdb3dWithChains(selectedChainIds) {
         var one = (PDB_RESIDUE_TO_ONE[resn] || 'X').toUpperCase();
         return one + ' ' + resn + ' ' + ch + ' ' + atom.resi;
     }
-    try {
-        viewer.setHoverable({}, true,
-            function (atom, viewer, event, container) {
-                hoverEl.textContent = atom ? formatResidue(atom) : '';
-            },
-            function (atom) {
-                hoverEl.textContent = '';
-            }
-        );
-    } catch (e) { /* 3Dmol version may not support setHoverable */ }
-
+    function attachHoverAndClick() {
+        try {
+            viewer.setHoverable({}, true,
+                function (atom, viewer, event, container) {
+                    hoverEl.textContent = atom ? formatResidue(atom) : '';
+                },
+                function (atom) {
+                    hoverEl.textContent = '';
+                }
+            );
+        } catch (e) { /* 3Dmol version may not support setHoverable */ }
+        try {
+            viewer.setClickable({}, true, function (atom, viewer, event, container) {
+                if (atom) {
+                    var info = formatResidue(atom);
+                    console.log('[PDB 3D click]', info);
+                }
+            });
+        } catch (e) { /* 3Dmol version may not support setClickable */ }
+        viewer.render();
+    }
+    attachHoverAndClick();
+    requestAnimationFrame(function () { attachHoverAndClick(); });
     updatePdb3dAALabels(viewer);
 }
 
