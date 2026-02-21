@@ -6522,25 +6522,26 @@ const PDB3D_EPITOPE_GRAY = 0x9e9e9e; // neutral gray for non-epitope residues in
 let pdb3dShowAAs = false;
 let pdb3dAALabels = []; // labels for epitope residues when Show AAs is on
 
-/** Reference coordinate for PDB residue (chainId, resSeq), or null if not in alignment. */
+/** Reference coordinate for PDB residue (chainId, resSeq), or null if not in alignment. Uses same row→resSeq mapping as getPdb3dEpitopeResidues (chainStart + residue index in row). */
 function getRefCoordForPdbResidue(chainId, resSeq) {
     if (!state.viewSequences || !state.refMap) return null;
     const resSeqLists = getPdbChainResSeqLists(state.pdbFileContent);
     const resSeqs = resSeqLists.get(chainId);
     if (!resSeqs) return null;
-    const residueIndex = resSeqs.indexOf(parseInt(resSeq, 10));
-    if (residueIndex < 0) return null;
+    const resSeqNum = parseInt(resSeq, 10);
     for (const view of state.viewSequences) {
         const m = (view.name || '').match(/^PDB_[^_]+_Chain_(.)$/);
         if (!m || m[1] !== chainId) continue;
         const row = view.seq || [];
-        let count = 0;
-        for (let col = 0; col < row.length; col++) {
+        const chainStart = (view.chainStart != null && view.chainStart >= 0) ? view.chainStart : 0;
+        for (let col = 0; col < row.length && col < state.refMap.length; col++) {
             if (row[col] === '-' || row[col] === '.') continue;
-            if (count === residueIndex) {
-                return col < state.refMap.length ? state.refMap[col] : null;
+            const residueIndexInRow = pdbRowResidueIndexAtColumn(row, col);
+            const fullChainIndex = chainStart + residueIndexInRow;
+            if (fullChainIndex < 0 || fullChainIndex >= resSeqs.length) continue;
+            if (resSeqs[fullChainIndex] === resSeqNum) {
+                return state.refMap[col];
             }
-            count++;
         }
     }
     return null;
@@ -6762,12 +6763,149 @@ function renderPdb3dWithChains(selectedChainIds) {
     hoverEl.id = 'pdb3d-hover-info';
     hoverEl.setAttribute('style', 'position:absolute;bottom:10px;left:10px;padding:6px 10px;font-size:12px;font-family:monospace;background:rgba(0,0,0,0.75);color:#fff;border-radius:4px;pointer-events:none;z-index:5;max-width:90%;');
     dom.pdbViewerContainer.appendChild(hoverEl);
+
+    var clickPopup = document.createElement('div');
+    clickPopup.id = 'pdb3d-click-popup';
+    clickPopup.setAttribute('style', 'display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);min-width:280px;max-width:90%;max-height:85%;background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:20;overflow:hidden;flex-direction:column;');
+    var clickPopupHeading = document.createElement('div');
+    clickPopupHeading.setAttribute('style', 'padding:12px 36px 12px 14px;font-size:13px;font-family:monospace;font-weight:600;color:#111;word-break:break-word;cursor:move;flex-shrink:0;border-bottom:1px solid #e5e7eb;');
+    var clickPopupLogoContainer = document.createElement('div');
+    clickPopupLogoContainer.setAttribute('style', 'padding:10px;overflow:auto;flex:1;min-height:0;');
+    var clickPopupClose = document.createElement('button');
+    clickPopupClose.setAttribute('type', 'button');
+    clickPopupClose.setAttribute('style', 'position:absolute;top:6px;right:6px;width:24px;height:24px;padding:0;border:none;background:#f3f4f6;color:#6b7280;font-size:16px;line-height:1;cursor:pointer;border-radius:4px;');
+    clickPopupClose.textContent = '\u00D7';
+    clickPopupClose.title = 'Close';
+    clickPopupClose.onclick = function () { clickPopup.style.display = 'none'; };
+    clickPopup.appendChild(clickPopupHeading);
+    clickPopup.appendChild(clickPopupLogoContainer);
+    clickPopup.appendChild(clickPopupClose);
+    dom.pdbViewerContainer.appendChild(clickPopup);
+    (function makePopupDraggable() {
+        var container = dom.pdbViewerContainer;
+        clickPopupHeading.addEventListener('mousedown', function (e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            var popupRect = clickPopup.getBoundingClientRect();
+            var contRect = container.getBoundingClientRect();
+            var style = clickPopup.style;
+            if (style.transform) {
+                var leftPx = popupRect.left - contRect.left + container.scrollLeft;
+                var topPx = popupRect.top - contRect.top + container.scrollTop;
+                style.left = leftPx + 'px';
+                style.top = topPx + 'px';
+                style.transform = 'none';
+            }
+            var offsetX = e.clientX - popupRect.left;
+            var offsetY = e.clientY - popupRect.top;
+            function onMove(ev) {
+                var cr = container.getBoundingClientRect();
+                var newLeft = ev.clientX - cr.left - offsetX + container.scrollLeft;
+                var newTop = ev.clientY - cr.top - offsetY + container.scrollTop;
+                clickPopup.style.left = Math.max(0, newLeft) + 'px';
+                clickPopup.style.top = Math.max(0, newTop) + 'px';
+            }
+            function onUp() {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    })();
+
     function formatResidue(atom) {
         if (!atom) return '';
         var ch = (atom.chain || ' ').trim() || 'A';
         var resn = (atom.resn || '').trim() || '?';
         var one = (PDB_RESIDUE_TO_ONE[resn] || 'X').toUpperCase();
         return one + ' ' + resn + ' ' + ch + ' ' + atom.resi;
+    }
+    function showClickPopup(msg, clearLogo) {
+        clickPopupHeading.textContent = msg;
+        if (clearLogo !== false) clickPopupLogoContainer.innerHTML = '';
+        clickPopup.style.display = 'flex';
+    }
+    function showRegionLogoSelector(epitope, region, onOk) {
+        var selectorOverlay = document.createElement('div');
+        selectorOverlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10003;';
+        var selectorModal = document.createElement('div');
+        selectorModal.style.cssText = 'background: white; padding: 20px; border-radius: 8px; min-width: 300px;';
+        var title = document.createElement('h3');
+        title.textContent = 'Select Escape Start Sequence';
+        title.style.margin = '0 0 15px 0';
+        selectorModal.appendChild(title);
+        var select = document.createElement('select');
+        select.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 15px; font-size: 14px;';
+        var hasReference = state.refIndex >= 0 && state.refIndex < state.rawSequences.length;
+        var hasSubtype = state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length;
+        var founderIndex = state.rawSequences.findIndex(function (seq) { return seq.name && seq.name.startsWith('consensus_of_'); });
+        var hasFounder = founderIndex !== -1;
+        if (hasReference) {
+            var o = document.createElement('option');
+            o.value = 'reference';
+            o.textContent = 'Reference';
+            select.appendChild(o);
+        }
+        if (hasSubtype) {
+            o = document.createElement('option');
+            o.value = 'subtype';
+            o.textContent = 'Subtype';
+            select.appendChild(o);
+        }
+        if (hasFounder) {
+            o = document.createElement('option');
+            o.value = 'founder';
+            o.textContent = 'Founder';
+            o.selected = true;
+            select.appendChild(o);
+        }
+        o = document.createElement('option');
+        o.value = 'none';
+        o.textContent = 'None';
+        select.appendChild(o);
+        selectorModal.appendChild(select);
+        var buttonDiv = document.createElement('div');
+        buttonDiv.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
+        var cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer;';
+        cancelBtn.onclick = function () { selectorOverlay.remove(); };
+        buttonDiv.appendChild(cancelBtn);
+        var okBtn = document.createElement('button');
+        okBtn.textContent = 'OK';
+        okBtn.style.cssText = 'padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer;';
+        okBtn.onclick = function () {
+            var selectedType = select.value;
+            selectorOverlay.remove();
+            var bottomSeq = null, bottomIndex = -1, bottomLabel = '';
+            if (selectedType === 'reference' && hasReference) {
+                bottomIndex = state.refIndex;
+                bottomSeq = state.rawSequences[bottomIndex];
+                bottomLabel = 'Reference (' + bottomSeq.name + ')';
+            } else if (selectedType === 'subtype' && hasSubtype) {
+                bottomIndex = state.subtypeIndex;
+                bottomSeq = state.rawSequences[bottomIndex];
+                bottomLabel = 'Subtype (' + bottomSeq.name + ')';
+            } else if (selectedType === 'founder' && hasFounder) {
+                bottomIndex = founderIndex;
+                bottomSeq = state.rawSequences[bottomIndex];
+                bottomLabel = 'Founder (' + bottomSeq.name + ')';
+            } else if (selectedType === 'none') {
+                var maxLength = Math.max.apply(null, state.rawSequences.map(function (seq) { return seq.seq ? seq.seq.length : 0; }));
+                bottomSeq = { name: 'None', seq: '.'.repeat(maxLength) };
+                bottomIndex = -1;
+                bottomLabel = null;
+            }
+            if (bottomSeq) {
+                var groupIds = Array.from(state.groupNames.keys()).sort(function (a, b) { return a - b; });
+                if (groupIds.length > 0) onOk(bottomSeq, bottomIndex, bottomLabel, groupIds);
+            }
+        };
+        buttonDiv.appendChild(okBtn);
+        selectorModal.appendChild(buttonDiv);
+        selectorOverlay.appendChild(selectorModal);
+        document.body.appendChild(selectorOverlay);
     }
     function attachHoverAndClick() {
         try {
@@ -6782,9 +6920,86 @@ function renderPdb3dWithChains(selectedChainIds) {
         } catch (e) { /* 3Dmol version may not support setHoverable */ }
         try {
             viewer.setClickable({}, true, function (atom, viewer, event, container) {
-                if (atom) {
-                    var info = formatResidue(atom);
-                    console.log('[PDB 3D click]', info);
+                if (!atom) return;
+                var info = formatResidue(atom);
+                var msg;
+                if (!state.selectedEpitope || !state.epitopes || state.epitopes.length === 0) {
+                    msg = info + ' — No epitope selected. Load epitopes and use Select Epitope to choose one.';
+                    console.log('[PDB 3D click]', msg);
+                    showClickPopup(msg);
+                    return;
+                }
+                var ch = (atom.chain || ' ').trim() || 'A';
+                var refCoord = getRefCoordForPdbResidue(ch, atom.resi);
+                if (refCoord === null || refCoord === undefined) {
+                    msg = info + ' — Residue not in alignment (or could not map to reference).';
+                    console.log('[PDB 3D click]', msg);
+                    showClickPopup(msg);
+                    return;
+                }
+                var epitope = state.epitopes.find(function (e) { return e.name === state.selectedEpitope; });
+                if (!epitope || !epitope.regions || epitope.regions.length === 0) {
+                    msg = info + ' — Ref coord ' + refCoord + ' (no regions defined for selected epitope).';
+                    console.log('[PDB 3D click]', msg);
+                    showClickPopup(msg);
+                    return;
+                }
+                var region = null;
+                for (var i = 0; i < epitope.regions.length; i++) {
+                    var r = epitope.regions[i];
+                    if (refCoord >= r.start && refCoord <= r.end) {
+                        region = r;
+                        break;
+                    }
+                }
+                if (region) {
+                    msg = info + ' — Epitope region: ' + region.start + ' - ' + region.end;
+                    console.log('[PDB 3D click]', msg);
+                    showClickPopup(msg);
+                    if (state.sequenceGroups && state.groupNames && state.groupNames.size > 0) {
+                        showRegionLogoSelector(epitope, region, function (bottomSeq, bottomIndex, bottomLabel, groupIds) {
+                            var epitopeRegion = { name: epitope.name, regions: [region] };
+                            var powerValue = 1.0;
+                            var sliderContainer = document.createElement('div');
+                            sliderContainer.style.cssText = 'margin-bottom:10px;padding:8px;background:#f5f5f5;border-radius:4px;';
+                            var sliderLabel = document.createElement('label');
+                            sliderLabel.textContent = 'Power: ';
+                            sliderLabel.style.cssText = 'margin-right:8px;font-size:12px;';
+                            var slider = document.createElement('input');
+                            slider.type = 'range';
+                            slider.min = '0';
+                            slider.max = '2';
+                            slider.step = '0.05';
+                            slider.value = '1.0';
+                            slider.style.cssText = 'width:120px;margin-right:6px;vertical-align:middle;';
+                            var sliderValue = document.createElement('span');
+                            sliderValue.textContent = '1.00';
+                            sliderValue.style.cssText = 'font-size:12px;';
+                            function renderRegionLogo() {
+                                var oldSvg = clickPopupLogoContainer.querySelector('svg');
+                                if (oldSvg) oldSvg.remove();
+                                var svg = generateSequenceLogo(epitopeRegion, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
+                                clickPopupLogoContainer.appendChild(svg);
+                            }
+                            slider.addEventListener('input', function (e) {
+                                powerValue = parseFloat(e.target.value);
+                                sliderValue.textContent = powerValue.toFixed(2);
+                                renderRegionLogo();
+                            });
+                            sliderContainer.appendChild(sliderLabel);
+                            sliderContainer.appendChild(slider);
+                            sliderContainer.appendChild(sliderValue);
+                            clickPopupLogoContainer.innerHTML = '';
+                            clickPopupLogoContainer.appendChild(sliderContainer);
+                            renderRegionLogo();
+                        });
+                    } else {
+                        clickPopupLogoContainer.textContent = 'Group sequences to see region logo.';
+                    }
+                } else {
+                    msg = info + ' — Ref coord ' + refCoord + ' not in any epitope region.';
+                    console.log('[PDB 3D click]', msg);
+                    showClickPopup(msg);
                 }
             });
         } catch (e) { /* 3Dmol version may not support setClickable */ }
