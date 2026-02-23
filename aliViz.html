@@ -6940,7 +6940,6 @@ function getPdb3dEpitopeResidues() {
             const key = chainId + ':' + pdbResSeq;
             residues.add(key);
             refCoordByKey.set(key, refCoord);
-            console.log('[PDB3D epitope] add for coloring/labels: chain=%s AA=%s refCoord=%s PDB_resSeq=%s residueIndex_in_row_0based=%s chainStart_0based=%s fullChainIndex_0based=%s (residueIndex=position in aligned row; fullChainIndex=chainStart+residueIndex; PDB_resSeq is from PDB file, typically 1-based)', chainId, rowChar, refCoord, pdbResSeq, residueIndex, chainStart, fullChainIndex);
         }
     }
     return residues.size ? { residues, refCoordByKey } : null;
@@ -7062,6 +7061,16 @@ function renderPdb3dWithChains(selectedChainIds) {
         return;
     }
     if (pdb3dViewerInstance) {
+        try {
+            var canvas = pdb3dViewerInstance.canvas || (dom.pdbViewerContainer && dom.pdbViewerContainer.querySelector && dom.pdbViewerContainer.querySelector('canvas'));
+            if (canvas) {
+                var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    var ext = gl.getExtension && gl.getExtension('WEBGL_lose_context');
+                    if (ext && ext.loseContext) ext.loseContext();
+                }
+            }
+        } catch (e) { /* ignore */ }
         if (typeof pdb3dViewerInstance.destroy === 'function') pdb3dViewerInstance.destroy();
         else if (typeof pdb3dViewerInstance.dispose === 'function') pdb3dViewerInstance.dispose();
         pdb3dViewerInstance = null;
