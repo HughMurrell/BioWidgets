@@ -309,9 +309,9 @@
         <div class="control-group">
             <label>3D Structure</label>
             <div style="display:flex; gap:5px; align-items:center;">
-                <input type="file" id="inp-pdb" accept=".pdb,.ent" style="display: none;">
-                <button id="btn-load-pdb" title="Load PDB file and add its sequence to the alignment (AA mode)">Load PDB</button>
-                <button id="btn-view-3d" title="Display loaded PDB structure in 3D">View 3D</button>
+                <input type="file" id="inp-pdb" accept=".pdb,.ent,.cif" style="display: none;">
+                <button id="btn-load-pdb" title="Load PDB/CIF file or fetch by PDB ID">Load file</button>
+                <button id="btn-view-3d" title="Display loaded structure in 3D">View 3D</button>
             </div>
         </div>
 
@@ -554,6 +554,23 @@
     </div>
 </div>
 
+<div id="pdb-load-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 320px;">
+        <h2>Load 3D structure</h2>
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+            <button type="button" id="btn-pdb-choose-file" style="padding: 8px 14px; text-align: left;">Choose file...</button>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-size: 13px; color: #374151; white-space: nowrap;">PDB ID</label>
+                <input type="text" id="inp-pdb-id" placeholder="e.g. 7U2N" maxlength="4" style="width: 5em; padding: 6px 8px; font-size: 13px; border: 1px solid #d1d5db; border-radius: 4px;">
+                <button type="button" id="btn-fetch-pdb">Fetch</button>
+            </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;">
+            <button type="button" id="btn-pdb-load-cancel">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <div id="subtype-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
     <div class="help-box" style="width: 450px;">
         <h2>Add Founder Sequence</h2>
@@ -592,7 +609,7 @@
         <div class="help-row"><span class="help-key">Load Epitopes</span> <span>Load epitope descriptions from CSV file</span></div>
         <div class="help-row"><span class="help-key">Select Epitope</span> <span>Select an epitope to restrict display</span></div>
         <div class="help-row"><span class="help-key">Show Logo</span> <span>Generate sequence logo for selected epitope</span></div>
-        <div class="help-row"><span class="help-key">Load PDB</span> <span>Load a PDB file and add one sequence per chain (xxxx_Chain_y [PDB_y]) after the reference using local alignment (AA mode)</span></div>
+        <div class="help-row"><span class="help-key">3D Structure</span> <span>Load a PDB/CIF file, or enter a 4-character PDB ID and click Fetch to load from RCSB. Chains are added as sequences (xxxx_Chain_y [PDB_y]) and aligned to the reference (AA mode).</span></div>
         <div class="help-row"><span class="help-key">View 3D</span> <span>Display the loaded PDB structure in a 3D viewer window</span></div>
         <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view</span></div>
         <button class="close-help" onclick="document.getElementById('help-overlay').classList.remove('active')">Close</button>
@@ -776,8 +793,9 @@ const state = {
     groupNames: null, // Map from group ID to group value (for legend)
     originalSubtype: null, // Store original subtype sequence for reverting
     currentFileName: null, // Store the current alignment file name
-    pdbFileContent: null, // Raw PDB text for 3D viewer (set when Load PDB is used)
-    pdbFileName: null     // PDB file name for 3D overlay title
+    pdbFileContent: null, // Raw PDB/CIF text for 3D viewer (set when Load PDB/CIF or fetch by ID)
+    pdbFileName: null,    // PDB/CIF file name for 3D overlay title
+    pdbFormat: 'pdb'     // 'pdb' or 'cif' for 3Dmol addModel
 };
 
 // --- DOM ---
@@ -807,7 +825,9 @@ const dom = {
     btnSelectEpitope: document.getElementById('btn-select-epitope'),
     btnShowLogo: document.getElementById('btn-show-logo'),
     inpPdb: document.getElementById('inp-pdb'),
+    inpPdbId: document.getElementById('inp-pdb-id'),
     btnLoadPdb: document.getElementById('btn-load-pdb'),
+    btnFetchPdb: document.getElementById('btn-fetch-pdb'),
     btnView3d: document.getElementById('btn-view-3d'),
     pdbOverlay: document.getElementById('pdb3d-overlay'),
     pdbViewerContainer: document.getElementById('pdb3d-viewer'),
@@ -969,11 +989,44 @@ async function init() {
     if (dom.btnShowLogo) {
         dom.btnShowLogo.addEventListener('click', showSequenceLogo);
     }
+    var pdbLoadOverlay = document.getElementById('pdb-load-overlay');
     if (dom.btnLoadPdb) {
-        dom.btnLoadPdb.addEventListener('click', () => dom.inpPdb && dom.inpPdb.click());
+        dom.btnLoadPdb.addEventListener('click', function () {
+            if (pdbLoadOverlay) pdbLoadOverlay.style.display = 'flex';
+        });
+    }
+    if (document.getElementById('btn-pdb-choose-file') && dom.inpPdb) {
+        document.getElementById('btn-pdb-choose-file').addEventListener('click', function () { dom.inpPdb.click(); });
     }
     if (dom.inpPdb) {
-        dom.inpPdb.addEventListener('change', e => loadPdbFile(e.target.files[0]));
+        dom.inpPdb.addEventListener('change', function (e) {
+            if (e.target.files && e.target.files[0]) {
+                loadPdbFile(e.target.files[0]);
+                if (pdbLoadOverlay) pdbLoadOverlay.style.display = 'none';
+            }
+            e.target.value = '';
+        });
+    }
+    if (document.getElementById('btn-pdb-load-cancel')) {
+        document.getElementById('btn-pdb-load-cancel').addEventListener('click', function () {
+            if (pdbLoadOverlay) pdbLoadOverlay.style.display = 'none';
+        });
+    }
+    if (pdbLoadOverlay) {
+        pdbLoadOverlay.addEventListener('click', function (e) {
+            if (e.target === pdbLoadOverlay) pdbLoadOverlay.style.display = 'none';
+        });
+    }
+    if (dom.btnFetchPdb && dom.inpPdbId) {
+        dom.btnFetchPdb.addEventListener('click', function () {
+            var code = (dom.inpPdbId.value || '').trim().toUpperCase().slice(0, 4);
+            if (!/^[A-Z0-9]{4}$/.test(code)) {
+                alert('Enter a valid 4-character PDB ID (e.g. 7U2N).');
+                return;
+            }
+            if (pdbLoadOverlay) pdbLoadOverlay.style.display = 'none';
+            loadPdbById(code);
+        });
     }
     if (dom.btnView3d) {
         dom.btnView3d.addEventListener('click', openPdbViewerFromState);
@@ -1369,6 +1422,7 @@ function clearAlignment() {
     state.leafClusters = null;
     state.pdbFileContent = null;
     state.pdbFileName = null;
+    state.pdbFormat = 'pdb';
     dom.sizer.style.width = '1px';
     dom.sizer.style.height = '1px';
     setTreeWidth(0);
@@ -6237,6 +6291,92 @@ function parsePdbSequence(pdbText) {
     return { chains, flat };
 }
 
+/** Detect if structure text is CIF (mmCIF). */
+function isCifStructure(text) {
+    var t = (text || '').trim();
+    return t.startsWith('data_') || (t.indexOf('loop_') !== -1 && t.indexOf('_atom_site') !== -1);
+}
+
+/** Parse mmCIF _atom_site loop; return same shape as parsePdbSequence: { chains, flat }. */
+function parseCifSequence(cifText) {
+    var lines = (cifText || '').split(/\r?\n/);
+    var byChain = new Map();
+    var chainOrder = [];
+    var colChain = -1, colSeq = -1, colComp = -1;
+    var inAtomSite = false;
+    var columns = [];
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        if (trimmed.startsWith('loop_')) {
+            inAtomSite = false;
+            columns = [];
+            colChain = colSeq = colComp = -1;
+            continue;
+        }
+        if (trimmed.startsWith('_atom_site.')) {
+            var name = trimmed.slice(11).split(/\s/)[0];
+            columns.push(name);
+            if (name === 'label_asym_id' || name === 'auth_asym_id') colChain = columns.length - 1;
+            if (name === 'label_seq_id' || name === 'auth_seq_id') colSeq = columns.length - 1;
+            if (name === 'label_comp_id' || name === 'auth_comp_id') colComp = columns.length - 1;
+            inAtomSite = true;
+            continue;
+        }
+        if (inAtomSite && columns.length > 0 && colChain >= 0 && colSeq >= 0 && colComp >= 0) {
+            if (trimmed.startsWith('_') || trimmed === '' || trimmed.startsWith('#')) {
+                inAtomSite = false;
+                continue;
+            }
+            var parts = line.split(/\s+/);
+            if (parts.length < columns.length) continue;
+            var resName = (parts[colComp] || '').trim().slice(0, 3);
+            var one = PDB_RESIDUE_TO_ONE[resName];
+            if (one === '') continue;
+            var chain = (parts[colChain] || 'A').trim() || 'A';
+            var resSeq = parseInt(parts[colSeq], 10) || 0;
+            if (!byChain.has(chain)) {
+                byChain.set(chain, []);
+                chainOrder.push(chain);
+            }
+            var arr = byChain.get(chain);
+            var last = arr.length ? arr[arr.length - 1] : null;
+            if (!last || last.resSeq !== resSeq) arr.push({ resSeq: resSeq, resName: one || 'X' });
+        }
+    }
+    var chainIds = chainOrder.length ? chainOrder : Array.from(byChain.keys()).sort();
+    var chains = [];
+    var flat = [];
+    for (var c = 0; c < chainIds.length; c++) {
+        var id = chainIds[c];
+        var arr = (byChain.get(id) || []).sort(function (a, b) { return a.resSeq - b.resSeq; });
+        var seq = arr.map(function (r) { return r.resName; });
+        chains.push({ id: id, seq: seq });
+        flat.push.apply(flat, seq);
+    }
+    return { chains: chains, flat: flat };
+}
+
+/** Get structure code from PDB HEADER or CIF data_/ _entry.id. */
+function structureCodeFromContent(text) {
+    if (isCifStructure(text)) {
+        var lines = (text || '').split(/\r?\n/);
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.startsWith('data_')) {
+                var code = line.slice(5).trim().split(/\s/)[0];
+                if (code && code.length >= 4) return code.slice(0, 4).toUpperCase();
+            }
+            if (line === '_entry.id' && i + 1 < lines.length) {
+                var val = lines[i + 1].trim().split(/\s/)[0];
+                if (val && val.length >= 4) return val.slice(0, 4).toUpperCase();
+            }
+        }
+        return 'UNKN';
+    }
+    return pdbCodeFromHeader(text);
+}
+
 function parseFastaToSeqs(text) {
     const lines = (text || '').split(/\r?\n/);
     const seqs = [];
@@ -6403,60 +6543,108 @@ function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
     }));
 }
 
+function applyStructureContent(text, fileName, format) {
+    var isCif = format === 'cif' || isCifStructure(text);
+    var chains, flat;
+    if (isCif) {
+        var parsed = parseCifSequence(text);
+        chains = parsed.chains;
+        flat = parsed.flat;
+    } else {
+        var p = parsePdbSequence(text);
+        chains = p.chains;
+        flat = p.flat;
+    }
+    if (!flat || !flat.length) {
+        alert('No amino acid sequence found in the structure file.');
+        return false;
+    }
+    state.pdbFileContent = text;
+    state.pdbFileName = fileName || 'structure.pdb';
+    state.pdbFormat = isCif ? 'cif' : 'pdb';
+    setMode('AA', state.isAASequence);
+    var subtypeName = state.rawSequences[state.subtypeIndex] ? state.rawSequences[state.subtypeIndex].name : null;
+    var pdbCode = structureCodeFromContent(text);
+    var raw = state.rawSequences.filter(function (s) { return !isPdbChainSequence(s); });
+    if (raw.length === 0) {
+        var maxLen = Math.max.apply(null, chains.map(function (ch) { return (ch.seq && ch.seq.length) || 0; }));
+        var pdbSeqs = chains.map(function (ch) {
+            var seq = (ch.seq || []).slice();
+            while (seq.length < maxLen) seq.push('-');
+            return { name: pdbCode + '_Chain_' + ch.id, seq: seq, isPdbChain: true };
+        });
+        state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: pdbCode + '_Chain_?', seq: flat, isPdbChain: true }];
+        state.refIndex = 0;
+        state.subtypeIndex = 0;
+    } else {
+        showOverlay(true);
+        if (dom.overlayMsg) dom.overlayMsg.textContent = 'Aligning structure chains to reference...';
+        if (dom.overlaySub) dom.overlaySub.textContent = '';
+        var refSeq = (raw[0] && raw[0].seq) ? raw[0].seq : [];
+        var pdbEntries = alignChainsToReferenceSequences(refSeq, chains, pdbCode);
+        for (var i = 0; i < pdbEntries.length; i++) {
+            raw.splice(1 + i, 0, pdbEntries[i]);
+        }
+        state.rawSequences = raw;
+        state.refIndex = 0;
+        var newSubtypeIdx = raw.findIndex(function (s) { return s.name === subtypeName; });
+        state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 0;
+        showOverlay(false);
+    }
+    state.viewSequences = state.rawSequences.slice();
+    state.selection = null;
+    calculateNamesWidth();
+    recalc();
+    return true;
+}
+
 function loadPdbFile(file) {
     if (!file) return;
-    const reader = new FileReader();
+    var reader = new FileReader();
     reader.onload = function () {
-        const pdbText = reader.result;
-        const { chains, flat } = parsePdbSequence(pdbText);
-        if (!flat.length) {
-            alert('No amino acid sequence found in the PDB file.');
+        var text = reader.result;
+        var format = (file.name || '').toLowerCase().endsWith('.cif') ? 'cif' : 'pdb';
+        if (applyStructureContent(text, file.name || 'structure.pdb', format)) {
             if (dom.inpPdb) dom.inpPdb.value = '';
-            return;
         }
-        state.pdbFileContent = pdbText;
-        state.pdbFileName = file.name || 'structure.pdb';
-        if (dom.inpPdb) dom.inpPdb.value = '';
-        setMode('AA', state.isAASequence);
-        const subtypeName = state.rawSequences[state.subtypeIndex]?.name;
-        const pdbCode = pdbCodeFromHeader(pdbText);
-        const raw = state.rawSequences.filter(s => !isPdbChainSequence(s));
-
-        if (raw.length === 0) {
-            const maxLen = Math.max(...chains.map(ch => (ch.seq && ch.seq.length) || 0));
-            const pdbSeqs = chains.map(ch => {
-                const seq = (ch.seq || []).slice();
-                while (seq.length < maxLen) seq.push('-');
-                return { name: pdbCode + '_Chain_' + ch.id, seq, isPdbChain: true };
-            });
-            state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: pdbCode + '_Chain_?', seq: flat, isPdbChain: true }];
-            state.refIndex = 0;
-            state.subtypeIndex = 0;
-        } else {
-            showOverlay(true);
-            if (dom.overlayMsg) dom.overlayMsg.textContent = 'Aligning PDB chains to reference...';
-            if (dom.overlaySub) dom.overlaySub.textContent = '';
-            const refSeq = (raw[0] && raw[0].seq) ? raw[0].seq : [];
-            const pdbEntries = alignChainsToReferenceSequences(refSeq, chains, pdbCode);
-            for (let i = 0; i < pdbEntries.length; i++) {
-                raw.splice(1 + i, 0, pdbEntries[i]);
-            }
-            state.rawSequences = raw;
-            state.refIndex = 0;
-            const newSubtypeIdx = raw.findIndex(s => s.name === subtypeName);
-            state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 0;
-            showOverlay(false);
-        }
-        state.viewSequences = [...state.rawSequences];
-        state.selection = null;
-        calculateNamesWidth();
-        recalc();
     };
     reader.onerror = function () {
-        alert('Could not read the PDB file.');
+        alert('Could not read the structure file.');
         if (dom.inpPdb) dom.inpPdb.value = '';
     };
     reader.readAsText(file);
+}
+
+function loadPdbById(code) {
+    code = (code || '').trim().toUpperCase().slice(0, 4);
+    if (!/^[A-Z0-9]{4}$/.test(code)) return;
+    showOverlay(true);
+    if (dom.overlayMsg) dom.overlayMsg.textContent = 'Fetching from RCSB PDB...';
+    if (dom.overlaySub) dom.overlaySub.textContent = code;
+    function tryFormat(ext, format) {
+        return fetch('https://files.rcsb.org/download/' + code + ext)
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (text) {
+                if (text && applyStructureContent(text, code + ext, format)) {
+                    if (dom.inpPdbId) dom.inpPdbId.value = code;
+                    return true;
+                }
+                return false;
+            });
+    }
+    tryFormat('.cif', 'cif').then(function (ok) {
+        if (ok) { showOverlay(false); return; }
+        return tryFormat('.pdb', 'pdb').then(function (ok2) {
+            if (ok2) { showOverlay(false); return; }
+            if (dom.overlayMsg) dom.overlayMsg.textContent = 'Structure not found.';
+            if (dom.overlaySub) dom.overlaySub.textContent = 'Check the PDB ID or try again.';
+            setTimeout(function () { showOverlay(false); }, 2000);
+        });
+    }).catch(function () {
+        if (dom.overlayMsg) dom.overlayMsg.textContent = 'Fetch failed.';
+        if (dom.overlaySub) dom.overlaySub.textContent = 'Check your connection.';
+        setTimeout(function () { showOverlay(false); }, 2000);
+    });
 }
 
 function closePdbViewer() {
@@ -6508,6 +6696,125 @@ function getPdbChainIds(pdbText) {
     return Array.from(seen).sort();
 }
 
+/** Return chain IDs from CIF (same order as parseCifSequence). */
+function getCifChainIds(cifText) {
+    var result = parseCifSequence(cifText);
+    return result.chains.map(function (ch) { return ch.id; });
+}
+
+/** Return per-chain resSeq lists from CIF (same order as parseCifSequence). */
+function getCifChainResSeqLists(cifText) {
+    var lines = (cifText || '').split(/\r?\n/);
+    var byChain = new Map();
+    var chainOrder = [];
+    var colChain = -1, colSeq = -1, colComp = -1;
+    var inAtomSite = false;
+    var columns = [];
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        if (trimmed.startsWith('loop_')) {
+            inAtomSite = false;
+            columns = [];
+            colChain = colSeq = colComp = -1;
+            continue;
+        }
+        if (trimmed.startsWith('_atom_site.')) {
+            var name = trimmed.slice(11).split(/\s/)[0];
+            columns.push(name);
+            if (name === 'label_asym_id' || name === 'auth_asym_id') colChain = columns.length - 1;
+            if (name === 'label_seq_id' || name === 'auth_seq_id') colSeq = columns.length - 1;
+            if (name === 'label_comp_id' || name === 'auth_comp_id') colComp = columns.length - 1;
+            inAtomSite = true;
+            continue;
+        }
+        if (inAtomSite && columns.length > 0 && colChain >= 0 && colSeq >= 0 && colComp >= 0) {
+            if (trimmed.startsWith('_') || trimmed === '' || trimmed.startsWith('#')) {
+                inAtomSite = false;
+                continue;
+            }
+            var parts = line.split(/\s+/);
+            if (parts.length < columns.length) continue;
+            var resName = (parts[colComp] || '').trim().slice(0, 3);
+            if (PDB_RESIDUE_TO_ONE[resName] === '') continue;
+            var chain = (parts[colChain] || 'A').trim() || 'A';
+            var resSeq = parseInt(parts[colSeq], 10) || 0;
+            if (!byChain.has(chain)) {
+                byChain.set(chain, []);
+                chainOrder.push(chain);
+            }
+            var arr = byChain.get(chain);
+            var last = arr.length ? arr[arr.length - 1] : null;
+            if (!last || last !== resSeq) arr.push(resSeq);
+        }
+    }
+    var out = new Map();
+    for (var c = 0; c < chainOrder.length; c++) {
+        var id = chainOrder[c];
+        var arr = (byChain.get(id) || []).sort(function (a, b) { return a - b; });
+        out.set(id, arr);
+    }
+    return out;
+}
+
+/** Filter CIF _atom_site rows to only include given chain IDs; output valid CIF. */
+function filterCifByChains(cifText, chainIds) {
+    var set = new Set(chainIds);
+    var lines = (cifText || '').split(/\r?\n/);
+    var colChain = -1;
+    var inAtomSite = false;
+    var columns = [];
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        if (trimmed.startsWith('loop_')) {
+            inAtomSite = false;
+            columns = [];
+            colChain = -1;
+            out.push(line);
+            continue;
+        }
+        if (trimmed.startsWith('_atom_site.')) {
+            var name = trimmed.slice(11).split(/\s/)[0];
+            columns.push(name);
+            if (name === 'label_asym_id' || name === 'auth_asym_id') colChain = columns.length - 1;
+            inAtomSite = true;
+            out.push(line);
+            continue;
+        }
+        if (inAtomSite && columns.length > 0 && colChain >= 0) {
+            if (trimmed.startsWith('_') || trimmed === '' || trimmed.startsWith('#')) {
+                inAtomSite = false;
+                out.push(line);
+                continue;
+            }
+            var parts = line.split(/\s+/);
+            if (parts.length >= columns.length && set.has((parts[colChain] || '').trim())) {
+                out.push(line);
+            }
+            continue;
+        }
+        out.push(line);
+    }
+    return out.join('\n');
+}
+
+/** Return chain IDs from structure (PDB or CIF). */
+function getStructureChainIds(text) {
+    return isCifStructure(text) ? getCifChainIds(text) : getPdbChainIds(text);
+}
+
+/** Per-chain resSeq lists from structure (PDB or CIF). */
+function getStructureChainResSeqLists(text) {
+    return isCifStructure(text) ? getCifChainResSeqLists(text) : getPdbChainResSeqLists(text);
+}
+
+/** Filter structure to given chains (PDB or CIF). */
+function filterStructureByChains(text, chainIds) {
+    return isCifStructure(text) ? filterCifByChains(text, chainIds) : filterPdbByChains(text, chainIds);
+}
+
 /** Filter PDB text to only include ATOM/HETATM lines for the given chain IDs. */
 function filterPdbByChains(pdbText, chainIds) {
     const set = new Set(chainIds);
@@ -6538,7 +6845,7 @@ let pdb3dAALabels = []; // labels for epitope residues when Show AAs is on
 /** Reference coordinate for PDB residue (chainId, resSeq), or null if not in alignment. Uses same row→resSeq mapping as getPdb3dEpitopeResidues (chainStart + residue index in row). */
 function getRefCoordForPdbResidue(chainId, resSeq) {
     if (!state.viewSequences || !state.refMap) return null;
-    const resSeqLists = getPdbChainResSeqLists(state.pdbFileContent);
+    const resSeqLists = getStructureChainResSeqLists(state.pdbFileContent);
     const resSeqs = resSeqLists.get(chainId);
     if (!resSeqs) return null;
     const resSeqNum = parseInt(resSeq, 10);
@@ -6607,7 +6914,7 @@ function getPdb3dEpitopeResidues() {
     if (!state.selectedEpitope || !state.epitopeColumns || state.epitopeColumns.size === 0 || !state.viewSequences || !state.refMap) return null;
     const refView = state.viewSequences[state.refIndex];
     const refSeq = refView && refView.seq ? refView.seq : [];
-    const resSeqLists = getPdbChainResSeqLists(state.pdbFileContent);
+    const resSeqLists = getStructureChainResSeqLists(state.pdbFileContent);
     const residues = new Set();
     const refCoordByKey = new Map();
     for (const col of state.epitopeColumns) {
@@ -6747,8 +7054,9 @@ function applyPdb3dStyleToViewer() {
 function renderPdb3dWithChains(selectedChainIds) {
     if (!state.pdbFileContent || !dom.pdbViewerContainer) return;
     var filtered = (selectedChainIds && selectedChainIds.length > 0)
-        ? filterPdbByChains(state.pdbFileContent, selectedChainIds)
+        ? filterStructureByChains(state.pdbFileContent, selectedChainIds)
         : state.pdbFileContent;
+    var format = state.pdbFormat || (isCifStructure(state.pdbFileContent) ? 'cif' : 'pdb');
     if (typeof $3Dmol === 'undefined') {
         dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
         return;
@@ -6761,7 +7069,7 @@ function renderPdb3dWithChains(selectedChainIds) {
     dom.pdbViewerContainer.innerHTML = '';
     var viewer = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
     pdb3dViewerInstance = viewer;
-    viewer.addModel(filtered, 'pdb');
+    viewer.addModel(filtered, format);
     var styleSelect = document.getElementById('pdb3d-style-select');
     if (styleSelect) {
         pdb3dCurrentStyle = styleSelect.value || pdb3dCurrentStyle;
@@ -7046,7 +7354,7 @@ function openPdbViewerFromState() {
     if (dom.pdbTitle) dom.pdbTitle.textContent = state.pdbFileName || 'PDB 3D Structure';
     dom.pdbOverlay.style.display = 'flex';
 
-    var chainIds = getPdbChainIds(state.pdbFileContent);
+    var chainIds = getStructureChainIds(state.pdbFileContent);
     var listEl = document.getElementById('pdb3d-chains-list');
     var btnAll = document.getElementById('pdb3d-select-all');
     var btnNone = document.getElementById('pdb3d-select-none');
