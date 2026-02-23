@@ -49,13 +49,28 @@
 
         #controls {
             height: var(--header-height);
+            flex: 0 0 auto;
+            min-width: 0; /* allow flex item to shrink so inner can overflow */
+            max-width: 100%;
             background: var(--panel-bg);
             border-bottom: 1px solid var(--border-color);
-            display: flex; align-items: center;
-            padding: 0 20px; gap: 15px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            flex-shrink: 0; z-index: 20;
+            z-index: 20;
+            overflow: hidden; /* clip to bounds; scrolling happens in scroll wrapper */
+        }
+        #controls-scroll {
+            width: 100%;
+            height: 100%;
             overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-x;
+        }
+        #controls-inner {
+            display: inline-flex; align-items: center;
+            padding: 0 20px; gap: 15px;
+            min-height: var(--header-height);
+            box-sizing: border-box;
         }
 
         .control-group { display: flex; flex-direction: column; gap: 4px; }
@@ -195,6 +210,8 @@
 
 <div id="app">
     <div id="controls">
+        <div id="controls-scroll">
+        <div id="controls-inner">
         <div class="control-group">
             <label>Info</label>
             <button id="btn-help" class="btn-icon">?</button>
@@ -298,6 +315,8 @@
             </div>
         </div>
 
+        </div>
+        </div>
     </div>
 
     <div id="viewer-grid">
@@ -573,7 +592,7 @@
         <div class="help-row"><span class="help-key">Load Epitopes</span> <span>Load epitope descriptions from CSV file</span></div>
         <div class="help-row"><span class="help-key">Select Epitope</span> <span>Select an epitope to restrict display</span></div>
         <div class="help-row"><span class="help-key">Show Logo</span> <span>Generate sequence logo for selected epitope</span></div>
-        <div class="help-row"><span class="help-key">Load PDB</span> <span>Load a PDB file and add one sequence per chain (PDB_xxxx_Chain_y) after the reference using local alignment (AA mode)</span></div>
+        <div class="help-row"><span class="help-key">Load PDB</span> <span>Load a PDB file and add one sequence per chain (xxxx_Chain_y [PDB_y]) after the reference using local alignment (AA mode)</span></div>
         <div class="help-row"><span class="help-key">View 3D</span> <span>Display the loaded PDB structure in a 3D viewer window</span></div>
         <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view</span></div>
         <button class="close-help" onclick="document.getElementById('help-overlay').classList.remove('active')">Close</button>
@@ -1029,6 +1048,25 @@ async function init() {
 
     dom.areaSeq.addEventListener('scroll', () => requestAnimationFrame(render));
     window.addEventListener('resize', onResize);
+
+    // Ensure top controls panel can scroll horizontally (wheel/trackpad over panel).
+    // Attach to #controls (always present) and resolve #controls-scroll in the handler so it works
+    // after refresh: refresh can load cached HTML without #controls-scroll, so attaching only to
+    // #controls-scroll at init would attach nothing; new tab loads fresh HTML and would work.
+    var controlsPanel = document.getElementById('controls');
+    if (controlsPanel) {
+        controlsPanel.addEventListener('wheel', function (e) {
+            var scrollEl = document.getElementById('controls-scroll');
+            if (!scrollEl) return;
+            if (e.deltaX !== 0) {
+                scrollEl.scrollLeft += e.deltaX;
+                e.preventDefault();
+            } else if (e.deltaY !== 0) {
+                scrollEl.scrollLeft += e.deltaY;
+                e.preventDefault();
+            }
+        }, { passive: false });
+    }
     
     dom.areaSeq.addEventListener('mousedown', (e) => onMouseDown(e, 'SEQ'));
     dom.areaNames.addEventListener('mousedown', (e) => { 
@@ -1440,7 +1478,7 @@ function sortSequencesByName() {
     for (let i = 0; i < state.rawSequences.length; i++) {
         if (i === state.refIndex || i === state.subtypeIndex) continue;
         const s = state.rawSequences[i];
-        if (isPdbChainSequence(s.name)) {
+        if (isPdbChainSequence(s)) {
             pdbChains.push(s);
         } else {
             otherSeqs.push({ index: i, seq: s });
@@ -1526,7 +1564,7 @@ function runGroupTask() {
     // First pass: collect all unique group values
     for (let i = 0; i < state.rawSequences.length; i++) {
         // Exclude REF, SUBTYPE, and PDB chain sequences (3D only)
-        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i].name)) {
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) {
             continue;
         }
         
@@ -1556,7 +1594,7 @@ function runGroupTask() {
     // Second pass: assign group IDs to sequences
     for (let i = 0; i < state.rawSequences.length; i++) {
         // Exclude REF, SUBTYPE, and PDB chain sequences (3D only)
-        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i].name)) {
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) {
             continue;
         }
         
@@ -2009,7 +2047,7 @@ function inferTreeNJ() {
             // Exclude reference and PDB chain sequences from tree inference
             const refName = state.rawSequences[state.refIndex]?.name;
             const nonRefSequences = state.rawSequences.filter((s, idx) =>
-                idx !== state.refIndex && !isPdbChainSequence(s.name));
+                idx !== state.refIndex && !isPdbChainSequence(s));
             
             if (nonRefSequences.length < 2) {
                 alert("Need at least 2 non-reference, non-PDB sequences to infer a tree.");
@@ -2053,7 +2091,7 @@ async function runFastTreeTask() {
     try {
         // Exclude reference and PDB chain sequences from tree inference
         const nonRefSequences = state.rawSequences.filter((s, idx) =>
-            idx !== state.refIndex && !isPdbChainSequence(s.name));
+            idx !== state.refIndex && !isPdbChainSequence(s));
         
         if (nonRefSequences.length < 2) {
             alert("Need at least 2 non-reference, non-PDB sequences to infer a tree.");
@@ -2065,7 +2103,7 @@ async function runFastTreeTask() {
         const indexMap = new Map();
         let newIdx = 0;
         state.rawSequences.forEach((s, origIdx) => {
-            if (origIdx !== state.refIndex && !isPdbChainSequence(s.name)) {
+            if (origIdx !== state.refIndex && !isPdbChainSequence(s)) {
                 indexMap.set(newIdx, origIdx);
                 newIdx++;
             }
@@ -3038,7 +3076,7 @@ function applyTreeOrder(root) {
     const pdbChainsInOrder = [];
     state.rawSequences.forEach((s, idx) => {
         if (idx === state.refIndex) return;
-        if (isPdbChainSequence(s.name)) {
+        if (isPdbChainSequence(s)) {
             pdbChainsInOrder.push(s);
         } else {
             seqMap.set(s.name, s);
@@ -5196,6 +5234,19 @@ function showEpitopeSelector() {
     document.body.appendChild(selector);
 }
 
+/** Convert a ref region (1-based inclusive start/end) to alignment column indices. Only includes columns where the reference has a residue (not a gap), so the region stops at the last coordinate and does not include trailing (or leading) gaps. Used by epitope highlighting, logos, and region logos. */
+function getAlignmentColumnsForRefRegion(region) {
+    var refSeq = state.viewSequences && state.refIndex >= 0 ? state.viewSequences[state.refIndex].seq : null;
+    if (!refSeq || !state.refMap) return [];
+    var cols = [];
+    for (var col = 0; col < state.refMap.length && col < refSeq.length; col++) {
+        if (refSeq[col] !== '-' && refSeq[col] !== '.' && state.refMap[col] >= region.start && state.refMap[col] <= region.end) {
+            cols.push(col);
+        }
+    }
+    return cols;
+}
+
 function selectEpitope(epitopeName) {
     state.selectedEpitope = epitopeName;
     
@@ -5215,64 +5266,12 @@ function selectEpitope(epitopeName) {
         return;
     }
     
-    // Create a set of allowed alignment columns
-    // For each region, find all alignment columns from start to end (including gaps)
+    // Create a set of allowed alignment columns using shared ref-coord-to-column mapping
     const allowedColumns = new Set();
-    
     for (const region of epitope.regions) {
-        // Find all columns where the reference coordinate is within [start, end]
-        // This includes gaps within the region (where refCoord stays the same between region coordinates)
-        // but excludes gaps after the region ends (where refCoord equals end but the reference has a gap)
-        
-        // Get the reference sequence to check for gaps
-        const refSeq = state.viewSequences[state.refIndex]?.seq;
-        
-        // Find the last column where refCoord === region.end AND the reference has an actual character (not a gap)
-        // This is the true end of the region (before any trailing gaps)
-        let lastEndCol = null;
-        for (let i = 0; i < state.refMap.length; i++) {
-            const refCoord = state.refMap[i];
-            if (refCoord === region.end) {
-                // Check if this column has an actual character in the reference (not a gap)
-                if (refSeq && i < refSeq.length && refSeq[i] !== '-') {
-                    lastEndCol = i;
-                }
-            } else if (refCoord > region.end) {
-                // We've passed the end, stop searching
-                break;
-            }
-        }
-        
-        // If we didn't find a non-gap column at region.end, find the last column where refCoord === region.end
-        // (This handles edge cases where region.end might be at a gap)
-        if (lastEndCol === null) {
-            for (let i = state.refMap.length - 1; i >= 0; i--) {
-                if (state.refMap[i] === region.end) {
-                    lastEndCol = i;
-                    break;
-                } else if (state.refMap[i] < region.end) {
-                    break;
-                }
-            }
-        }
-        
-        // Now include all columns where refCoord is within [start, end] AND we haven't passed the last end column
-        // This ensures we include gaps within the region but exclude gaps after the region
-        for (let i = 0; i < state.refMap.length; i++) {
-            const refCoord = state.refMap[i];
-            
-            // Only include if:
-            // 1. Reference coordinate is within the region range [start, end]
-            // 2. We haven't passed the last column where refCoord equals end and has a non-gap character
-            //    (This excludes gaps after the region that have refCoord = end)
-            if (refCoord >= region.start && refCoord <= region.end) {
-                if (lastEndCol === null || i <= lastEndCol) {
-                    allowedColumns.add(i);
-                }
-            }
-        }
+        const cols = getAlignmentColumnsForRefRegion(region);
+        cols.forEach(function (c) { allowedColumns.add(c); });
     }
-    
     state.epitopeColumns = allowedColumns;
     
     // Enable Show Logo button after successful epitope selection
@@ -5383,17 +5382,19 @@ function recalc() {
         const nonRefViews = nonRefSequences.map(s => {
             const v = { name: s.name, seq: s.seq };
             if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
+            if (s.isPdbChain) v.isPdbChain = true;
             return v;
         });
         allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
     } else {
         // AA mode
         if (state.isAASequence) {
-            // Sequences are already amino acids, use them directly (preserve chainStart for PDB chains)
+            // Sequences are already amino acids, use them directly (preserve chainStart and isPdbChain for PDB chains)
             const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
             const nonRefViews = nonRefSequences.map(s => {
                 const v = { name: s.name, seq: s.seq };
                 if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
+                if (s.isPdbChain) v.isPdbChain = true;
                 return v;
             });
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
@@ -5425,7 +5426,10 @@ function recalc() {
                 else if (/[^ACGT]/i.test(codon)) aa.push('X');
                 else aa.push(CODON_TABLE[codon] || 'X');
             }
-            return { name: s.name, seq: aa };
+            const v = { name: s.name, seq: aa };
+            if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
+            if (s.isPdbChain) v.isPdbChain = true;
+            return v;
         });
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
         }
@@ -5907,7 +5911,7 @@ function render() {
         // Check if this is a founder sequence
         const isFounder = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('consensus_of_');
         // Check if this is a PDB chain sequence (3D visualization only)
-        const isPdbChain = isPdbChainSequence(state.viewSequences[r].name);
+        const isPdbChain = isPdbChainSequence(state.viewSequences[r]);
         
         // Determine background and text colors based on grouping only
         let bgColor, textColor;
@@ -5955,7 +5959,7 @@ function render() {
         
         // Draw sequence name with labels
         ctxNames.fillStyle = textColor;
-        let label = state.viewSequences[r].name;
+        let label = isPdbChain ? getPdbChainDisplayLabel(state.viewSequences[r].name) : state.viewSequences[r].name;
         if(r === state.refIndex) label += " [Reference]";
         if(isSubtype && state.subtypeIndex < state.rawSequences.length) {
             label += " [Subtype]";
@@ -6362,12 +6366,20 @@ function pdbCodeFromHeader(pdbText) {
     return 'UNKN';
 }
 
-/** True if sequence name is a PDB chain row (PDB_xxxx_Chain_Y). These are for 3D only; exclude from sort/group/tree. */
-function isPdbChainSequence(name) {
-    return typeof name === 'string' && /^PDB_[^_]+_Chain_.+$/.test(name);
+/** True if the argument is a PDB chain sequence (name string or seq object with isPdbChain). These are for 3D only; exclude from sort/group/tree. */
+function isPdbChainSequence(nameOrSeq) {
+    if (nameOrSeq && typeof nameOrSeq === 'object' && nameOrSeq.isPdbChain === true) return true;
+    return typeof nameOrSeq === 'string' && /^[A-Za-z0-9]+_Chain_[A-Za-z0-9]+$/.test(nameOrSeq);
 }
 
-/** Align each PDB chain to reference with local alignment; return array of { name, seq } (one per chain), names PDB_xxxx_Chain_y. */
+/** Display label for a PDB chain sequence: "xxxx_Chain_y [PDB_y]". For non-PDB names returns the name unchanged. */
+function getPdbChainDisplayLabel(name) {
+    if (typeof name !== 'string') return name;
+    var m = name.match(/^(.+)_Chain_(.+)$/);
+    return m ? name + ' [PDB_' + m[2] + ']' : name;
+}
+
+/** Align each PDB chain to reference with local alignment; return array of { name, seq, chainStart, isPdbChain } (one per chain), names xxxx_Chain_y. */
 function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
     if (!refSeqArr.length) return [];
     const refLen = refSeqArr.length;
@@ -6384,9 +6396,10 @@ function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
     }
     aligned.sort((a, b) => a.minCol - b.minCol);
     return aligned.map(a => ({
-        name: 'PDB_' + pdbCode + '_Chain_' + a.id,
+        name: pdbCode + '_Chain_' + a.id,
         seq: a.row,
-        chainStart: a.chainStart
+        chainStart: a.chainStart,
+        isPdbChain: true
     }));
 }
 
@@ -6407,16 +6420,16 @@ function loadPdbFile(file) {
         setMode('AA', state.isAASequence);
         const subtypeName = state.rawSequences[state.subtypeIndex]?.name;
         const pdbCode = pdbCodeFromHeader(pdbText);
-        const raw = state.rawSequences.filter(s => !(s.name && s.name.startsWith('PDB_')));
+        const raw = state.rawSequences.filter(s => !isPdbChainSequence(s));
 
         if (raw.length === 0) {
             const maxLen = Math.max(...chains.map(ch => (ch.seq && ch.seq.length) || 0));
             const pdbSeqs = chains.map(ch => {
                 const seq = (ch.seq || []).slice();
                 while (seq.length < maxLen) seq.push('-');
-                return { name: 'PDB_' + pdbCode + '_Chain_' + ch.id, seq };
+                return { name: pdbCode + '_Chain_' + ch.id, seq, isPdbChain: true };
             });
-            state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: 'PDB_' + pdbCode + '_Chain_?', seq: flat }];
+            state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: pdbCode + '_Chain_?', seq: flat, isPdbChain: true }];
             state.refIndex = 0;
             state.subtypeIndex = 0;
         } else {
@@ -6530,7 +6543,7 @@ function getRefCoordForPdbResidue(chainId, resSeq) {
     if (!resSeqs) return null;
     const resSeqNum = parseInt(resSeq, 10);
     for (const view of state.viewSequences) {
-        const m = (view.name || '').match(/^PDB_[^_]+_Chain_(.)$/);
+        const m = (view.name || '').match(/^[A-Za-z0-9]+_Chain_(.+)$/);
         if (!m || m[1] !== chainId) continue;
         const row = view.seq || [];
         const chainStart = (view.chainStart != null && view.chainStart >= 0) ? view.chainStart : 0;
@@ -6604,7 +6617,7 @@ function getPdb3dEpitopeResidues() {
         const refCoord = state.refMap[col];
         for (const view of state.viewSequences) {
             const name = view.name || '';
-            const m = name.match(/^PDB_[^_]+_Chain_(.)$/);
+            const m = name.match(/^[A-Za-z0-9]+_Chain_(.+)$/);
             if (!m) continue;
             const chainId = m[1];
             const row = view.seq || [];
@@ -6841,6 +6854,7 @@ function renderPdb3dWithChains(selectedChainIds) {
         var hasSubtype = state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length;
         var founderIndex = state.rawSequences.findIndex(function (seq) { return seq.name && seq.name.startsWith('consensus_of_'); });
         var hasFounder = founderIndex !== -1;
+        var pdbChains = state.rawSequences.filter(function (seq) { return isPdbChainSequence(seq); });
         if (hasReference) {
             var o = document.createElement('option');
             o.value = 'reference';
@@ -6860,6 +6874,12 @@ function renderPdb3dWithChains(selectedChainIds) {
             o.selected = true;
             select.appendChild(o);
         }
+        pdbChains.forEach(function (seq) {
+            o = document.createElement('option');
+            o.value = seq.name;
+            o.textContent = getPdbChainDisplayLabel(seq.name);
+            select.appendChild(o);
+        });
         o = document.createElement('option');
         o.value = 'none';
         o.textContent = 'None';
@@ -6896,6 +6916,13 @@ function renderPdb3dWithChains(selectedChainIds) {
                 bottomSeq = { name: 'None', seq: '.'.repeat(maxLength) };
                 bottomIndex = -1;
                 bottomLabel = null;
+            } else {
+                var pdbIdx = state.rawSequences.findIndex(function (s) { return s.name === selectedType; });
+                if (pdbIdx !== -1 && isPdbChainSequence(state.rawSequences[pdbIdx])) {
+                    bottomIndex = pdbIdx;
+                    bottomSeq = state.rawSequences[pdbIdx];
+                    bottomLabel = getPdbChainDisplayLabel(bottomSeq.name);
+                }
             }
             if (bottomSeq) {
                 var groupIds = Array.from(state.groupNames.keys()).sort(function (a, b) { return a - b; });
@@ -7112,6 +7139,7 @@ function showSequenceLogo() {
         seq.name && seq.name.startsWith('consensus_of_')
     );
     const hasFounder = founderIndex !== -1;
+    const pdbChains = state.rawSequences.filter(seq => isPdbChainSequence(seq));
     
     if (hasReference) {
         const opt = document.createElement('option');
@@ -7135,13 +7163,20 @@ function showSequenceLogo() {
         select.appendChild(opt);
     }
     
+    pdbChains.forEach(seq => {
+        const opt = document.createElement('option');
+        opt.value = seq.name;
+        opt.textContent = getPdbChainDisplayLabel(seq.name);
+        select.appendChild(opt);
+    });
+    
     // Always add None option
     const optNone = document.createElement('option');
     optNone.value = 'none';
     optNone.textContent = 'None';
     select.appendChild(optNone);
     
-    if (!hasReference && !hasSubtype && !hasFounder) {
+    if (!hasReference && !hasSubtype && !hasFounder && pdbChains.length === 0) {
         // Even if no other sequences, AllGaps is always available
     }
     
@@ -7190,6 +7225,13 @@ function showSequenceLogo() {
             };
             bottomIndex = -1; // Not a real sequence index
             bottomLabel = null; // No label for None option
+        } else {
+            const pdbIdx = state.rawSequences.findIndex(s => s.name === selectedType);
+            if (pdbIdx !== -1 && isPdbChainSequence(state.rawSequences[pdbIdx])) {
+                bottomIndex = pdbIdx;
+                bottomSeq = state.rawSequences[pdbIdx];
+                bottomLabel = getPdbChainDisplayLabel(bottomSeq.name);
+            }
         }
         
         if (!bottomSeq) {
@@ -7330,65 +7372,25 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         return document.createElement('div');
     }
     
-    // For each region, convert start and end coordinates to alignment column indices
-    // Then collect all alignment columns from start to end (inclusive), including gaps
+    // For each region, get alignment columns where ref has a residue and ref coord is in [start,end] (no trailing/leading gaps)
     const regionColumnRanges = [];
     const allColumns = new Set();
     const coordToCol = new Map(); // Map from reference coordinate to alignment column(s)
     
     for (const region of epitope.regions) {
-        // Special case: if start === end, this is a single coordinate
-        // We should only include the column where the reference has a non-gap character
-        if (region.start === region.end) {
-            // Find the single column where refCoord == region.start AND refSeq has a non-gap
-            let singleCol = null;
-            for (let col = 0; col < state.refMap.length; col++) {
-                if (state.refMap[col] === region.start && refSeq[col] !== '-') {
-                    singleCol = col;
-                    break;
-                }
+        const cols = getAlignmentColumnsForRefRegion(region);
+        if (cols.length === 0) continue;
+        const startCol = Math.min.apply(null, cols);
+        const endCol = Math.max.apply(null, cols);
+        regionColumnRanges.push({ start: startCol, end: endCol, region: region, columnCount: cols.length });
+        for (let i = 0; i < cols.length; i++) {
+            const col = cols[i];
+            allColumns.add(col);
+            const coord = state.refMap[col];
+            if (!coordToCol.has(coord)) {
+                coordToCol.set(coord, []);
             }
-            
-            if (singleCol !== null) {
-                regionColumnRanges.push({ start: singleCol, end: singleCol, region: region });
-                allColumns.add(singleCol);
-                const coord = state.refMap[singleCol];
-                if (!coordToCol.has(coord)) {
-                    coordToCol.set(coord, []);
-                }
-                coordToCol.get(coord).push(singleCol);
-            }
-        } else {
-            // Range: find first alignment column where refCoord == region.start
-            let startCol = null;
-            for (let col = 0; col < state.refMap.length; col++) {
-                if (state.refMap[col] === region.start) {
-                    startCol = col;
-                    break;
-                }
-            }
-            
-            // Find last alignment column where refCoord == region.end
-            let endCol = null;
-            for (let col = state.refMap.length - 1; col >= 0; col--) {
-                if (state.refMap[col] === region.end) {
-                    endCol = col;
-                    break;
-                }
-            }
-            
-            if (startCol !== null && endCol !== null && startCol <= endCol) {
-                regionColumnRanges.push({ start: startCol, end: endCol, region: region });
-                // Add all columns from start to end (inclusive)
-                for (let col = startCol; col <= endCol; col++) {
-                    allColumns.add(col);
-                    const coord = state.refMap[col];
-                    if (!coordToCol.has(coord)) {
-                        coordToCol.set(coord, []);
-                    }
-                    coordToCol.get(coord).push(col);
-                }
-            }
+            coordToCol.get(coord).push(col);
         }
     }
     
@@ -7733,10 +7735,10 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     startLine.setAttribute('stroke-width', '2');
     svg.appendChild(startLine);
     
-    // Draw lines between regions
+    // Draw lines between regions (use columnCount = actual drawn columns per region, not column index span)
     for (let i = 0; i < regionColumnRanges.length - 1; i++) {
         const currentRange = regionColumnRanges[i];
-        const regionColumnCount = currentRange.end - currentRange.start + 1;
+        const regionColumnCount = currentRange.columnCount != null ? currentRange.columnCount : (currentRange.end - currentRange.start + 1);
         xOffset += regionColumnCount * charWidth;
         
         // Draw vertical line (lighter grey)
