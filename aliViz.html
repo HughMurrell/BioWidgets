@@ -5437,6 +5437,8 @@ function recalc() {
             const v = { name: s.name, seq: s.seq };
             if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
             if (s.isPdbChain) v.isPdbChain = true;
+            if (s.chainLength != null) v.chainLength = s.chainLength;
+            if (s.alignedLength != null) v.alignedLength = s.alignedLength;
             return v;
         });
         allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
@@ -5449,6 +5451,8 @@ function recalc() {
                 const v = { name: s.name, seq: s.seq };
                 if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
                 if (s.isPdbChain) v.isPdbChain = true;
+                if (s.chainLength != null) v.chainLength = s.chainLength;
+                if (s.alignedLength != null) v.alignedLength = s.alignedLength;
                 return v;
             });
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
@@ -5483,6 +5487,8 @@ function recalc() {
             const v = { name: s.name, seq: aa };
             if (s.chainStart != null && s.chainStart >= 0) v.chainStart = s.chainStart;
             if (s.isPdbChain) v.isPdbChain = true;
+            if (s.chainLength != null) v.chainLength = s.chainLength;
+            if (s.alignedLength != null) v.alignedLength = s.alignedLength;
             return v;
         });
             allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
@@ -6013,7 +6019,7 @@ function render() {
         
         // Draw sequence name with labels
         ctxNames.fillStyle = textColor;
-        let label = isPdbChain ? getPdbChainDisplayLabel(state.viewSequences[r].name) : state.viewSequences[r].name;
+        let label = isPdbChain ? getPdbChainDisplayLabel(state.viewSequences[r]) : state.viewSequences[r].name;
         if(r === state.refIndex) label += " [Reference]";
         if(isSubtype && state.subtypeIndex < state.rawSequences.length) {
             label += " [Subtype]";
@@ -6512,14 +6518,32 @@ function isPdbChainSequence(nameOrSeq) {
     return typeof nameOrSeq === 'string' && /^[A-Za-z0-9]+_Chain_[A-Za-z0-9]+$/.test(nameOrSeq);
 }
 
-/** Display label for a PDB chain sequence: "xxxx_Chain_y [PDB_y]". For non-PDB names returns the name unchanged. */
-function getPdbChainDisplayLabel(name) {
+/** Display label for a PDB chain sequence: "xxxx_Chain_y [PDB_y]" optionally with " (aligned / chain aa)". nameOrSeq can be string or seq object with .name, optional .alignedLength (AAs in panel after SW) and .chainLength (total AAs in chain). */
+function getPdbChainDisplayLabel(nameOrSeq) {
+    var name = (nameOrSeq && typeof nameOrSeq === 'object' && nameOrSeq.name) ? nameOrSeq.name : nameOrSeq;
     if (typeof name !== 'string') return name;
     var m = name.match(/^(.+)_Chain_(.+)$/);
-    return m ? name + ' [PDB_' + m[2] + ']' : name;
+    var base = m ? name + ' [PDB_' + m[2] + ']' : name;
+    if (nameOrSeq && typeof nameOrSeq === 'object' && typeof nameOrSeq.chainLength === 'number') {
+        if (typeof nameOrSeq.alignedLength === 'number') {
+            base += ' (' + nameOrSeq.alignedLength + ' / ' + nameOrSeq.chainLength + ' aa)';
+        } else {
+            base += ' (' + nameOrSeq.chainLength + ' aa)';
+        }
+    }
+    return base;
 }
 
-/** Align each PDB chain to reference with local alignment; return array of { name, seq, chainStart, isPdbChain } (one per chain), names xxxx_Chain_y. */
+/** Chain IDs that appear in the sequence panels (from PDB sequence names). Used to restrict 3D viewer to aligned chains only. */
+function getPdbChainIdsInState() {
+    if (!state.rawSequences) return [];
+    return state.rawSequences.filter(function (s) { return isPdbChainSequence(s); }).map(function (s) {
+        var m = (s.name || '').match(/^.+_Chain_(.+)$/);
+        return m ? m[1] : null;
+    }).filter(Boolean);
+}
+
+/** Align each PDB chain to reference with local alignment; return array of { name, seq, chainStart, isPdbChain, chainLength, alignedLength } (one per chain). alignedLength = AAs from chain that end up in the panel; chainLength = total AAs in chain. */
 function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
     if (!refSeqArr.length) return [];
     const refLen = refSeqArr.length;
@@ -6531,7 +6555,13 @@ function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
             const startRefCoord = refCoordAtCol(refSeqArr, minCol);
             const endRefCoord = refCoordAtCol(refSeqArr, maxCol);
             console.log('PDB chain local alignment: chain=', ch.id, 'startRefCoord=', startRefCoord, 'endRefCoord=', endRefCoord, 'chainStart_0based=', chainStart);
-            aligned.push({ id: ch.id, row, minCol, maxCol, chainStart: chainStart >= 0 ? chainStart : 0 });
+            var chainLength = (ch.seq && ch.seq.length) ? ch.seq.length : 0;
+            var alignedLength = 0;
+            for (var col = minCol; col <= maxCol; col++) {
+                var c = row[col];
+                if (c !== '-' && c !== '.' && c !== undefined) alignedLength++;
+            }
+            aligned.push({ id: ch.id, row, minCol, maxCol, chainStart: chainStart >= 0 ? chainStart : 0, chainLength: chainLength, alignedLength: alignedLength });
         }
     }
     aligned.sort((a, b) => a.minCol - b.minCol);
@@ -6539,7 +6569,9 @@ function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
         name: pdbCode + '_Chain_' + a.id,
         seq: a.row,
         chainStart: a.chainStart,
-        isPdbChain: true
+        isPdbChain: true,
+        chainLength: a.chainLength,
+        alignedLength: a.alignedLength
     }));
 }
 
@@ -6571,9 +6603,10 @@ function applyStructureContent(text, fileName, format) {
         var pdbSeqs = chains.map(function (ch) {
             var seq = (ch.seq || []).slice();
             while (seq.length < maxLen) seq.push('-');
-            return { name: pdbCode + '_Chain_' + ch.id, seq: seq, isPdbChain: true };
+            var chainLength = (ch.seq && ch.seq.length) ? ch.seq.length : 0;
+            return { name: pdbCode + '_Chain_' + ch.id, seq: seq, isPdbChain: true, chainLength: chainLength };
         });
-        state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: pdbCode + '_Chain_?', seq: flat, isPdbChain: true }];
+        state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: pdbCode + '_Chain_?', seq: flat, isPdbChain: true, chainLength: (flat && flat.length) ? flat.length : 0 }];
         state.refIndex = 0;
         state.subtypeIndex = 0;
     } else {
@@ -7194,7 +7227,7 @@ function renderPdb3dWithChains(selectedChainIds) {
         pdbChains.forEach(function (seq) {
             o = document.createElement('option');
             o.value = seq.name;
-            o.textContent = getPdbChainDisplayLabel(seq.name);
+            o.textContent = getPdbChainDisplayLabel(seq);
             select.appendChild(o);
         });
         o = document.createElement('option');
@@ -7238,7 +7271,7 @@ function renderPdb3dWithChains(selectedChainIds) {
                 if (pdbIdx !== -1 && isPdbChainSequence(state.rawSequences[pdbIdx])) {
                     bottomIndex = pdbIdx;
                     bottomSeq = state.rawSequences[pdbIdx];
-                    bottomLabel = getPdbChainDisplayLabel(bottomSeq.name);
+                    bottomLabel = getPdbChainDisplayLabel(bottomSeq);
                 }
             }
             if (bottomSeq) {
@@ -7363,7 +7396,8 @@ function openPdbViewerFromState() {
     if (dom.pdbTitle) dom.pdbTitle.textContent = state.pdbFileName || 'PDB 3D Structure';
     dom.pdbOverlay.style.display = 'flex';
 
-    var chainIds = getStructureChainIds(state.pdbFileContent);
+    var chainIds = getPdbChainIdsInState();
+    if (chainIds.length === 0) chainIds = getStructureChainIds(state.pdbFileContent);
     var listEl = document.getElementById('pdb3d-chains-list');
     var btnAll = document.getElementById('pdb3d-select-all');
     var btnNone = document.getElementById('pdb3d-select-none');
@@ -7483,7 +7517,7 @@ function showSequenceLogo() {
     pdbChains.forEach(seq => {
         const opt = document.createElement('option');
         opt.value = seq.name;
-        opt.textContent = getPdbChainDisplayLabel(seq.name);
+        opt.textContent = getPdbChainDisplayLabel(seq);
         select.appendChild(opt);
     });
     
@@ -7547,7 +7581,7 @@ function showSequenceLogo() {
             if (pdbIdx !== -1 && isPdbChainSequence(state.rawSequences[pdbIdx])) {
                 bottomIndex = pdbIdx;
                 bottomSeq = state.rawSequences[pdbIdx];
-                bottomLabel = getPdbChainDisplayLabel(bottomSeq.name);
+                bottomLabel = getPdbChainDisplayLabel(bottomSeq);
             }
         }
         
