@@ -627,21 +627,36 @@
             <span id="pdb3d-title" style="font-weight: 600;">PDB 3D Structure</span>
             <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
         </div>
-        <div id="pdb3d-hint" style="flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 11px; color: #374151; background: #f3f4f6; border-bottom: 1px solid var(--border-color, #e5e7eb); z-index: 10;">Epitope residues are colored automatically (residue colors, rest gray). Use <strong>Chains</strong> to show/hide chains.</div>
-        <div id="pdb3d-toolbar" style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border-color, #e5e7eb); background: #fff; z-index: 10;">
-            <span style="font-size: 12px; font-weight: 600;">Style:</span>
-            <select id="pdb3d-style-select" style="padding: 4px 8px; font-size: 12px;">
-                <option value="cartoon">Cartoon</option>
-                <option value="sphere">Sphere</option>
-                <option value="stick">Stick</option>
-                <option value="line">Line</option>
-                <option value="trace">Trace</option>
-                <option value="cross">Cross</option>
-            </select>
-            <span style="font-size: 12px; font-weight: 600; margin-left: 8px;">Chains:</span>
-            <span id="pdb3d-chains-list" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
-            <button type="button" id="pdb3d-select-all" style="padding: 4px 8px; font-size: 11px;">All</button>
-            <button type="button" id="pdb3d-select-none" style="padding: 4px 8px; font-size: 11px;">None</button>
+        <div id="pdb3d-hint" style="flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 11px; color: #374151; background: #f3f4f6; border-bottom: 1px solid var(--border-color, #e5e7eb); z-index: 10;">Epitope residues are colored automatically (residue colors, rest gray). <strong>Intrinsic</strong> = chains with alignment &ge;50%; <strong>Extrinsic</strong> = &lt;50%. Use checkboxes to show/hide chains; set a different style per group.</div>
+        <div id="pdb3d-toolbar" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border-color, #e5e7eb); background: #fff; z-index: 10;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                <span style="font-size: 12px; font-weight: 600;">Intrinsic (&ge;50%):</span>
+                <select id="pdb3d-style-intrinsic" style="padding: 4px 8px; font-size: 12px;">
+                    <option value="cartoon">Cartoon</option>
+                    <option value="sphere">Sphere</option>
+                    <option value="stick">Stick</option>
+                    <option value="line">Line</option>
+                    <option value="trace">Trace</option>
+                    <option value="cross">Cross</option>
+                </select>
+                <span id="pdb3d-intrinsic-chains" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
+                <button type="button" id="pdb3d-intrinsic-all" style="padding: 4px 8px; font-size: 11px;">All</button>
+                <button type="button" id="pdb3d-intrinsic-none" style="padding: 4px 8px; font-size: 11px;">None</button>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                <span style="font-size: 12px; font-weight: 600;">Extrinsic (&lt;50%):</span>
+                <select id="pdb3d-style-extrinsic" style="padding: 4px 8px; font-size: 12px;">
+                    <option value="cartoon">Cartoon</option>
+                    <option value="sphere">Sphere</option>
+                    <option value="stick">Stick</option>
+                    <option value="line">Line</option>
+                    <option value="trace">Trace</option>
+                    <option value="cross">Cross</option>
+                </select>
+                <span id="pdb3d-extrinsic-chains" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
+                <button type="button" id="pdb3d-extrinsic-all" style="padding: 4px 8px; font-size: 11px;">All</button>
+                <button type="button" id="pdb3d-extrinsic-none" style="padding: 4px 8px; font-size: 11px;">None</button>
+            </div>
         </div>
         <div id="pdb3d-viewer" style="flex: 1; min-height: 0; width: 100%; position: relative; z-index: 1;"></div>
     </div>
@@ -6261,6 +6276,10 @@ function render() {
 // --- PDB 3D Viewer (3Dmol.js: epitope = residue colors, rest = gray) ---
 let pdb3dViewerInstance = null;
 var pdb3dCurrentStyle = 'cartoon';
+var pdb3dCurrentStyleIntrinsic = 'cartoon';
+var pdb3dCurrentStyleExtrinsic = 'cartoon';
+var pdb3dIntrinsicChainIds = [];
+var pdb3dSelectedChainIds = [];
 
 const PDB_RESIDUE_TO_ONE = {
     'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLN':'Q','GLU':'E','GLY':'G','HIS':'H',
@@ -6518,15 +6537,17 @@ function isPdbChainSequence(nameOrSeq) {
     return typeof nameOrSeq === 'string' && /^[A-Za-z0-9]+_Chain_[A-Za-z0-9]+$/.test(nameOrSeq);
 }
 
-/** Display label for a PDB chain sequence: "xxxx_Chain_y [PDB_y]" optionally with " (aligned / chain aa)". nameOrSeq can be string or seq object with .name, optional .alignedLength (AAs in panel after SW) and .chainLength (total AAs in chain). */
+/** Display label for a PDB chain sequence: "xxxx_Chain_y [PDB_y]" optionally with " (n%)" where n = 100 * alignedLength/chainLength (0-100, no decimals). nameOrSeq can be string or seq object with .name, optional .alignedLength and .chainLength. */
 function getPdbChainDisplayLabel(nameOrSeq) {
     var name = (nameOrSeq && typeof nameOrSeq === 'object' && nameOrSeq.name) ? nameOrSeq.name : nameOrSeq;
     if (typeof name !== 'string') return name;
     var m = name.match(/^(.+)_Chain_(.+)$/);
     var base = m ? name + ' [PDB_' + m[2] + ']' : name;
     if (nameOrSeq && typeof nameOrSeq === 'object' && typeof nameOrSeq.chainLength === 'number') {
-        if (typeof nameOrSeq.alignedLength === 'number') {
-            base += ' (' + nameOrSeq.alignedLength + ' / ' + nameOrSeq.chainLength + ' aa)';
+        if (typeof nameOrSeq.alignedLength === 'number' && nameOrSeq.chainLength > 0) {
+            var pct = Math.round(100 * nameOrSeq.alignedLength / nameOrSeq.chainLength);
+            pct = Math.min(100, Math.max(0, pct));
+            base += ' (' + pct + '%)';
         } else {
             base += ' (' + nameOrSeq.chainLength + ' aa)';
         }
@@ -6541,6 +6562,25 @@ function getPdbChainIdsInState() {
         var m = (s.name || '').match(/^.+_Chain_(.+)$/);
         return m ? m[1] : null;
     }).filter(Boolean);
+}
+
+/** Partition PDB chain IDs into intrinsic (alignment % >= 50) and extrinsic (% < 50). Chains without alignedLength/chainLength go to intrinsic. */
+function getPdbChainIntrinsicExtrinsicPartition() {
+    var intrinsic = [], extrinsic = [];
+    if (!state.rawSequences) return { intrinsic: intrinsic, extrinsic: extrinsic };
+    state.rawSequences.forEach(function (s) {
+        if (!isPdbChainSequence(s)) return;
+        var m = (s.name || '').match(/^.+_Chain_(.+)$/);
+        if (!m) return;
+        var chainId = m[1];
+        var pct = 50;
+        if (typeof s.alignedLength === 'number' && typeof s.chainLength === 'number' && s.chainLength > 0) {
+            pct = Math.round(100 * s.alignedLength / s.chainLength);
+            pct = Math.min(100, Math.max(0, pct));
+        }
+        if (pct >= 50) intrinsic.push(chainId); else extrinsic.push(chainId);
+    });
+    return { intrinsic: intrinsic, extrinsic: extrinsic };
 }
 
 /** Align each PDB chain to reference with local alignment; return array of { name, seq, chainStart, isPdbChain, chainLength, alignedLength } (one per chain). alignedLength = AAs from chain that end up in the panel; chainLength = total AAs in chain. */
@@ -7075,15 +7115,23 @@ function updatePdb3dAALabels(viewer) {
     viewer.render();
 }
 
-/** Re-apply current style to the open 3D viewer (no reload). Call when user changes Style dropdown. */
+/** Re-apply current style to the open 3D viewer (no reload). Call when user changes Intrinsic or Extrinsic style dropdown. */
 function applyPdb3dStyleToViewer() {
     if (!pdb3dViewerInstance) return;
+    var intrinsicSel = document.getElementById('pdb3d-style-intrinsic');
+    var extrinsicSel = document.getElementById('pdb3d-style-extrinsic');
+    var styleIntrinsic = (intrinsicSel && intrinsicSel.value) || pdb3dCurrentStyleIntrinsic;
+    var styleExtrinsic = (extrinsicSel && extrinsicSel.value) || pdb3dCurrentStyleExtrinsic;
     var epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
-    pdb3dViewerInstance.setStyle({}, getPdb3dStyleSpec(pdb3dCurrentStyle, epitopeData));
+    var intrinsicSet = pdb3dIntrinsicChainIds.length ? new Set(pdb3dIntrinsicChainIds) : new Set();
+    (pdb3dSelectedChainIds || []).forEach(function (chainId) {
+        var styleKey = intrinsicSet.has(chainId) ? styleIntrinsic : styleExtrinsic;
+        pdb3dViewerInstance.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeData));
+    });
     pdb3dViewerInstance.render();
 }
 
-function renderPdb3dWithChains(selectedChainIds) {
+function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     if (!state.pdbFileContent || !dom.pdbViewerContainer) return;
     var filtered = (selectedChainIds && selectedChainIds.length > 0)
         ? filterStructureByChains(state.pdbFileContent, selectedChainIds)
@@ -7093,6 +7141,8 @@ function renderPdb3dWithChains(selectedChainIds) {
         dom.pdbViewerContainer.innerHTML = '<p style="padding:20px;">3Dmol.js failed to load. Check your connection.</p>';
         return;
     }
+    var intrinsicIds = (intrinsicChainIds && intrinsicChainIds.length >= 0) ? intrinsicChainIds : pdb3dIntrinsicChainIds;
+    pdb3dSelectedChainIds = (selectedChainIds && selectedChainIds.length > 0) ? selectedChainIds.slice() : [];
     if (pdb3dViewerInstance) {
         try {
             var canvas = pdb3dViewerInstance.canvas || (dom.pdbViewerContainer && dom.pdbViewerContainer.querySelector && dom.pdbViewerContainer.querySelector('canvas'));
@@ -7112,13 +7162,16 @@ function renderPdb3dWithChains(selectedChainIds) {
     var viewer = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
     pdb3dViewerInstance = viewer;
     viewer.addModel(filtered, format);
-    var styleSelect = document.getElementById('pdb3d-style-select');
-    if (styleSelect) {
-        pdb3dCurrentStyle = styleSelect.value || pdb3dCurrentStyle;
-        styleSelect.value = pdb3dCurrentStyle;
-    }
+    var intrinsicSel = document.getElementById('pdb3d-style-intrinsic');
+    var extrinsicSel = document.getElementById('pdb3d-style-extrinsic');
+    var styleIntrinsic = (intrinsicSel && intrinsicSel.value) || pdb3dCurrentStyleIntrinsic;
+    var styleExtrinsic = (extrinsicSel && extrinsicSel.value) || pdb3dCurrentStyleExtrinsic;
     var epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
-    viewer.setStyle({}, getPdb3dStyleSpec(pdb3dCurrentStyle, epitopeData));
+    var intrinsicSet = intrinsicIds.length ? new Set(intrinsicIds) : new Set();
+    pdb3dSelectedChainIds.forEach(function (chainId) {
+        var styleKey = intrinsicSet.has(chainId) ? styleIntrinsic : styleExtrinsic;
+        viewer.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeData));
+    });
     viewer.zoomTo();
     viewer.render();
 
@@ -7396,51 +7449,78 @@ function openPdbViewerFromState() {
     if (dom.pdbTitle) dom.pdbTitle.textContent = state.pdbFileName || 'PDB 3D Structure';
     dom.pdbOverlay.style.display = 'flex';
 
-    var chainIds = getPdbChainIdsInState();
-    if (chainIds.length === 0) chainIds = getStructureChainIds(state.pdbFileContent);
-    var listEl = document.getElementById('pdb3d-chains-list');
-    var btnAll = document.getElementById('pdb3d-select-all');
-    var btnNone = document.getElementById('pdb3d-select-none');
+    var partition = getPdbChainIntrinsicExtrinsicPartition();
+    var intrinsicIds = partition.intrinsic || [];
+    var extrinsicIds = partition.extrinsic || [];
+    if (intrinsicIds.length === 0 && extrinsicIds.length === 0) {
+        intrinsicIds = getPdbChainIdsInState();
+        if (intrinsicIds.length === 0) intrinsicIds = getStructureChainIds(state.pdbFileContent);
+    }
+    pdb3dIntrinsicChainIds = intrinsicIds.slice();
     var checkboxes = {};
+    var allChainIds = intrinsicIds.slice();
+    extrinsicIds.forEach(function (id) {
+        if (allChainIds.indexOf(id) < 0) allChainIds.push(id);
+    });
 
     function getSelected() {
-        return chainIds.filter(function (id) { return checkboxes[id] && checkboxes[id].checked; });
+        return allChainIds.filter(function (id) { return checkboxes[id] && checkboxes[id].checked; });
     }
     function updateView() {
-        renderPdb3dWithChains(getSelected());
+        renderPdb3dWithChains(getSelected(), pdb3dIntrinsicChainIds);
     }
 
-    var styleSelect = document.getElementById('pdb3d-style-select');
-    if (styleSelect) {
-        styleSelect.value = pdb3dCurrentStyle;
-        styleSelect.onchange = function () {
-            pdb3dCurrentStyle = this.value;
+    var intrinsicStyleSelect = document.getElementById('pdb3d-style-intrinsic');
+    var extrinsicStyleSelect = document.getElementById('pdb3d-style-extrinsic');
+    if (intrinsicStyleSelect) {
+        intrinsicStyleSelect.value = pdb3dCurrentStyleIntrinsic;
+        intrinsicStyleSelect.onchange = function () {
+            pdb3dCurrentStyleIntrinsic = this.value;
+            applyPdb3dStyleToViewer();
+        };
+    }
+    if (extrinsicStyleSelect) {
+        extrinsicStyleSelect.value = pdb3dCurrentStyleExtrinsic;
+        extrinsicStyleSelect.onchange = function () {
+            pdb3dCurrentStyleExtrinsic = this.value;
             applyPdb3dStyleToViewer();
         };
     }
 
-    if (listEl && chainIds.length > 0) {
-        listEl.innerHTML = '';
-        chainIds.forEach(function (id) {
-            var label = document.createElement('label');
-            label.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;';
-            var cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = true;
-            cb.dataset.chain = id;
-            cb.addEventListener('change', updateView);
-            checkboxes[id] = cb;
-            label.appendChild(cb);
-            label.appendChild(document.createTextNode(id));
-            listEl.appendChild(label);
-        });
-        if (btnAll) btnAll.onclick = function () { chainIds.forEach(function (id) { checkboxes[id].checked = true; }); updateView(); };
-        if (btnNone) btnNone.onclick = function () { chainIds.forEach(function (id) { checkboxes[id].checked = false; }); updateView(); };
-    } else {
-        if (listEl) listEl.textContent = '(no chains)';
-        if (btnAll) btnAll.style.display = 'none';
-        if (btnNone) btnNone.style.display = 'none';
+    var intrinsicListEl = document.getElementById('pdb3d-intrinsic-chains');
+    var extrinsicListEl = document.getElementById('pdb3d-extrinsic-chains');
+    var btnIntrinsicAll = document.getElementById('pdb3d-intrinsic-all');
+    var btnIntrinsicNone = document.getElementById('pdb3d-intrinsic-none');
+    var btnExtrinsicAll = document.getElementById('pdb3d-extrinsic-all');
+    var btnExtrinsicNone = document.getElementById('pdb3d-extrinsic-none');
+
+    function addChainCheckbox(container, id) {
+        if (!container) return;
+        var label = document.createElement('label');
+        label.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.dataset.chain = id;
+        cb.addEventListener('change', updateView);
+        checkboxes[id] = cb;
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(id));
+        container.appendChild(label);
     }
+
+    if (intrinsicListEl) {
+        intrinsicListEl.innerHTML = '';
+        intrinsicIds.forEach(function (id) { addChainCheckbox(intrinsicListEl, id); });
+    }
+    if (extrinsicListEl) {
+        extrinsicListEl.innerHTML = '';
+        extrinsicIds.forEach(function (id) { addChainCheckbox(extrinsicListEl, id); });
+    }
+    if (btnIntrinsicAll) btnIntrinsicAll.onclick = function () { intrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = true; }); updateView(); };
+    if (btnIntrinsicNone) btnIntrinsicNone.onclick = function () { intrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = false; }); updateView(); };
+    if (btnExtrinsicAll) btnExtrinsicAll.onclick = function () { extrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = true; }); updateView(); };
+    if (btnExtrinsicNone) btnExtrinsicNone.onclick = function () { extrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = false; }); updateView(); };
 
     updateView();
 
