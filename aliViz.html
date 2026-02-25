@@ -627,7 +627,7 @@
             <span id="pdb3d-title" style="font-weight: 600;">PDB 3D Structure</span>
             <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
         </div>
-        <div id="pdb3d-hint" style="flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 11px; color: #374151; background: #f3f4f6; border-bottom: 1px solid var(--border-color, #e5e7eb); z-index: 10;">Epitope residues are colored automatically (residue colors, rest gray). <strong>Intrinsic</strong> = chains with alignment &ge;50%; <strong>Extrinsic</strong> = &lt;50%. Use checkboxes to show/hide chains; set a different style per group.</div>
+        <div id="pdb3d-hint" style="flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 11px; color: #374151; background: #f3f4f6; border-bottom: 1px solid var(--border-color, #e5e7eb); z-index: 10;">Epitope residues are colored automatically on intrinsic chains (residue colors, rest gray). <strong>Intrinsic</strong> = in panel, alignment &ge;50%; <strong>Extrinsic</strong> = in panel, &lt;50%; <strong>Superficial</strong> = not in panel. Use checkboxes to show/hide chains; set a different style per group.</div>
         <div id="pdb3d-toolbar" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border-color, #e5e7eb); background: #fff; z-index: 10;">
             <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
                 <span style="font-size: 12px; font-weight: 600;">Intrinsic (&ge;50%):</span>
@@ -636,7 +636,6 @@
                     <option value="sphere">Sphere</option>
                     <option value="stick">Stick</option>
                     <option value="line">Line</option>
-                    <option value="trace">Trace</option>
                     <option value="cross">Cross</option>
                 </select>
                 <span id="pdb3d-intrinsic-chains" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
@@ -650,12 +649,22 @@
                     <option value="sphere">Sphere</option>
                     <option value="stick">Stick</option>
                     <option value="line">Line</option>
-                    <option value="trace">Trace</option>
                     <option value="cross">Cross</option>
                 </select>
                 <span id="pdb3d-extrinsic-chains" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
                 <button type="button" id="pdb3d-extrinsic-all" style="padding: 4px 8px; font-size: 11px;">All</button>
                 <button type="button" id="pdb3d-extrinsic-none" style="padding: 4px 8px; font-size: 11px;">None</button>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                <span style="font-size: 12px; font-weight: 600;">Superficial (not in panel):</span>
+                <select id="pdb3d-style-superficial" style="padding: 4px 8px; font-size: 12px;">
+                    <option value="sphere">Sphere</option>
+                    <option value="stick">Stick</option>
+                    <option value="cross">Cross</option>
+                </select>
+                <span id="pdb3d-superficial-chains" style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;"></span>
+                <button type="button" id="pdb3d-superficial-all" style="padding: 4px 8px; font-size: 11px;">All</button>
+                <button type="button" id="pdb3d-superficial-none" style="padding: 4px 8px; font-size: 11px;">None</button>
             </div>
         </div>
         <div id="pdb3d-viewer" style="flex: 1; min-height: 0; width: 100%; position: relative; z-index: 1;"></div>
@@ -6278,7 +6287,10 @@ let pdb3dViewerInstance = null;
 var pdb3dCurrentStyle = 'cartoon';
 var pdb3dCurrentStyleIntrinsic = 'cartoon';
 var pdb3dCurrentStyleExtrinsic = 'cartoon';
+var pdb3dCurrentStyleSuperficial = 'sphere';
 var pdb3dIntrinsicChainIds = [];
+var pdb3dExtrinsicChainIds = [];
+var pdb3dSuperficialChainIds = [];
 var pdb3dSelectedChainIds = [];
 
 const PDB_RESIDUE_TO_ONE = {
@@ -7115,18 +7127,31 @@ function updatePdb3dAALabels(viewer) {
     viewer.render();
 }
 
-/** Re-apply current style to the open 3D viewer (no reload). Call when user changes Intrinsic or Extrinsic style dropdown. */
+/** Re-apply current style to the open 3D viewer (no reload). Call when user changes Intrinsic, Extrinsic or Superficial style dropdown. */
 function applyPdb3dStyleToViewer() {
     if (!pdb3dViewerInstance) return;
     var intrinsicSel = document.getElementById('pdb3d-style-intrinsic');
     var extrinsicSel = document.getElementById('pdb3d-style-extrinsic');
+    var superficialSel = document.getElementById('pdb3d-style-superficial');
     var styleIntrinsic = (intrinsicSel && intrinsicSel.value) || pdb3dCurrentStyleIntrinsic;
     var styleExtrinsic = (extrinsicSel && extrinsicSel.value) || pdb3dCurrentStyleExtrinsic;
+    var styleSuperficial = (superficialSel && superficialSel.value) || pdb3dCurrentStyleSuperficial;
     var epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
     var intrinsicSet = pdb3dIntrinsicChainIds.length ? new Set(pdb3dIntrinsicChainIds) : new Set();
+    var extrinsicSet = pdb3dExtrinsicChainIds.length ? new Set(pdb3dExtrinsicChainIds) : new Set();
     (pdb3dSelectedChainIds || []).forEach(function (chainId) {
-        var styleKey = intrinsicSet.has(chainId) ? styleIntrinsic : styleExtrinsic;
-        pdb3dViewerInstance.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeData));
+        var styleKey, epitopeForChain;
+        if (intrinsicSet.has(chainId)) {
+            styleKey = styleIntrinsic;
+            epitopeForChain = epitopeData;
+        } else if (extrinsicSet.has(chainId)) {
+            styleKey = styleExtrinsic;
+            epitopeForChain = null;
+        } else {
+            styleKey = styleSuperficial;
+            epitopeForChain = null;
+        }
+        pdb3dViewerInstance.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeForChain));
     });
     pdb3dViewerInstance.render();
 }
@@ -7164,13 +7189,26 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     viewer.addModel(filtered, format);
     var intrinsicSel = document.getElementById('pdb3d-style-intrinsic');
     var extrinsicSel = document.getElementById('pdb3d-style-extrinsic');
+    var superficialSel = document.getElementById('pdb3d-style-superficial');
     var styleIntrinsic = (intrinsicSel && intrinsicSel.value) || pdb3dCurrentStyleIntrinsic;
     var styleExtrinsic = (extrinsicSel && extrinsicSel.value) || pdb3dCurrentStyleExtrinsic;
+    var styleSuperficial = (superficialSel && superficialSel.value) || pdb3dCurrentStyleSuperficial;
     var epitopeData = (state.selectedEpitope && state.epitopeColumns && state.viewSequences) ? getPdb3dEpitopeResidues() : null;
     var intrinsicSet = intrinsicIds.length ? new Set(intrinsicIds) : new Set();
+    var extrinsicSet = (pdb3dExtrinsicChainIds && pdb3dExtrinsicChainIds.length) ? new Set(pdb3dExtrinsicChainIds) : new Set();
     pdb3dSelectedChainIds.forEach(function (chainId) {
-        var styleKey = intrinsicSet.has(chainId) ? styleIntrinsic : styleExtrinsic;
-        viewer.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeData));
+        var styleKey, epitopeForChain;
+        if (intrinsicSet.has(chainId)) {
+            styleKey = styleIntrinsic;
+            epitopeForChain = epitopeData;
+        } else if (extrinsicSet.has(chainId)) {
+            styleKey = styleExtrinsic;
+            epitopeForChain = null;
+        } else {
+            styleKey = styleSuperficial;
+            epitopeForChain = null;
+        }
+        viewer.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeForChain));
     });
     viewer.zoomTo();
     viewer.render();
@@ -7449,17 +7487,21 @@ function openPdbViewerFromState() {
     if (dom.pdbTitle) dom.pdbTitle.textContent = state.pdbFileName || 'PDB 3D Structure';
     dom.pdbOverlay.style.display = 'flex';
 
+    var allStructureChainIds = getStructureChainIds(state.pdbFileContent);
     var partition = getPdbChainIntrinsicExtrinsicPartition();
     var intrinsicIds = partition.intrinsic || [];
     var extrinsicIds = partition.extrinsic || [];
-    if (intrinsicIds.length === 0 && extrinsicIds.length === 0) {
-        intrinsicIds = getPdbChainIdsInState();
-        if (intrinsicIds.length === 0) intrinsicIds = getStructureChainIds(state.pdbFileContent);
-    }
+    var panelChainSet = new Set(intrinsicIds.concat(extrinsicIds));
+    var superficialIds = allStructureChainIds.filter(function (id) { return !panelChainSet.has(id); });
     pdb3dIntrinsicChainIds = intrinsicIds.slice();
+    pdb3dExtrinsicChainIds = extrinsicIds.slice();
+    pdb3dSuperficialChainIds = superficialIds.slice();
     var checkboxes = {};
     var allChainIds = intrinsicIds.slice();
     extrinsicIds.forEach(function (id) {
+        if (allChainIds.indexOf(id) < 0) allChainIds.push(id);
+    });
+    superficialIds.forEach(function (id) {
         if (allChainIds.indexOf(id) < 0) allChainIds.push(id);
     });
 
@@ -7472,6 +7514,7 @@ function openPdbViewerFromState() {
 
     var intrinsicStyleSelect = document.getElementById('pdb3d-style-intrinsic');
     var extrinsicStyleSelect = document.getElementById('pdb3d-style-extrinsic');
+    var superficialStyleSelect = document.getElementById('pdb3d-style-superficial');
     if (intrinsicStyleSelect) {
         intrinsicStyleSelect.value = pdb3dCurrentStyleIntrinsic;
         intrinsicStyleSelect.onchange = function () {
@@ -7486,13 +7529,23 @@ function openPdbViewerFromState() {
             applyPdb3dStyleToViewer();
         };
     }
+    if (superficialStyleSelect) {
+        superficialStyleSelect.value = pdb3dCurrentStyleSuperficial;
+        superficialStyleSelect.onchange = function () {
+            pdb3dCurrentStyleSuperficial = this.value;
+            applyPdb3dStyleToViewer();
+        };
+    }
 
     var intrinsicListEl = document.getElementById('pdb3d-intrinsic-chains');
     var extrinsicListEl = document.getElementById('pdb3d-extrinsic-chains');
+    var superficialListEl = document.getElementById('pdb3d-superficial-chains');
     var btnIntrinsicAll = document.getElementById('pdb3d-intrinsic-all');
     var btnIntrinsicNone = document.getElementById('pdb3d-intrinsic-none');
     var btnExtrinsicAll = document.getElementById('pdb3d-extrinsic-all');
     var btnExtrinsicNone = document.getElementById('pdb3d-extrinsic-none');
+    var btnSuperficialAll = document.getElementById('pdb3d-superficial-all');
+    var btnSuperficialNone = document.getElementById('pdb3d-superficial-none');
 
     function addChainCheckbox(container, id) {
         if (!container) return;
@@ -7517,10 +7570,16 @@ function openPdbViewerFromState() {
         extrinsicListEl.innerHTML = '';
         extrinsicIds.forEach(function (id) { addChainCheckbox(extrinsicListEl, id); });
     }
+    if (superficialListEl) {
+        superficialListEl.innerHTML = '';
+        superficialIds.forEach(function (id) { addChainCheckbox(superficialListEl, id); });
+    }
     if (btnIntrinsicAll) btnIntrinsicAll.onclick = function () { intrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = true; }); updateView(); };
     if (btnIntrinsicNone) btnIntrinsicNone.onclick = function () { intrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = false; }); updateView(); };
     if (btnExtrinsicAll) btnExtrinsicAll.onclick = function () { extrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = true; }); updateView(); };
     if (btnExtrinsicNone) btnExtrinsicNone.onclick = function () { extrinsicIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = false; }); updateView(); };
+    if (btnSuperficialAll) btnSuperficialAll.onclick = function () { superficialIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = true; }); updateView(); };
+    if (btnSuperficialNone) btnSuperficialNone.onclick = function () { superficialIds.forEach(function (id) { if (checkboxes[id]) checkboxes[id].checked = false; }); updateView(); };
 
     updateView();
 
