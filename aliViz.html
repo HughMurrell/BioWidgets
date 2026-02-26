@@ -226,13 +226,6 @@
             </div>
         </div>
         <div class="control-group">
-            <label>Add Ref</label>
-            <div style="display:flex; gap:5px; align-items:center;">
-                <input type="file" id="inp-add-ref" accept=".fasta,.fa,.txt" style="display: none;">
-                <button id="btn-add-ref" title="Load a single sequence as new reference (global alignment to current ref)">Choose file</button>
-            </div>
-        </div>
-        <div class="control-group">
             <label>Phylogeny</label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
@@ -602,7 +595,6 @@
         <div class="help-row"><span class="help-key">Sort</span> <span>Sort sequences by name (REF and SUBTYPE remain first)</span></div>
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
         <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
-        <div class="help-row"><span class="help-key">Add Ref</span> <span>Load a single FASTA sequence as new reference; aligned to current ref with Needleman-Wunsch (gaps inserted as full columns)</span></div>
         <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny using FastTree of Neighbor Joining</span></div>
         <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
         <div class="help-row"><span class="help-key">Ladderize</span> <span>Ladderize tree and reorder sequences</span></div>
@@ -843,8 +835,6 @@ const dom = {
     btnSortSequences: document.getElementById('btn-sort-sequences'),
     btnGroupSequences: document.getElementById('btn-group-sequences'),
     btnSubtype: document.getElementById('btn-subtype'),
-    inpAddRef: document.getElementById('inp-add-ref'),
-    btnAddRef: document.getElementById('btn-add-ref'),
     btnClearAlignment: document.getElementById('btn-clear-aln'),
     btnClearTree: document.getElementById('btn-clear-tree'),
     btnUndo: document.getElementById('btn-undo'),
@@ -926,7 +916,6 @@ function disableButtonsOnStartup() {
     if (dom.btnAa) dom.btnAa.disabled = true;
     if (dom.selHighlight) dom.selHighlight.disabled = true;
     if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = true;
-    if (dom.btnAddRef) dom.btnAddRef.disabled = true;
     if (dom.btnSelectEpitope) dom.btnSelectEpitope.disabled = true;
     if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
     // Help button should always be enabled, so we don't disable it
@@ -943,7 +932,6 @@ function enableButtonsAfterLoad() {
     if (dom.btnClearAlignment) dom.btnClearAlignment.disabled = false;
     if (dom.selHighlight) dom.selHighlight.disabled = false;
     if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = false;
-    if (dom.btnAddRef) dom.btnAddRef.disabled = false;
     // Add Founder and Sort remain disabled until grouping is done
     // Histogram, Cluster, and tree export remain disabled until ladderize is done
 }
@@ -1014,15 +1002,6 @@ async function init() {
     const btnRunGroup = document.getElementById('btn-run-group');
     if (btnRunGroup) {
         btnRunGroup.addEventListener('click', runGroupTask);
-    }
-    if (dom.btnAddRef) {
-        dom.btnAddRef.addEventListener('click', function () { if (dom.inpAddRef) dom.inpAddRef.click(); });
-    }
-    if (dom.inpAddRef) {
-        dom.inpAddRef.addEventListener('change', function (e) {
-            if (e.target.files && e.target.files[0]) addRefFromFile(e.target.files[0]);
-            e.target.value = '';
-        });
     }
     if (dom.btnLoadEpitopes) {
         dom.btnLoadEpitopes.addEventListener('click', () => dom.inpEpitopes.click());
@@ -5218,253 +5197,6 @@ function showTemporaryNotification(message, duration) {
             }
         }, 300);
     }, duration);
-}
-
-// --- Add Ref (new reference by global alignment) ---
-/** Needleman-Wunsch global alignment. a, b are arrays of single chars (or strings). Returns { alignedA, alignedB } (arrays of same length). */
-function needlemanWunsch(a, b, gapOpen, gapExtend, matchScore, mismatchScore) {
-    var A = (typeof a === 'string') ? a.split('') : a.slice();
-    var B = (typeof b === 'string') ? b.split('') : b.slice();
-    var n = A.length, m = B.length;
-    gapOpen = gapOpen != null ? gapOpen : -10;
-    gapExtend = gapExtend != null ? gapExtend : -0.5;
-    matchScore = matchScore != null ? matchScore : 1;
-    mismatchScore = mismatchScore != null ? mismatchScore : -0.7;
-    var score = function (i, j) {
-        if (i < 0 || j < 0) return -1e9;
-        var ca = A[i], cb = B[j];
-        if (ca === '-' || cb === '-') return gapExtend;
-        return (ca === cb) ? matchScore : mismatchScore;
-    };
-    var H = Array(n + 1);
-    var ptr = Array(n + 1);
-    for (var i = 0; i <= n; i++) {
-        H[i] = Array(m + 1);
-        ptr[i] = Array(m + 1);
-    }
-    H[0][0] = 0;
-    ptr[0][0] = 0;
-    for (var j = 1; j <= m; j++) {
-        H[0][j] = H[0][j - 1] + (j === 1 ? gapOpen : gapExtend);
-        ptr[0][j] = 3;
-    }
-    for (var i = 1; i <= n; i++) {
-        H[i][0] = H[i - 1][0] + (i === 1 ? gapOpen : gapExtend);
-        ptr[i][0] = 2;
-        for (var j = 1; j <= m; j++) {
-            var diag = H[i - 1][j - 1] + score(i - 1, j - 1);
-            var up = H[i - 1][j] + (ptr[i - 1][j] === 2 ? gapExtend : gapOpen);
-            var left = H[i][j - 1] + (ptr[i][j - 1] === 3 ? gapExtend : gapOpen);
-            var max = Math.max(diag, up, left);
-            H[i][j] = max;
-            if (max === diag) ptr[i][j] = 1;
-            else if (max === up) ptr[i][j] = 2;
-            else ptr[i][j] = 3;
-        }
-    }
-    var outA = [], outB = [];
-    var i = n, j = m;
-    while (i > 0 || j > 0) {
-        if (ptr[i][j] === 1) {
-            outA.push(A[i - 1]);
-            outB.push(B[j - 1]);
-            i--;
-            j--;
-        } else if (ptr[i][j] === 2) {
-            outA.push(A[i - 1]);
-            outB.push('-');
-            i--;
-        } else {
-            outA.push('-');
-            outB.push(B[j - 1]);
-            j--;
-        }
-    }
-    outA.reverse();
-    outB.reverse();
-    return { alignedA: outA, alignedB: outB };
-}
-
-/** Needleman-Wunsch with zero penalty for leading/trailing gaps (semi-global). Same API as needlemanWunsch. */
-function needlemanWunschFreeEndGaps(a, b, gapOpen, gapExtend, matchScore, mismatchScore) {
-    var A = (typeof a === 'string') ? a.split('') : a.slice();
-    var B = (typeof b === 'string') ? b.split('') : b.slice();
-    var n = A.length, m = B.length;
-    gapOpen = gapOpen != null ? gapOpen : -10;
-    gapExtend = gapExtend != null ? gapExtend : -0.5;
-    matchScore = matchScore != null ? matchScore : 1;
-    mismatchScore = mismatchScore != null ? mismatchScore : -0.7;
-    var score = function (i, j) {
-        if (i < 0 || j < 0) return -1e9;
-        var ca = A[i], cb = B[j];
-        if (ca === '-' || cb === '-') return gapExtend;
-        return (ca === cb) ? matchScore : mismatchScore;
-    };
-    var H = Array(n + 1);
-    var ptr = Array(n + 1);
-    for (var i = 0; i <= n; i++) {
-        H[i] = Array(m + 1);
-        ptr[i] = Array(m + 1);
-    }
-    H[0][0] = 0;
-    ptr[0][0] = 0;
-    for (var j = 1; j <= m; j++) {
-        H[0][j] = 0;
-        ptr[0][j] = 3;
-    }
-    for (var i = 1; i <= n; i++) {
-        H[i][0] = 0;
-        ptr[i][0] = 2;
-        for (var j = 1; j <= m; j++) {
-            var diag = H[i - 1][j - 1] + score(i - 1, j - 1);
-            var up = H[i - 1][j] + (ptr[i - 1][j] === 2 ? gapExtend : gapOpen);
-            var left = H[i][j - 1] + (ptr[i][j - 1] === 3 ? gapExtend : gapOpen);
-            var max = Math.max(diag, up, left);
-            H[i][j] = max;
-            if (max === diag) ptr[i][j] = 1;
-            else if (max === up) ptr[i][j] = 2;
-            else ptr[i][j] = 3;
-        }
-    }
-    var bestScore = -1e9, bestI = n, bestJ = m;
-    for (var j = 0; j <= m; j++) {
-        if (H[n][j] > bestScore) { bestScore = H[n][j]; bestI = n; bestJ = j; }
-    }
-    for (var i = 0; i <= n; i++) {
-        if (H[i][m] > bestScore) { bestScore = H[i][m]; bestI = i; bestJ = m; }
-    }
-    var outA = [], outB = [];
-    var i = bestI, j = bestJ;
-    while (i > 0 && j > 0) {
-        if (ptr[i][j] === 1) {
-            outA.push(A[i - 1]);
-            outB.push(B[j - 1]);
-            i--;
-            j--;
-        } else if (ptr[i][j] === 2) {
-            outA.push(A[i - 1]);
-            outB.push('-');
-            i--;
-        } else {
-            outA.push('-');
-            outB.push(B[j - 1]);
-            j--;
-        }
-    }
-    while (j > 0) {
-        outA.push('-');
-        outB.push(B[j - 1]);
-        j--;
-    }
-    while (i > 0) {
-        outA.push(A[i - 1]);
-        outB.push('-');
-        i--;
-    }
-    outA.reverse();
-    outB.reverse();
-    return { alignedA: outA, alignedB: outB };
-}
-
-function addRefFromFile(file) {
-    if (!state.rawSequences.length) {
-        alert('Load an alignment first.');
-        return;
-    }
-    var reader = new FileReader();
-    reader.onload = function () {
-        var text = reader.result;
-        var seqs = parseFastaToSeqs(text);
-        if (!seqs.length) {
-            alert('No sequence found in the file.');
-            return;
-        }
-        if (seqs.length > 1) {
-            alert('File should contain a single sequence. Using the first sequence only.');
-        }
-        var newRef = seqs[0];
-        var newName = newRef.name || 'NewRef';
-        var newSeq = newRef.seq;
-        var refIdx = state.refIndex;
-        var currentRef = state.rawSequences[refIdx];
-        if (!currentRef || !currentRef.seq.length) {
-            alert('Current reference is empty.');
-            return;
-        }
-        var curSeq = currentRef.seq;
-        var curNoGaps = curSeq.filter(function (c) { return c !== '-' && c !== '.'; });
-        var newArr = (typeof newSeq === 'string') ? newSeq.split('') : newSeq.slice();
-        var gapOpen = -10, gapExtend = -0.5, matchScore = 1, mismatchScore = -0.7;
-        var result = needlemanWunschFreeEndGaps(newArr, curNoGaps, gapOpen, gapExtend, matchScore, mismatchScore);
-        var alignedNew = result.alignedA;
-        var alignedCur = result.alignedB;
-        var L = alignedNew.length;
-        var kStart = 0, kEnd = L - 1;
-        while (kStart < L && (alignedCur[kStart] === '-' || alignedCur[kStart] === '.')) kStart++;
-        while (kEnd >= 0 && (alignedCur[kEnd] === '-' || alignedCur[kEnd] === '.')) kEnd--;
-        if (kStart > kEnd) {
-            alert('Alignment produced no overlapping span.');
-            return;
-        }
-        var alignedNewTrimmed = alignedNew.slice(kStart, kEnd + 1);
-        var alignedCurTrimmed = alignedCur.slice(kStart, kEnd + 1);
-        var refIdxToCol = [];
-        var colToResIdx = [];
-        var resIdx = 0;
-        for (var col = 0; col < curSeq.length; col++) {
-            if (curSeq[col] !== '-' && curSeq[col] !== '.') {
-                refIdxToCol[resIdx] = col;
-                colToResIdx[col] = resIdx;
-                resIdx++;
-            }
-        }
-        var kForJ = [];
-        var j = 0;
-        for (var k = 0; k < alignedCurTrimmed.length; k++) {
-            if (alignedCurTrimmed[k] !== '-' && alignedCurTrimmed[k] !== '.') {
-                kForJ[j] = k;
-                j++;
-            }
-        }
-        var M = curSeq.length;
-        var newRefRow = [];
-        for (col = 0; col < M; col++) {
-            if (curSeq[col] === '-' || curSeq[col] === '.') {
-                newRefRow.push('-');
-            } else {
-                j = colToResIdx[col];
-                newRefRow.push((kForJ[j] !== undefined) ? alignedNewTrimmed[kForJ[j]] : '-');
-            }
-        }
-        var maxLen = M;
-        for (var r = 0; r < state.rawSequences.length; r++) {
-            maxLen = Math.max(maxLen, state.rawSequences[r].seq.length);
-        }
-        while (newRefRow.length < maxLen) newRefRow.push('-');
-        var newRaw = [];
-        newRaw.push({ name: newName, seq: newRefRow });
-        for (r = 0; r < state.rawSequences.length; r++) {
-            var row = state.rawSequences[r].seq;
-            var newRow = row.slice();
-            while (newRow.length < maxLen) newRow.push('-');
-            var rec = { name: state.rawSequences[r].name, seq: newRow };
-            if (state.rawSequences[r].chainStart != null) rec.chainStart = state.rawSequences[r].chainStart;
-            if (state.rawSequences[r].isPdbChain) rec.isPdbChain = true;
-            if (state.rawSequences[r].chainLength != null) rec.chainLength = state.rawSequences[r].chainLength;
-            if (state.rawSequences[r].alignedLength != null) rec.alignedLength = state.rawSequences[r].alignedLength;
-            newRaw.push(rec);
-        }
-        state.rawSequences = newRaw;
-        state.refIndex = 0;
-        if (state.subtypeIndex >= 0) state.subtypeIndex = state.subtypeIndex + 1;
-        state.selection = null;
-        state.tree = null;
-        calculateNamesWidth();
-        recalc();
-        showTemporaryNotification('New reference added (Needleman–Wunsch, free end gaps, trimmed, gaps re-inserted).', 2000);
-    };
-    reader.onerror = function () { alert('Could not read the file.'); };
-    reader.readAsText(file);
 }
 
 /** Convert state.rawSequences from NT to AA in place (using current frame). Call when loading epitopes or PDB so that all downstream code sees AA only. Sets state.isAASequence = true; no going back to NT. */
