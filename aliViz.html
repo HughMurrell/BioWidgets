@@ -221,6 +221,7 @@
             <div style="display:flex; gap:5px; align-items:center;">
                 <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+                <button id="btn-prune" title="Remove sequences from selected groups">Prune</button>
                 <button id="btn-subtype" title="Add founder sequence from selected group">Add Founder</button>
                 <button id="btn-sort-sequences" title="Sort sequences by name (REF and SUBTYPE remain first)">Sort</button>
             </div>
@@ -571,6 +572,22 @@
     </div>
 </div>
 
+<div id="prune-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 400px;">
+        <h2>Prune by Group</h2>
+        <p style="font-size: 13px; color: #374151; margin: 0 0 12px 0;">Select groups to remove. Selected groups will be removed from the alignment.</p>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <button type="button" id="btn-prune-all">All</button>
+            <button type="button" id="btn-prune-none">None</button>
+        </div>
+        <div id="prune-groups-container" style="max-height: 280px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 4px; padding: 8px; margin-bottom: 16px;"></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button type="button" id="btn-prune-cancel">Cancel</button>
+            <button type="button" id="btn-prune-apply" class="active">Apply</button>
+        </div>
+    </div>
+</div>
+
 <div id="subtype-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
     <div class="help-box" style="width: 450px;">
         <h2>Add Founder Sequence</h2>
@@ -594,6 +611,7 @@
         <div class="help-row"><span class="help-key">Choose File</span> <span>Load an Alignment with Ref as first seq and SubType as second seq.</span></div>
         <div class="help-row"><span class="help-key">Sort</span> <span>Sort sequences by name (REF and SUBTYPE remain first)</span></div>
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
+        <div class="help-row"><span class="help-key">Prune</span> <span>Remove sequences from deselected groups</span></div>
         <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
         <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny using FastTree of Neighbor Joining</span></div>
         <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
@@ -834,6 +852,7 @@ const dom = {
     btnMds: document.getElementById('btn-mds'),
     btnSortSequences: document.getElementById('btn-sort-sequences'),
     btnGroupSequences: document.getElementById('btn-group-sequences'),
+    btnPrune: document.getElementById('btn-prune'),
     btnSubtype: document.getElementById('btn-subtype'),
     btnClearAlignment: document.getElementById('btn-clear-aln'),
     btnClearTree: document.getElementById('btn-clear-tree'),
@@ -901,6 +920,7 @@ function disableButtonsOnStartup() {
     // Disable all buttons except the help button and file input
     if (dom.btnSortSequences) dom.btnSortSequences.disabled = true;
     if (dom.btnGroupSequences) dom.btnGroupSequences.disabled = true;
+    if (dom.btnPrune) dom.btnPrune.disabled = true;
     if (dom.btnSubtype) dom.btnSubtype.disabled = true;
     if (dom.btnInferTree) dom.btnInferTree.disabled = true;
     if (dom.btnRerootTree) dom.btnRerootTree.disabled = true;
@@ -937,7 +957,8 @@ function enableButtonsAfterLoad() {
 }
 
 function enableButtonsAfterGrouping() {
-    // Enable Add Founder and Sort after successful grouping
+    // Enable Prune, Add Founder and Sort after successful grouping
+    if (dom.btnPrune) dom.btnPrune.disabled = false;
     if (dom.btnSubtype) dom.btnSubtype.disabled = false;
     if (dom.btnSortSequences) dom.btnSortSequences.disabled = false;
 }
@@ -995,6 +1016,23 @@ async function init() {
     if (dom.btnGroupSequences) {
         dom.btnGroupSequences.addEventListener('click', showGroupModal);
     }
+    if (dom.btnPrune) {
+        dom.btnPrune.addEventListener('click', showPruneModal);
+    }
+    const btnPruneCancel = document.getElementById('btn-prune-cancel');
+    if (btnPruneCancel) btnPruneCancel.addEventListener('click', function () { document.getElementById('prune-overlay').style.display = 'none'; });
+    const btnPruneApply = document.getElementById('btn-prune-apply');
+    if (btnPruneApply) btnPruneApply.addEventListener('click', applyPrune);
+    const btnPruneAll = document.getElementById('btn-prune-all');
+    if (btnPruneAll) btnPruneAll.addEventListener('click', function () {
+        const container = document.getElementById('prune-groups-container');
+        if (container) container.querySelectorAll('input[type="checkbox"][data-group-id]').forEach(function (cb) { cb.checked = true; });
+    });
+    const btnPruneNone = document.getElementById('btn-prune-none');
+    if (btnPruneNone) btnPruneNone.addEventListener('click', function () {
+        const container = document.getElementById('prune-groups-container');
+        if (container) container.querySelectorAll('input[type="checkbox"][data-group-id]').forEach(function (cb) { cb.checked = false; });
+    });
     if (dom.btnSubtype) {
         dom.btnSubtype.addEventListener('click', showSubtypeModal);
     }
@@ -1707,6 +1745,96 @@ function runGroupTask() {
     
     // Re-render
     recalc();
+}
+
+// --- Prune by Group ---
+function showPruneModal() {
+    if (!state.sequenceGroups || !state.groupNames || state.groupNames.size === 0) {
+        alert("Please group sequences first (Group button) before pruning.");
+        return;
+    }
+    const container = document.getElementById('prune-groups-container');
+    if (!container) return;
+    container.innerHTML = '';
+    const groupEntries = Array.from(state.groupNames.entries()).sort((a, b) => {
+        const va = a[1] || '', vb = b[1] || '';
+        return String(va).localeCompare(String(vb));
+    });
+    groupEntries.forEach(function (entry) {
+        const groupId = entry[0];
+        const groupLabel = entry[1] || ('Group ' + groupId);
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '8px';
+        label.style.padding = '4px 0';
+        label.style.cursor = 'pointer';
+        label.style.fontSize = '13px';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = false;
+        cb.dataset.groupId = String(groupId);
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(groupLabel));
+        label.addEventListener('click', function (e) { if (e.target !== cb) cb.checked = !cb.checked; });
+        container.appendChild(label);
+    });
+    document.getElementById('prune-overlay').style.display = 'flex';
+}
+
+function applyPrune() {
+    const container = document.getElementById('prune-groups-container');
+    if (!container) return;
+    const checkboxes = container.querySelectorAll('input[type="checkbox"][data-group-id]');
+    const groupsToRemove = new Set();
+    checkboxes.forEach(function (cb) {
+        if (cb.checked) groupsToRemove.add(parseInt(cb.dataset.groupId, 10));
+    });
+    if (groupsToRemove.size === 0) {
+        document.getElementById('prune-overlay').style.display = 'none';
+        return;
+    }
+    document.getElementById('prune-overlay').style.display = 'none';
+    saveState();
+    const kept = state.rawSequences.filter(function (seq) {
+        const gid = state.sequenceGroups.get(seq.name);
+        if (gid === undefined) return true;
+        return !groupsToRemove.has(gid);
+    });
+    if (kept.length === 0) {
+        alert("Cannot remove all sequences.");
+        return;
+    }
+    const keptNames = new Set(kept.map(function (s) { return s.name; }));
+    state.rawSequences = kept;
+    const newSequenceGroups = new Map();
+    kept.forEach(function (seq) {
+        const gid = state.sequenceGroups.get(seq.name);
+        if (gid !== undefined) newSequenceGroups.set(seq.name, gid);
+    });
+    // Renumber group IDs to 0, 1, 2, ... so structure matches a fresh Group (logo and legend expect contiguous IDs)
+    const remainingGroupIdsSorted = Array.from(new Set(newSequenceGroups.values())).sort(function (a, b) { return a - b; });
+    const oldToNew = new Map();
+    remainingGroupIdsSorted.forEach(function (oldId, i) { oldToNew.set(oldId, i); });
+    const renumberedSequenceGroups = new Map();
+    newSequenceGroups.forEach(function (gid, name) {
+        const newId = oldToNew.get(gid);
+        if (newId !== undefined) renumberedSequenceGroups.set(name, newId);
+    });
+    const renumberedGroupNames = new Map();
+    remainingGroupIdsSorted.forEach(function (oldId, i) {
+        const label = state.groupNames.get(oldId);
+        renumberedGroupNames.set(i, label != null ? label : 'Group ' + i);
+    });
+    state.sequenceGroups = renumberedSequenceGroups;
+    state.groupNames = renumberedGroupNames;
+    state.refIndex = 0;
+    state.subtypeIndex = (state.rawSequences.length > 1) ? 1 : 0;
+    state.tree = null;
+    state.selection = null;
+    recalc();
+    updateColorLegend();
+    calculateNamesWidth();
 }
 
 // --- Add Founder Sequence ---
@@ -7270,11 +7398,159 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     clickPopupClose.setAttribute('style', 'position:absolute;top:6px;right:6px;width:24px;height:24px;padding:0;border:none;background:#f3f4f6;color:#6b7280;font-size:16px;line-height:1;cursor:pointer;border-radius:4px;');
     clickPopupClose.textContent = '\u00D7';
     clickPopupClose.title = 'Close';
-    clickPopupClose.onclick = function () { clickPopup.style.display = 'none'; };
+    clickPopupClose.onclick = function () {
+        clickPopup.style.display = 'none';
+        pdb3dClickAtom = null;
+        pdb3dClickChain = null;
+        pdb3dClickResi = null;
+        pdb3dClickPos = null;
+        if (pdb3dConnectorRafId) { cancelAnimationFrame(pdb3dConnectorRafId); pdb3dConnectorRafId = null; }
+        if (connectorLineCanvas) { var ctx = connectorLineCanvas.getContext('2d'); if (ctx) ctx.clearRect(0, 0, connectorLineCanvas.width, connectorLineCanvas.height); }
+    };
     clickPopup.appendChild(clickPopupHeading);
     clickPopup.appendChild(clickPopupLogoContainer);
     clickPopup.appendChild(clickPopupClose);
     dom.pdbViewerContainer.appendChild(clickPopup);
+    var connectorLineCanvas = document.createElement('canvas');
+    connectorLineCanvas.id = 'pdb3d-connector-line';
+    connectorLineCanvas.setAttribute('style', 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:15;');
+    dom.pdbViewerContainer.appendChild(connectorLineCanvas);
+    var pdb3dClickAtom = null;
+    var pdb3dClickChain = null;
+    var pdb3dClickResi = null;
+    var pdb3dClickPos = null;
+    var pdb3dConnectorRafId = null;
+    function getResidueScreenPos(container) {
+        if (!container || (!pdb3dClickAtom && !pdb3dClickPos)) return null;
+        var rect = container.getBoundingClientRect();
+        if (viewer && pdb3dClickAtom && typeof viewer.project === 'function') {
+            try {
+                var out = viewer.project(pdb3dClickAtom.x, pdb3dClickAtom.y, pdb3dClickAtom.z);
+                if (out && typeof out.x === 'number' && typeof out.y === 'number')
+                    return { x: out.x + rect.left, y: out.y + rect.top };
+            } catch (e) {}
+        }
+        if (pdb3dClickPos) return { x: pdb3dClickPos.x + rect.left, y: pdb3dClickPos.y + rect.top };
+        return null;
+    }
+    /** Get 3D position to use for connector: residue center (chain+resi) so we point at the residue we show, not a possibly wrong hit atom. */
+    function getResidueConnectorPos3D() {
+        if (!viewer) return pdb3dClickAtom;
+        if (pdb3dClickChain != null && pdb3dClickResi != null && typeof viewer.selectedAtoms === 'function') {
+            var atoms = viewer.selectedAtoms({ chain: pdb3dClickChain, resi: pdb3dClickResi + 1 });
+            if (atoms && atoms.length > 0) {
+                var cx = 0, cy = 0, cz = 0;
+                for (var i = 0; i < atoms.length; i++) {
+                    cx += atoms[i].x; cy += atoms[i].y; cz += atoms[i].z;
+                }
+                return { x: cx / atoms.length, y: cy / atoms.length, z: cz / atoms.length };
+            }
+        }
+        return pdb3dClickAtom;
+    }
+    function getResidueScreenPosInContainer(container) {
+        if (!container || (!pdb3dClickAtom && !pdb3dClickPos)) return null;
+        var a = getResidueConnectorPos3D();
+        if (viewer && a) {
+            try {
+                // 3Dmol GLViewer.modelToScreen(coords) — document coords; convert to container-relative
+                if (typeof viewer.modelToScreen === 'function') {
+                    var screen = viewer.modelToScreen({ x: a.x, y: a.y, z: a.z });
+                    if (screen && typeof screen.x === 'number' && typeof screen.y === 'number') {
+                        var rect = container.getBoundingClientRect();
+                        var scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+                        var scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+                        var viewportX = screen.x - scrollX;
+                        var viewportY = screen.y - scrollY;
+                        return { x: viewportX - rect.left, y: viewportY - rect.top };
+                    }
+                }
+                var out = null;
+                if (typeof viewer.project === 'function')
+                    out = viewer.project(a.x, a.y, a.z);
+                else if (viewer.glviewer && typeof viewer.glviewer.project === 'function')
+                    out = viewer.glviewer.project(a.x, a.y, a.z);
+                if (out && typeof out.x === 'number' && typeof out.y === 'number') {
+                    var rect = container.getBoundingClientRect();
+                    var canvas = container.querySelector('canvas');
+                    if (canvas && (canvas.width || canvas.height)) {
+                        var cr = canvas.getBoundingClientRect();
+                        var cw = canvas.width || 1, ch = canvas.height || 1;
+                        return { x: (cr.left - rect.left) + out.x * (cr.width / cw), y: (cr.top - rect.top) + out.y * (cr.height / ch) };
+                    }
+                    return { x: out.x, y: out.y };
+                }
+                var cam = viewer.camera || (viewer.glviewer && viewer.glviewer.camera);
+                if (typeof $3Dmol !== 'undefined' && $3Dmol.Vector3 && cam) {
+                    var v = new $3Dmol.Vector3(a.x, a.y, a.z);
+                    if (typeof v.project === 'function') {
+                        v.project(cam);
+                        var rect = container.getBoundingClientRect();
+                        var canvas = container.querySelector('canvas');
+                        if (canvas && (canvas.width || canvas.height)) {
+                            var cr = canvas.getBoundingClientRect();
+                            var ndcX = (v.x + 1) * 0.5;
+                            var ndcY = 1 - (v.y + 1) * 0.5;
+                            return { x: (cr.left - rect.left) + ndcX * cr.width, y: (cr.top - rect.top) + ndcY * cr.height };
+                        }
+                    }
+                }
+            } catch (e) { /* projection failed, fall back to click pos */ }
+        }
+        if (pdb3dClickPos) return { x: pdb3dClickPos.x, y: pdb3dClickPos.y };
+        return null;
+    }
+    function nearestPopupCorner(container, popupRect, containerRect) {
+        var residue = getResidueScreenPosInContainer(container);
+        if (!residue) return { x: popupRect.left - containerRect.left, y: popupRect.top - containerRect.top };
+        var rx = residue.x, ry = residue.y;
+        var corners = [
+            { x: popupRect.left - containerRect.left, y: popupRect.top - containerRect.top },
+            { x: popupRect.right - containerRect.left, y: popupRect.top - containerRect.top },
+            { x: popupRect.right - containerRect.left, y: popupRect.bottom - containerRect.top },
+            { x: popupRect.left - containerRect.left, y: popupRect.bottom - containerRect.top }
+        ];
+        var best = corners[0];
+        var bestD = (corners[0].x - rx) * (corners[0].x - rx) + (corners[0].y - ry) * (corners[0].y - ry);
+        for (var i = 1; i < corners.length; i++) {
+            var d = (corners[i].x - rx) * (corners[i].x - rx) + (corners[i].y - ry) * (corners[i].y - ry);
+            if (d < bestD) { bestD = d; best = corners[i]; }
+        }
+        return best;
+    }
+    function drawConnectorLine() {
+        var container = dom.pdbViewerContainer;
+        if (!container || !connectorLineCanvas || clickPopup.style.display !== 'flex') return;
+        var containerRect = container.getBoundingClientRect();
+        var w = Math.max(1, Math.round(containerRect.width));
+        var h = Math.max(1, Math.round(containerRect.height));
+        if (connectorLineCanvas.width !== w || connectorLineCanvas.height !== h) {
+            connectorLineCanvas.width = w;
+            connectorLineCanvas.height = h;
+        }
+        var ctx = connectorLineCanvas.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+        var popupRect = clickPopup.getBoundingClientRect();
+        var residue = getResidueScreenPosInContainer(container);
+        if (!residue) return;
+        var corner = nearestPopupCorner(container, popupRect, containerRect);
+        ctx.strokeStyle = 'cyan';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(residue.x, residue.y);
+        ctx.lineTo(corner.x, corner.y);
+        ctx.stroke();
+    }
+    function scheduleConnectorDraw() {
+        if (pdb3dConnectorRafId) cancelAnimationFrame(pdb3dConnectorRafId);
+        function tick() {
+            drawConnectorLine();
+            if (clickPopup.style.display === 'flex' && (pdb3dClickAtom || pdb3dClickPos))
+                pdb3dConnectorRafId = requestAnimationFrame(tick);
+            else pdb3dConnectorRafId = null;
+        }
+        pdb3dConnectorRafId = requestAnimationFrame(tick);
+    }
     (function makePopupDraggable() {
         var container = dom.pdbViewerContainer;
         clickPopupHeading.addEventListener('mousedown', function (e) {
@@ -7298,6 +7574,7 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                 var newTop = ev.clientY - cr.top - offsetY + container.scrollTop;
                 clickPopup.style.left = Math.max(0, newLeft) + 'px';
                 clickPopup.style.top = Math.max(0, newTop) + 'px';
+                drawConnectorLine();
             }
             function onUp() {
                 document.removeEventListener('mousemove', onMove);
@@ -7433,7 +7710,10 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                 var msg;
                 if (!state.selectedEpitope || !state.epitopes || state.epitopes.length === 0) {
                     msg = info + ' — No epitope selected. Load epitopes and use Select Epitope to choose one.';
-                    console.log('[PDB 3D click]', msg);
+                    pdb3dClickAtom = null;
+                    pdb3dClickChain = null;
+                    pdb3dClickResi = null;
+                    pdb3dClickPos = null;
                     showClickPopup(msg);
                     return;
                 }
@@ -7441,14 +7721,16 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                 var refCoord = getRefCoordForPdbResidue(ch, atom.resi);
                 if (refCoord === null || refCoord === undefined) {
                     msg = info + ' — Residue not in alignment (or could not map to reference).';
-                    console.log('[PDB 3D click]', msg);
+                    pdb3dClickAtom = null;
+                    pdb3dClickChain = null;
+                    pdb3dClickResi = null;
+                    pdb3dClickPos = null;
                     showClickPopup(msg);
                     return;
                 }
                 var epitope = state.epitopes.find(function (e) { return e.name === state.selectedEpitope; });
                 if (!epitope || !epitope.regions || epitope.regions.length === 0) {
                     msg = info + ' — Ref coord ' + refCoord + ' (no regions defined for selected epitope).';
-                    console.log('[PDB 3D click]', msg);
                     showClickPopup(msg);
                     return;
                 }
@@ -7462,7 +7744,12 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                 }
                 if (region) {
                     msg = info + ' — Epitope region: ' + region.start + ' - ' + region.end;
-                    console.log('[PDB 3D click]', msg);
+                    console.log('[Connector] endpoint: ' + info + ' ref ' + refCoord);
+                    var cr = container.getBoundingClientRect();
+                    pdb3dClickAtom = { x: atom.x, y: atom.y, z: atom.z };
+                    pdb3dClickChain = (atom.chain || ' ').trim() || 'A';
+                    pdb3dClickResi = atom.resi;
+                    pdb3dClickPos = { x: event.clientX - cr.left, y: event.clientY - cr.top };
                     showClickPopup(msg);
                     if (state.sequenceGroups && state.groupNames && state.groupNames.size > 0) {
                         showRegionLogoSelector(epitope, region, function (bottomSeq, bottomIndex, bottomLabel, groupIds) {
@@ -7500,13 +7787,17 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                             clickPopupLogoContainer.innerHTML = '';
                             clickPopupLogoContainer.appendChild(sliderContainer);
                             renderRegionLogo();
+                            scheduleConnectorDraw();
                         });
                     } else {
                         clickPopupLogoContainer.textContent = 'Group sequences to see region logo.';
                     }
                 } else {
                     msg = info + ' — Ref coord ' + refCoord + ' not in any epitope region.';
-                    console.log('[PDB 3D click]', msg);
+                    pdb3dClickAtom = null;
+                    pdb3dClickChain = null;
+                    pdb3dClickResi = null;
+                    pdb3dClickPos = null;
                     showClickPopup(msg);
                 }
             });
