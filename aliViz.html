@@ -16,6 +16,8 @@
     <script src="https://biowasm.com/cdn/v3/aioli.js"></script>
      <!-- Included html2pdf.js for PDF export (includes jsPDF and svg2pdf internally) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- html2canvas for molecule viewer PNG export (full window + logo) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <!-- 3Dmol.js for PDB 3D structure viewing (epitope coloring without molstar.lib) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.1/3Dmol-min.js"></script>
     <style>
@@ -643,7 +645,11 @@
     <div id="pdb3d-window" style="position: fixed; left: 5%; top: 5%; width: 90vw; max-width: 1000px; height: 85vh; background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; z-index: 10002;">
         <div id="pdb3d-title-bar" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color, #d1d5db); cursor: move; user-select: none; background: #fff; z-index: 10;">
             <span id="pdb3d-title" style="font-weight: 600;">PDB 3D Structure</span>
-            <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button id="btn-fullscreen-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Full screen</button>
+                <button id="btn-export-png-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Export PNG</button>
+                <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
+            </div>
         </div>
         <div id="pdb3d-hint" style="flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 11px; color: #374151; background: #f3f4f6; border-bottom: 1px solid var(--border-color, #e5e7eb); z-index: 10;">Epitope residues are colored automatically on intrinsic chains (residue colors, rest gray). <strong>Intrinsic</strong> = in panel, alignment &ge;50%; <strong>Extrinsic</strong> = in panel, &lt;50%; <strong>Superficial</strong> = not in panel. Use checkboxes to show/hide chains; set a different style per group.</div>
         <div id="pdb3d-toolbar" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border-color, #e5e7eb); background: #fff; z-index: 10;">
@@ -1099,6 +1105,123 @@ async function init() {
     if (btnClosePdb3d && dom.pdbOverlay) {
         btnClosePdb3d.addEventListener('mousedown', e => e.stopPropagation());
         btnClosePdb3d.addEventListener('click', closePdbViewer);
+    }
+    var pdb3dWindowEl = document.getElementById('pdb3d-window');
+    var btnFullscreenPdb3d = document.getElementById('btn-fullscreen-pdb3d');
+    if (pdb3dWindowEl && btnFullscreenPdb3d) {
+        btnFullscreenPdb3d.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        btnFullscreenPdb3d.addEventListener('click', function () {
+            var doc = document;
+            var fullscreen = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement;
+            if (fullscreen) {
+                if (doc.exitFullscreen) doc.exitFullscreen();
+                else if (doc.webkitExitFullscreen) doc.webkitExitFullscreen();
+                else if (doc.mozCancelFullScreen) doc.mozCancelFullScreen();
+                else if (doc.msExitFullscreen) doc.msExitFullscreen();
+            } else {
+                var el = pdb3dWindowEl;
+                if (el.requestFullscreen) el.requestFullscreen();
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+                else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
+                else if (el.msRequestFullscreen) el.msRequestFullscreen();
+            }
+        });
+        function updateFullscreenButtonLabel() {
+            var fullscreen = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+            btnFullscreenPdb3d.textContent = fullscreen ? 'Exit full screen (Esc)' : 'Full screen';
+        }
+        document.addEventListener('fullscreenchange', updateFullscreenButtonLabel);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenButtonLabel);
+        document.addEventListener('mozfullscreenchange', updateFullscreenButtonLabel);
+        document.addEventListener('MSFullscreenChange', updateFullscreenButtonLabel);
+    }
+    var btnExportPngPdb3d = document.getElementById('btn-export-png-pdb3d');
+    if (btnExportPngPdb3d && dom.pdbViewerContainer) {
+        btnExportPngPdb3d.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        btnExportPngPdb3d.addEventListener('click', function () {
+            var windowEl = document.getElementById('pdb3d-window');
+            var viewerEl = dom.pdbViewerContainer;
+            if (!windowEl || !viewerEl || viewerEl.offsetWidth < 10 || viewerEl.offsetHeight < 10) {
+                alert('Nothing to export. Open a structure and ensure the viewer is visible.');
+                return;
+            }
+            var wWin = windowEl.offsetWidth;
+            var hWin = windowEl.offsetHeight;
+            var windowRect = windowEl.getBoundingClientRect();
+            var viewerRect = viewerEl.getBoundingClientRect();
+            var vw = viewerRect.width;
+            var vh = viewerRect.height;
+            var offsetX = viewerRect.left - windowRect.left;
+            var offsetY = viewerRect.top - windowRect.top;
+            var threeCanvas = null;
+            var connectorCanvas = viewerEl.querySelector('#pdb3d-connector-line');
+            var allCanvases = viewerEl.querySelectorAll('canvas');
+            for (var i = 0; i < allCanvases.length; i++) {
+                if (allCanvases[i] !== connectorCanvas) threeCanvas = allCanvases[i];
+            }
+            function buildViewerComposite(done) {
+                var comp = document.createElement('canvas');
+                comp.width = vw;
+                comp.height = vh;
+                var cctx = comp.getContext('2d');
+                cctx.fillStyle = '#ffffff';
+                cctx.fillRect(0, 0, vw, vh);
+                if (threeCanvas && threeCanvas.width > 0 && threeCanvas.height > 0) {
+                    try { cctx.drawImage(threeCanvas, 0, 0, vw, vh); } catch (e) { /* ignore */ }
+                }
+                if (connectorCanvas && connectorCanvas.width > 0 && connectorCanvas.height > 0) {
+                    try { cctx.drawImage(connectorCanvas, 0, 0, vw, vh); } catch (e) { /* ignore */ }
+                }
+                var popup = document.getElementById('pdb3d-click-popup');
+                if (popup && popup.style.display === 'flex' && typeof html2canvas === 'function') {
+                    html2canvas(popup, { scale: 2, logging: false, useCORS: true }).then(function (popupCanvas) {
+                        var pr = popup.getBoundingClientRect();
+                        var dx = pr.left - viewerRect.left;
+                        var dy = pr.top - viewerRect.top;
+                        cctx.drawImage(popupCanvas, dx, dy, pr.width, pr.height);
+                        done(comp);
+                    }).catch(function () { done(comp); });
+                } else {
+                    done(comp);
+                }
+            }
+            function patchViewerAndDownload(fullWindowCanvas) {
+                buildViewerComposite(function (viewerComposite) {
+                    var out = document.createElement('canvas');
+                    out.width = wWin;
+                    out.height = hWin;
+                    var ctx = out.getContext('2d');
+                    ctx.drawImage(fullWindowCanvas, 0, 0, fullWindowCanvas.width, fullWindowCanvas.height, 0, 0, wWin, hWin);
+                    ctx.drawImage(viewerComposite, offsetX, offsetY, vw, vh);
+                    var dataUrl = out.toDataURL('image/png');
+                    var a = document.createElement('a');
+                    a.href = dataUrl;
+                    a.download = 'molecule_view.png';
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                });
+            }
+            if (typeof html2canvas === 'function') {
+                html2canvas(windowEl, { scale: 2, logging: false, useCORS: true, allowTaint: true })
+                    .then(patchViewerAndDownload)
+                    .catch(function (err) {
+                        alert('Export failed. ' + (err && err.message ? err.message : ''));
+                    });
+            } else {
+                buildViewerComposite(function (comp) {
+                    var dataUrl = comp.toDataURL('image/png');
+                    var a = document.createElement('a');
+                    a.href = dataUrl;
+                    a.download = 'molecule_view.png';
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                });
+            }
+        });
     }
     if (dom.pdbOverlay) {
         dom.pdbOverlay.addEventListener('click', e => { if (e.target === dom.pdbOverlay) closePdbViewer(); });
@@ -7744,7 +7867,7 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                 }
                 if (region) {
                     msg = info + ' — Epitope region: ' + region.start + ' - ' + region.end;
-                    console.log('[Connector] endpoint: ' + info + ' ref ' + refCoord);
+                    // console.log('[Connector] endpoint: ' + info + ' ref ' + refCoord);
                     var cr = container.getBoundingClientRect();
                     pdb3dClickAtom = { x: atom.x, y: atom.y, z: atom.z };
                     pdb3dClickChain = (atom.chain || ' ').trim() || 'A';
