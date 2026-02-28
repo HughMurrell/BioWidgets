@@ -278,6 +278,13 @@
                 <button id="btn-aa" style="border-top-left-radius:0; border-bottom-left-radius:0; border-left:none;">AA</button>
             </div>
         </div>
+        <div class="control-group">
+            <label>AA palette</label>
+            <select id="sel-aa-palette" style="min-width: 140px;">
+                <option value="Alignment (IUPAC)" selected>Alignment (IUPAC)</option>
+                <option value="Biochemical">Biochemical</option>
+            </select>
+        </div>
 
         <!-- Frame selector commented out but code preserved for potential reinstatement -->
         <!--
@@ -722,6 +729,13 @@ const CONFIG = {
     }
 };
 
+// Alternative AA color palettes (used app-wide: sequence panel, logos, molecule viewer)
+CONFIG.colorPalettes = {
+    'Alignment (IUPAC)': { 'A': '#80a0f0', 'R': '#f01505', 'N': '#00ff00', 'D': '#c048c0', 'C': '#f08080', 'Q': '#00ff00', 'E': '#c048c0', 'G': '#f09048', 'H': '#15a4a4', 'I': '#80a0f0', 'L': '#80a0f0', 'K': '#f01505', 'M': '#80a0f0', 'F': '#80a0f0', 'P': '#ffff00', 'S': '#00ff00', 'T': '#00ff00', 'W': '#80a0f0', 'Y': '#15a4a4', 'V': '#80a0f0', '*': '#999999', '-': '#ffffff', 'default': '#ffffff' },
+    'Biochemical': { 'D': '#e74c3c', 'E': '#e74c3c', 'K': '#3498db', 'R': '#3498db', 'H': '#3498db', 'S': '#2ecc71', 'N': '#2ecc71', 'T': '#2ecc71', 'G': '#2ecc71', 'Q': '#2ecc71', 'F': '#f39c12', 'A': '#f39c12', 'P': '#f39c12', 'I': '#f39c12', 'L': '#f39c12', 'V': '#f39c12', 'M': '#f39c12', 'W': '#f39c12', 'Y': '#f39c12', 'C': '#95a5a6', '-': '#bdc3c7', '*': '#999999', 'default': '#ffffff' }
+};
+CONFIG.activeAAPalette = 'Alignment (IUPAC)';
+
 // Single color palette for both groups and clusters
 // Index 0 is magenta (for cluster 0), indices 1+ are for groups and clusters 1+
 const COLOR_PALETTE = [
@@ -866,6 +880,7 @@ const dom = {
     btnNt: document.getElementById('btn-nt'),
     btnAa: document.getElementById('btn-aa'),
     selHighlight: document.getElementById('sel-highlight'),
+    selAAPalette: document.getElementById('sel-aa-palette'),
     btnDownload: document.getElementById('btn-download'),
     btnCopy: document.getElementById('btn-copy'),
     btnHelp: document.getElementById('btn-help'),
@@ -1270,6 +1285,21 @@ async function init() {
         state.highlightMatches = dom.selHighlight.value;
         render();
     });
+    if (dom.selAAPalette) {
+        dom.selAAPalette.value = CONFIG.activeAAPalette || 'Alignment (IUPAC)';
+        dom.selAAPalette.addEventListener('change', () => {
+            var name = dom.selAAPalette.value;
+            if (CONFIG.colorPalettes && CONFIG.colorPalettes[name]) {
+                CONFIG.activeAAPalette = name;
+                Object.keys(CONFIG.colors.AA).forEach(function (k) { delete CONFIG.colors.AA[k]; });
+                Object.assign(CONFIG.colors.AA, CONFIG.colorPalettes[name]);
+                render();
+                if (typeof pdb3dViewerInstance !== 'undefined' && pdb3dViewerInstance && typeof applyPdb3dStyleToViewer === 'function') {
+                    applyPdb3dStyleToViewer();
+                }
+            }
+        });
+    }
     if (dom.selFrame) {
         dom.selFrame.addEventListener('change', () => { state.frame = +dom.selFrame.value; recalc(); });
     }
@@ -6579,6 +6609,11 @@ var pdb3dIntrinsicChainIds = [];
 var pdb3dExtrinsicChainIds = [];
 var pdb3dSuperficialChainIds = [];
 var pdb3dSelectedChainIds = [];
+var pdb3dClickAtom = null;
+var pdb3dClickChain = null;
+var pdb3dClickResi = null;
+var pdb3dClickPos = null;
+var pdb3dSavedPopupRestore = null;
 
 const PDB_RESIDUE_TO_ONE = {
     'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLN':'Q','GLU':'E','GLY':'G','HIS':'H',
@@ -7421,6 +7456,10 @@ function updatePdb3dAALabels(viewer) {
 /** Re-apply current style to the open 3D viewer (no reload). Call when user changes Intrinsic, Extrinsic or Superficial style dropdown. */
 function applyPdb3dStyleToViewer() {
     if (!pdb3dViewerInstance) return;
+    var savedView = null;
+    try {
+        if (typeof pdb3dViewerInstance.getView === 'function') savedView = pdb3dViewerInstance.getView();
+    } catch (e) { /* ignore */ }
     var intrinsicSel = document.getElementById('pdb3d-style-intrinsic');
     var extrinsicSel = document.getElementById('pdb3d-style-extrinsic');
     var superficialSel = document.getElementById('pdb3d-style-superficial');
@@ -7444,11 +7483,18 @@ function applyPdb3dStyleToViewer() {
         }
         pdb3dViewerInstance.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeForChain));
     });
+    if (savedView && typeof pdb3dViewerInstance.setView === 'function') {
+        try { pdb3dViewerInstance.setView(savedView); } catch (e) { /* ignore */ }
+    }
     pdb3dViewerInstance.render();
 }
 
 function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     if (!state.pdbFileContent || !dom.pdbViewerContainer) return;
+    var savedView = null;
+    if (pdb3dViewerInstance && typeof pdb3dViewerInstance.getView === 'function') {
+        try { savedView = pdb3dViewerInstance.getView(); } catch (e) { /* ignore */ }
+    }
     var filtered = (selectedChainIds && selectedChainIds.length > 0)
         ? filterStructureByChains(state.pdbFileContent, selectedChainIds)
         : state.pdbFileContent;
@@ -7473,6 +7519,14 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
         if (typeof pdb3dViewerInstance.destroy === 'function') pdb3dViewerInstance.destroy();
         else if (typeof pdb3dViewerInstance.dispose === 'function') pdb3dViewerInstance.dispose();
         pdb3dViewerInstance = null;
+    }
+    var popupEl = document.getElementById('pdb3d-click-popup');
+    if (popupEl && popupEl.style.display === 'flex') {
+        pdb3dSavedPopupRestore = {
+            visible: true,
+            heading: (popupEl.children[0] && popupEl.children[0].textContent) ? popupEl.children[0].textContent : '',
+            logoHTML: (popupEl.children[1] && popupEl.children[1].innerHTML) ? popupEl.children[1].innerHTML : ''
+        };
     }
     dom.pdbViewerContainer.innerHTML = '';
     var viewer = $3Dmol.createViewer(dom.pdbViewerContainer, { backgroundColor: 'white' });
@@ -7501,7 +7555,11 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
         }
         viewer.setStyle({ chain: chainId }, getPdb3dStyleSpec(styleKey, epitopeForChain));
     });
-    viewer.zoomTo();
+    if (savedView && typeof viewer.setView === 'function') {
+        try { viewer.setView(savedView); } catch (e) { viewer.zoomTo(); }
+    } else {
+        viewer.zoomTo();
+    }
     viewer.render();
 
     var hoverEl = document.createElement('div');
@@ -7534,14 +7592,16 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     clickPopup.appendChild(clickPopupLogoContainer);
     clickPopup.appendChild(clickPopupClose);
     dom.pdbViewerContainer.appendChild(clickPopup);
+    if (pdb3dSavedPopupRestore && pdb3dSavedPopupRestore.visible) {
+        clickPopupHeading.textContent = pdb3dSavedPopupRestore.heading || '';
+        clickPopupLogoContainer.innerHTML = pdb3dSavedPopupRestore.logoHTML || '';
+        clickPopup.style.display = 'flex';
+        pdb3dSavedPopupRestore = null;
+    }
     var connectorLineCanvas = document.createElement('canvas');
     connectorLineCanvas.id = 'pdb3d-connector-line';
     connectorLineCanvas.setAttribute('style', 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:15;');
     dom.pdbViewerContainer.appendChild(connectorLineCanvas);
-    var pdb3dClickAtom = null;
-    var pdb3dClickChain = null;
-    var pdb3dClickResi = null;
-    var pdb3dClickPos = null;
     var pdb3dConnectorRafId = null;
     function getResidueScreenPos(container) {
         if (!container || (!pdb3dClickAtom && !pdb3dClickPos)) return null;
@@ -8298,17 +8358,11 @@ function showSequenceLogo() {
 }
 
 function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerTransform = 1.0) {
-    // Amino acid color mapping
-    const aaColors = {
-        'D': '#e74c3c', 'E': '#e74c3c', // Red - acidic
-        'K': '#3498db', 'R': '#3498db', 'H': '#3498db', // Blue - basic
-        'S': '#2ecc71', 'N': '#2ecc71', 'T': '#2ecc71', 'G': '#2ecc71', 'Q': '#2ecc71', // Green - polar
-        'F': '#f39c12', 'A': '#f39c12', 'P': '#f39c12', 'I': '#f39c12', 
-        'L': '#f39c12', 'V': '#f39c12', 'M': '#f39c12', 'W': '#f39c12', 'Y': '#f39c12', // Orange - hydrophobic
-        'C': '#95a5a6', // Gray
-        '-': '#bdc3c7' // Light gray for gaps
-    };
-    
+    // Use CONFIG.colors.AA (app-wide palette) so logo matches sequence panel and molecule viewer
+    function aaFill(letter) {
+        return (CONFIG.colors.AA[letter] || CONFIG.colors.AA['default'] || '#000000');
+    }
+
     const refSeq = state.viewSequences[state.refIndex]?.seq;
     if (!refSeq || !state.refMap) {
         alert("Reference sequence or coordinate map not available.");
@@ -8756,13 +8810,13 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         text.setAttribute('font-size', '16');
         text.setAttribute('font-weight', 'bold');
         if (isGap) {
-            text.setAttribute('fill', '#808080'); // Grey for gaps
+            text.setAttribute('fill', aaFill('-'));
             text.textContent = '∇'; // Nabla character for gaps
         } else if (isDot) {
-            text.setAttribute('fill', '#808080'); // Grey for dots (None option)
+            text.setAttribute('fill', aaFill('default'));
             text.textContent = '.'; // Dot character
         } else if (bottomAA) {
-            text.setAttribute('fill', aaColors[bottomAA] || '#000');
+            text.setAttribute('fill', aaFill(bottomAA));
             text.textContent = bottomAA;
         }
         if (isGap || isDot || bottomAA) {
@@ -8898,11 +8952,11 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                     text.setAttribute('font-family', 'Courier New, Courier, monospace'); // Fixed-width font for consistent character alignment
                     text.setAttribute('font-size', baseFontSize.toString());
                     text.setAttribute('font-weight', 'bold');
-                    // Handle gaps (nabla character) with grey color
+                    // Handle gaps (nabla character) and AAs using CONFIG.colors.AA
                     if (aa === '∇') {
-                        text.setAttribute('fill', '#808080'); // Grey for gaps
+                        text.setAttribute('fill', aaFill('-'));
                     } else {
-                        text.setAttribute('fill', aaColors[aa] || '#000');
+                        text.setAttribute('fill', aaFill(aa));
                     }
                     
                     // Scale vertically from the baseline
