@@ -857,7 +857,8 @@ const state = {
     currentFileName: null, // Store the current alignment file name
     pdbFileContent: null, // Raw PDB/CIF text for 3D viewer (set when Load PDB/CIF or fetch by ID)
     pdbFileName: null,    // PDB/CIF file name for 3D overlay title
-    pdbFormat: 'pdb'     // 'pdb' or 'cif' for 3Dmol addModel
+    pdbFormat: 'pdb',   // 'pdb' or 'cif' for 3Dmol addModel
+    logoCharWidth: 15   // Horizontal gap between logo characters (10–20); used for drawing and region separators
 };
 
 // --- DOM ---
@@ -1027,9 +1028,19 @@ async function init() {
     // Disable buttons that require a file to be loaded
     disableButtonsOnStartup();
 
-    dom.file.addEventListener('change', e => loadFile(e.target.files[0]));
+    dom.file.addEventListener('change', function (e) {
+        if (e.target.files && e.target.files[0]) {
+            loadFile(e.target.files[0]);
+            e.target.value = '';
+        }
+    });
     if (dom.fileTree) {
-        dom.fileTree.addEventListener('change', e => loadTreeFile(e.target.files[0]));
+        dom.fileTree.addEventListener('change', function (e) {
+            if (e.target.files && e.target.files[0]) {
+                loadTreeFile(e.target.files[0]);
+                e.target.value = '';
+            }
+        });
     }
     if (dom.btnSortSequences) {
         dom.btnSortSequences.addEventListener('click', sortSequencesByName);
@@ -1066,7 +1077,12 @@ async function init() {
         dom.btnLoadEpitopes.addEventListener('click', () => dom.inpEpitopes.click());
     }
     if (dom.inpEpitopes) {
-        dom.inpEpitopes.addEventListener('change', e => loadEpitopes(e.target.files[0]));
+        dom.inpEpitopes.addEventListener('change', function (e) {
+            if (e.target.files && e.target.files[0]) {
+                loadEpitopes(e.target.files[0]);
+                e.target.value = '';
+            }
+        });
     }
     if (dom.btnSelectEpitope) {
         dom.btnSelectEpitope.addEventListener('click', showEpitopeSelector);
@@ -6614,6 +6630,8 @@ var pdb3dClickChain = null;
 var pdb3dClickResi = null;
 var pdb3dClickPos = null;
 var pdb3dSavedPopupRestore = null;
+var pdb3dLogoPanStack = [];      // Arrow keys pressed while logo open; on close we apply opposites to recenter
+var pdb3dLogoArrowKeyHandler = null;
 
 const PDB_RESIDUE_TO_ONE = {
     'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLN':'Q','GLU':'E','GLY':'G','HIS':'H',
@@ -7581,6 +7599,23 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     clickPopupClose.title = 'Close';
     clickPopupClose.onclick = function () {
         clickPopup.style.display = 'none';
+        var v = pdb3dViewerInstance;
+        var stack = pdb3dLogoPanStack.slice();
+        pdb3dLogoPanStack = [];
+        if (v && typeof v.translate === 'function' && stack.length > 0) {
+            var panStep = 20;
+            for (var i = stack.length - 1; i >= 0; i--) {
+                var key = stack[i];
+                var dx = 0, dy = 0;
+                if (key === 'ArrowLeft') { dx = panStep; dy = 0; }
+                else if (key === 'ArrowRight') { dx = -panStep; dy = 0; }
+                else if (key === 'ArrowUp') { dy = panStep; }
+                else if (key === 'ArrowDown') { dy = -panStep; }
+                else continue;
+                v.translate(dx, dy);
+            }
+            if (typeof v.render === 'function') v.render();
+        }
         pdb3dClickAtom = null;
         pdb3dClickChain = null;
         pdb3dClickResi = null;
@@ -7592,6 +7627,24 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
     clickPopup.appendChild(clickPopupLogoContainer);
     clickPopup.appendChild(clickPopupClose);
     dom.pdbViewerContainer.appendChild(clickPopup);
+    if (!pdb3dLogoArrowKeyHandler) {
+        var panStep = 20;
+        pdb3dLogoArrowKeyHandler = function (e) {
+            var popupEl = document.getElementById('pdb3d-click-popup');
+            if (!popupEl || popupEl.style.display !== 'flex' || !pdb3dViewerInstance || typeof pdb3dViewerInstance.translate !== 'function') return;
+            var dx = 0, dy = 0;
+            if (e.key === 'ArrowLeft') { dx = -panStep; dy = 0; }
+            else if (e.key === 'ArrowRight') { dx = panStep; dy = 0; }
+            else if (e.key === 'ArrowUp') { dx = 0; dy = -panStep; }
+            else if (e.key === 'ArrowDown') { dx = 0; dy = panStep; }
+            else return;
+            e.preventDefault();
+            pdb3dLogoPanStack.push(e.key);
+            pdb3dViewerInstance.translate(dx, dy);
+            pdb3dViewerInstance.render();
+        };
+        document.addEventListener('keydown', pdb3dLogoArrowKeyHandler);
+    }
     if (pdb3dSavedPopupRestore && pdb3dSavedPopupRestore.visible) {
         clickPopupHeading.textContent = pdb3dSavedPopupRestore.heading || '';
         clickPopupLogoContainer.innerHTML = pdb3dSavedPopupRestore.logoHTML || '';
@@ -7779,6 +7832,7 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
         clickPopupHeading.textContent = msg;
         if (clearLogo !== false) clickPopupLogoContainer.innerHTML = '';
         clickPopup.style.display = 'flex';
+        pdb3dLogoPanStack = [];
     }
     function showRegionLogoSelector(epitope, region, onOk) {
         var selectorOverlay = document.createElement('div');
@@ -7873,7 +7927,9 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
         buttonDiv.appendChild(okBtn);
         selectorModal.appendChild(buttonDiv);
         selectorOverlay.appendChild(selectorModal);
-        document.body.appendChild(selectorOverlay);
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+        var parent = (fsEl && fsEl.id === 'pdb3d-window') ? fsEl : document.body;
+        parent.appendChild(selectorOverlay);
     }
     function attachHoverAndClick() {
         try {
@@ -7953,6 +8009,19 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                             var sliderValue = document.createElement('span');
                             sliderValue.textContent = '1.00';
                             sliderValue.style.cssText = 'font-size:12px;';
+                            var gapLabel = document.createElement('label');
+                            gapLabel.textContent = 'GAP: ';
+                            gapLabel.style.cssText = 'margin-right:8px;font-size:12px;margin-left:12px;';
+                            var gapSlider = document.createElement('input');
+                            gapSlider.type = 'range';
+                            gapSlider.min = '10';
+                            gapSlider.max = '20';
+                            gapSlider.step = '1';
+                            gapSlider.value = String(state.logoCharWidth != null ? state.logoCharWidth : 15);
+                            gapSlider.style.cssText = 'width:120px;margin-right:6px;vertical-align:middle;';
+                            var gapValue = document.createElement('span');
+                            gapValue.textContent = String(state.logoCharWidth != null ? state.logoCharWidth : 15);
+                            gapValue.style.cssText = 'font-size:12px;';
                             function renderRegionLogo() {
                                 var oldSvg = clickPopupLogoContainer.querySelector('svg');
                                 if (oldSvg) oldSvg.remove();
@@ -7964,9 +8033,17 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                                 sliderValue.textContent = powerValue.toFixed(2);
                                 renderRegionLogo();
                             });
+                            gapSlider.addEventListener('input', function (e) {
+                                state.logoCharWidth = parseFloat(e.target.value);
+                                gapValue.textContent = String(Math.round(state.logoCharWidth));
+                                renderRegionLogo();
+                            });
                             sliderContainer.appendChild(sliderLabel);
                             sliderContainer.appendChild(slider);
                             sliderContainer.appendChild(sliderValue);
+                            sliderContainer.appendChild(gapLabel);
+                            sliderContainer.appendChild(gapSlider);
+                            sliderContainer.appendChild(gapValue);
                             clickPopupLogoContainer.innerHTML = '';
                             clickPopupLogoContainer.appendChild(sliderContainer);
                             renderRegionLogo();
@@ -8261,8 +8338,8 @@ function showSequenceLogo() {
         const fileName = state.currentFileName || dom.file?.files?.[0]?.name || 'Unknown';
         const epitopeName = epitope.name; // Capture epitope name for export closure
         
-        // Power transformation slider
-        let powerValue = 1.0; // Initialize to 1 (no transformation)
+        // Power and horizontal gap sliders
+        let powerValue = 1.0;
         const sliderContainer = document.createElement('div');
         sliderContainer.style.cssText = 'margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 4px;';
         
@@ -8282,22 +8359,50 @@ function showSequenceLogo() {
         sliderValue.textContent = '1.00';
         sliderValue.style.cssText = 'display: inline-block; min-width: 50px; font-weight: bold;';
         
-        slider.addEventListener('input', (e) => {
-            powerValue = parseFloat(e.target.value);
-            sliderValue.textContent = powerValue.toFixed(2);
-            // Regenerate logo with new power value
+        const gapLabel = document.createElement('label');
+        gapLabel.textContent = 'GAP: ';
+        gapLabel.style.cssText = 'display: inline-block; margin: 0 10px 0 20px; font-weight: bold;';
+        
+        const gapSlider = document.createElement('input');
+        gapSlider.type = 'range';
+        gapSlider.min = '10';
+        gapSlider.max = '20';
+        gapSlider.step = '1';
+        gapSlider.value = String(state.logoCharWidth != null ? state.logoCharWidth : 15);
+        gapSlider.style.cssText = 'width: 120px; margin-right: 10px;';
+        
+        const gapValue = document.createElement('span');
+        gapValue.textContent = String(state.logoCharWidth != null ? state.logoCharWidth : 15);
+        gapValue.style.cssText = 'display: inline-block; min-width: 24px; font-weight: bold;';
+        
+        function regenerateLogo() {
             const oldSvg = modal.querySelector('svg');
             if (oldSvg) oldSvg.remove();
             const newSvg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
             modal.insertBefore(newSvg, sliderContainer.nextSibling);
+        }
+        
+        slider.addEventListener('input', (e) => {
+            powerValue = parseFloat(e.target.value);
+            sliderValue.textContent = powerValue.toFixed(2);
+            regenerateLogo();
+        });
+        
+        gapSlider.addEventListener('input', (e) => {
+            state.logoCharWidth = parseFloat(e.target.value);
+            gapValue.textContent = String(Math.round(state.logoCharWidth));
+            regenerateLogo();
         });
         
         sliderContainer.appendChild(sliderLabel);
         sliderContainer.appendChild(slider);
         sliderContainer.appendChild(sliderValue);
+        sliderContainer.appendChild(gapLabel);
+        sliderContainer.appendChild(gapSlider);
+        sliderContainer.appendChild(gapValue);
         modal.appendChild(sliderContainer);
         
-        // Generate the logo with initial power value
+        // Generate the logo with initial power and gap values
         const svg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
         modal.appendChild(svg);
         
@@ -8485,13 +8590,14 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         });
     }
     
-    // SVG parameters
-    const charWidth = 18;
+    // SVG parameters: charWidth = horizontal gap only (slider); logoCellHeight = fixed vertical cell height
+    const charWidth = (state.logoCharWidth != null && typeof state.logoCharWidth === 'number') ? Math.max(10, Math.min(20, state.logoCharWidth)) : 15;
+    const logoCellHeight = 18; // Fixed vertical cell height (not affected by horizontal gap slider)
     const baseFontSize = 16;
     const baseHeight = baseFontSize; // Base height matches font size
     const capHeightRatio = 0.68; // Typical cap-height to font-size ratio for Courier New monospace font (baseline to top of capital letters)
-    const logoHeight = charWidth * 1.0; // Bottom logo height equals the character width (18px)
-    const groupLogoHeight = logoHeight * 3; // Group logo height is 3x larger to show rare mutations (90px)
+    const logoHeight = logoCellHeight * 1.0; // Bottom logo row height (fixed)
+    const groupLogoHeight = logoHeight * 3; // Group logo height is 3x larger to show rare mutations (fixed)
     const padding_horizontal = 40; // Horizontal padding (left and right)
     const padding_vertical = 40;   // Vertical padding (top and bottom)
     
