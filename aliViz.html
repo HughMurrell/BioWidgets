@@ -5647,16 +5647,30 @@ function showEpitopeSelector() {
     document.body.appendChild(selector);
 }
 
-/** Convert a ref region (1-based inclusive start/end) to alignment column indices. Only includes columns where the reference has a residue (not a gap). */
+/** Convert a ref region (1-based inclusive start/end) to alignment column indices.
+ * Returns all alignment columns from the first column that reaches region.start through the last that reaches region.end (inclusive).
+ * Interior columns are included even where the reference has a gap. Stops at the last column before refMap advances past region.end
+ * so trailing reference gaps do not pull in columns from the end of the alignment. */
 function getAlignmentColumnsForRefRegion(region) {
-    var refSeq = state.viewSequences && state.refIndex >= 0 ? state.viewSequences[state.refIndex].seq : null;
-    if (!refSeq || !state.refMap) return [];
-    var cols = [];
-    for (var col = 0; col < state.refMap.length && col < refSeq.length; col++) {
-        if (refSeq[col] !== '-' && refSeq[col] !== '.' && state.refMap[col] >= region.start && state.refMap[col] <= region.end) {
-            cols.push(col);
+    if (!state.refMap || state.refMap.length === 0) return [];
+    var firstCol = -1;
+    for (var col = 0; col < state.refMap.length; col++) {
+        if (state.refMap[col] >= region.start) {
+            firstCol = col;
+            break;
         }
     }
+    if (firstCol < 0) return [];
+    var lastCol = firstCol;
+    for (var col = firstCol; col < state.refMap.length; col++) {
+        if (state.refMap[col] > region.end) {
+            lastCol = col - 1;
+            break;
+        }
+        lastCol = col;
+    }
+    var cols = [];
+    for (var c = firstCol; c <= lastCol; c++) cols.push(c);
     return cols;
 }
 
