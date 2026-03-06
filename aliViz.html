@@ -2421,13 +2421,13 @@ function inferTreeNJ() {
     
     setTimeout(() => {
         try {
-            // Exclude reference and PDB chain sequences from tree inference
+            // Exclude reference, [subtype], and PDB chain sequences from tree inference
             const refName = state.rawSequences[state.refIndex]?.name;
             const nonRefSequences = state.rawSequences.filter((s, idx) =>
-                idx !== state.refIndex && !isPdbChainSequence(s));
+                idx !== state.refIndex && idx !== state.subtypeIndex && !isPdbChainSequence(s));
             
             if (nonRefSequences.length < 2) {
-                alert("Need at least 2 non-reference, non-PDB sequences to infer a tree.");
+                alert("Need at least 2 sequences (excluding reference, subtype, and PDB) to infer a tree.");
                 showOverlay(false);
                 return;
             }
@@ -2466,21 +2466,21 @@ async function runFastTreeTask() {
     dom.overlaySub.textContent = "via bioWASM";
 
     try {
-        // Exclude reference and PDB chain sequences from tree inference
+        // Exclude reference, [subtype], and PDB chain sequences from tree inference
         const nonRefSequences = state.rawSequences.filter((s, idx) =>
-            idx !== state.refIndex && !isPdbChainSequence(s));
+            idx !== state.refIndex && idx !== state.subtypeIndex && !isPdbChainSequence(s));
         
         if (nonRefSequences.length < 2) {
-            alert("Need at least 2 non-reference, non-PDB sequences to infer a tree.");
+            alert("Need at least 2 sequences (excluding reference, subtype, and PDB) to infer a tree.");
             showOverlay(false);
             return;
         }
         
-        // Use indices as temporary names (excluding ref and PDB chains)
+        // Use indices as temporary names (excluding ref, subtype, and PDB chains)
         const indexMap = new Map();
         let newIdx = 0;
         state.rawSequences.forEach((s, origIdx) => {
-            if (origIdx !== state.refIndex && !isPdbChainSequence(s)) {
+            if (origIdx !== state.refIndex && origIdx !== state.subtypeIndex && !isPdbChainSequence(s)) {
                 indexMap.set(newIdx, origIdx);
                 newIdx++;
             }
@@ -2783,25 +2783,17 @@ function showRerootModal() {
     const select = document.getElementById('sel-reroot-target');
     select.innerHTML = '';
     
-    // Add founder first (default selection)
+    // Add founder only (subtype is not in the tree after inference, so cannot be a root option)
     if (hasFounder) {
         const option = document.createElement('option');
         option.value = 'founder';
         option.textContent = '[Founder]';
-        option.selected = true; // Make founder the default
+        option.selected = true;
         select.appendChild(option);
     }
     
-    // Add subtype second
-    if (hasSubtype) {
-        const option = document.createElement('option');
-        option.value = 'subtype';
-        option.textContent = '[SUBTYPE]';
-        select.appendChild(option);
-    }
-    
-    if (!hasSubtype && !hasFounder) {
-        alert("No subtype or founder sequence found. Please add a founder sequence or ensure the subtype is present.");
+    if (!hasFounder) {
+        alert("No founder sequence found in the tree. Add a founder sequence to reroot.");
         return;
     }
     
@@ -3260,9 +3252,8 @@ function rerootTree(root, targetNode, targetType = 'subtype') {
             subtypeNode.len = 0;
         } else if (subtypeNode) {
             // Subtype found but not a direct child of root - no adjustment needed
-        } else {
-            console.warn(`Subtype "${subtypeName}" not found in tree after rerooting`);
         }
+        // If subtype not found: expected when subtype was excluded from tree inference; no warning
     }
     
     // The target node is now the root
@@ -3460,14 +3451,18 @@ function applyTreeOrder(root) {
         }
     });
     
-    // Order: Reference first, then PDB chains, then tree-ordered non-PDB, then any remaining non-PDB
+    // Order: Reference first, then Subtype (if present), then PDB chains, then tree-ordered non-PDB, then any remaining
     const newSeqList = [];
     if (refSeq) {
         newSeqList.push(refSeq); // Reference always first
     }
-    pdbChainsInOrder.forEach(s => newSeqList.push(s)); // PDB chains immediately after reference
+    if (subtypeSeq && subtypeName) {
+        newSeqList.push(subtypeSeq); // Subtype always second
+        seqMap.delete(subtypeName); // So it is not added again in tree order
+    }
+    pdbChainsInOrder.forEach(s => newSeqList.push(s)); // PDB chains after reference and subtype
     leafOrder.forEach(name => {
-        if (name !== refName && seqMap.has(name)) {
+        if (name !== refName && name !== subtypeName && seqMap.has(name)) {
             newSeqList.push(seqMap.get(name));
             seqMap.delete(name);
         }
@@ -3799,14 +3794,23 @@ function showProjectionPlot(selectedMethod) {
     const ys = projectionCoords.map(c => c.y);
     const rangeX = Math.max(...xs) - Math.min(...xs);
     const rangeY = Math.max(...ys) - Math.min(...ys);
-    const minRange = Math.min(rangeX, rangeY);
+    // Use the larger of the two ranges so radius is on the scale of the data (handles degenerate y=0 case)
+    const effectiveRange = (rangeX > 0 || rangeY > 0) ? Math.max(rangeX, rangeY) : 1;
     
-    // Set epsilon slider step to 0.01 of the minimum range
-    const epsStep = minRange * 0.01;
-    const epsMin = epsStep; // Minimum should be at least one step
-    // For UMAP, set max to 2x current spread value; for MDS, use 2x minimum range
-    const epsMax = selectedMethod === 'umap' ? spread * 2 : minRange * 2;
-    const epsDefault = minRange * 0.1; // Default to 10% of minimum range
+    // Maximum radius (epsilon max): step = 1/10 of max; for MDS use half of effectiveRange
+    const epsMin = 0;
+    const epsMax = selectedMethod === 'umap' ? spread * 2 : effectiveRange / 2;
+    const epsStep = epsMax > 0 ? epsMax / 10 : 0.1;
+    const epsDefault = Math.min(epsMax, effectiveRange * 0.1);
+    
+    // Console report for MDS/clustering debugging
+    const dim1Min = Math.min(...xs);
+    const dim1Max = Math.max(...xs);
+    const dim2Min = Math.min(...ys);
+    const dim2Max = Math.max(...ys);
+    console.log('[MDS projection] dimension 1 (x): min =', dim1Min, ', max =', dim1Max);
+    console.log('[MDS projection] dimension 2 (y): min =', dim2Min, ', max =', dim2Max);
+    console.log('[MDS clustering] maximum radius (epsMax) =', epsMax, ', radius step size (epsStep) =', epsStep);
     
     // Store data for DBSCAN updates
     window.mdsData = { leaves, coords: projectionCoords, subtypeName };
@@ -3817,18 +3821,18 @@ function showProjectionPlot(selectedMethod) {
     const epsValue = document.getElementById('mds-eps-value');
     const minPtsValue = document.getElementById('mds-minpts-value');
     
-    // Update epsilon slider attributes based on projection data
+    // Update epsilon slider attributes based on projection data (no rounding of max)
     epsSlider.min = epsMin.toString();
     epsSlider.max = epsMax.toString();
     epsSlider.step = epsStep.toString();
     epsSlider.value = epsDefault.toString();
     
-    // Calculate decimal places for display based on step size
-    // Clamp to valid range for toFixed() (0-100)
-    let decimalPlaces = 2; // Default
-    if (epsStep > 0 && isFinite(epsStep)) {
-        const calculated = Math.max(0, -Math.floor(Math.log10(epsStep)) + 1);
-        decimalPlaces = Math.min(100, Math.max(0, calculated));
+    // Decimal places for display: use enough so max radius is never shown as 0.00
+    let decimalPlaces = 2;
+    if (epsMax > 0 && epsMax < 1 && isFinite(epsMax)) {
+        decimalPlaces = Math.min(100, Math.max(2, Math.ceil(-Math.log10(epsMax)) + 2));
+    } else if (epsStep > 0 && isFinite(epsStep) && epsStep < 1) {
+        decimalPlaces = Math.min(100, Math.max(2, Math.ceil(-Math.log10(epsStep)) + 2));
     }
     
     // Store current clusters for apply button
@@ -3842,17 +3846,16 @@ function showProjectionPlot(selectedMethod) {
             minDist = minDistSlider ? parseFloat(minDistSlider.value) : 0.1;
             projectionCoords = performProjection(selectedMethod, distanceMatrix, nNeighbors, spread, minDist);
             
-            // Update coordinate ranges for epsilon slider
+            // Update coordinate ranges for epsilon slider (step = 1/10 of max)
             const xs = projectionCoords.map(c => c.x);
             const ys = projectionCoords.map(c => c.y);
             const rangeX = Math.max(...xs) - Math.min(...xs);
             const rangeY = Math.max(...ys) - Math.min(...ys);
             const minRange = Math.min(rangeX, rangeY);
-            const epsStep = minRange * 0.01;
-            const epsMin = epsStep;
-            // For UMAP, set max to 2x current spread value
             const epsMax = spread * 2;
-            const epsDefault = minRange * 0.1;
+            const epsStep = epsMax > 0 ? epsMax / 10 : 0.1;
+            const epsMin = 0;
+            const epsDefault = Math.min(epsMax, minRange > 0 ? minRange * 0.1 : epsStep);
             
             epsSlider.min = epsMin.toString();
             epsSlider.max = epsMax.toString();
@@ -4817,16 +4820,15 @@ function performClassicalMDS(distanceMatrix) {
     
     // Check if second eigenvalue is too small (relative to first)
     const ratio = lambda2 / (lambda1 + 1e-10);
+    const xScale = Math.sqrt(lambda1);
     
     for (let i = 0; i < n; i++) {
-        const x = eigenResult.vectors[0][i] * Math.sqrt(lambda1);
+        const x = eigenResult.vectors[0][i] * xScale;
         let y = eigenResult.vectors[1][i] * Math.sqrt(lambda2);
         
-        // If second eigenvalue is very small, still use it but scale appropriately
-        // This ensures we get some spread in the second dimension
         if (ratio < 1e-6 && lambda2 > 0) {
-            // Scale up the second dimension to make it visible
-            y = eigenResult.vectors[1][i] * Math.sqrt(lambda1) * 0.1;
+            // Second eigenvalue very small: scale second dimension for visibility
+            y = eigenResult.vectors[1][i] * xScale * 0.1;
         }
         
         coords.push({ x, y });
@@ -4943,7 +4945,7 @@ function performDBSCAN(coords, eps, minPts, subtypeIndex = null, founderIndex = 
     const n = coords.length;
     const visited = new Array(n).fill(false);
     const clusters = new Array(n).fill(-1); // -1 means noise/unassigned
-    let clusterId = 0;
+    let clusterId = 1; // Cluster numbers start at 1 (subtype is not part of clustering)
     
     // Calculate Euclidean distances between all points
     function distance(p1, p2) {
@@ -5307,37 +5309,19 @@ function drawMdsPlot(leaves, coords, subtypeName, clusters = null, epsilon = nul
         }
     });
     
-    // Draw legend
+    // Draw legend (no Subtype marker; subtype is not part of clustering)
     ctx.fillStyle = '#111827';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     let legendY = padding.top - 25;
     ctx.fillText('Legend:', padding.left, legendY);
-    
-    // Subtype
-    ctx.fillStyle = '#dc2626';
-    ctx.strokeStyle = '#991b1b';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    const subtypeX = padding.left + 60;
-    const subtypeY = legendY - 5;
-    const size = 6;
-    ctx.moveTo(subtypeX, subtypeY - size);
-    ctx.lineTo(subtypeX + size, subtypeY);
-    ctx.lineTo(subtypeX, subtypeY + size);
-    ctx.lineTo(subtypeX - size, subtypeY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#111827';
-    ctx.fillText('Subtype', subtypeX + 10, subtypeY + 4);
+    const legendBaselineY = legendY - 5;
     
     // Show cluster info if clustering is active
     if (clusters) {
         const numClusters = new Set(clusters.filter(c => c !== -1)).size;
         const numNoise = clusters.filter(c => c === -1).length;
-        
-        let xPos = subtypeX + 80;
+        let xPos = padding.left + 60;
         
         if (numClusters > 0) {
             ctx.fillText(`Clusters: ${numClusters}`, xPos, legendY);
@@ -5347,13 +5331,13 @@ function drawMdsPlot(leaves, coords, subtypeName, clusters = null, epsilon = nul
         if (numNoise > 0) {
             ctx.fillStyle = noiseColor;
             ctx.beginPath();
-            ctx.arc(xPos, subtypeY, 5, 0, 2 * Math.PI);
+            ctx.arc(xPos, legendBaselineY, 5, 0, 2 * Math.PI);
             ctx.fill();
             ctx.strokeStyle = '#6b7280';
             ctx.lineWidth = 1;
             ctx.stroke();
             ctx.fillStyle = '#111827';
-            ctx.fillText(`Noise: ${numNoise}`, xPos + 10, subtypeY + 4);
+            ctx.fillText(`Noise: ${numNoise}`, xPos + 10, legendBaselineY + 4);
         }
     }
 }
