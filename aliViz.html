@@ -3797,20 +3797,28 @@ function showProjectionPlot(selectedMethod) {
     // Use the larger of the two ranges so radius is on the scale of the data (handles degenerate y=0 case)
     const effectiveRange = (rangeX > 0 || rangeY > 0) ? Math.max(rangeX, rangeY) : 1;
     
-    // Maximum radius (epsilon max): step = 1/10 of max; for MDS use half of effectiveRange
+    // UMAP: max = half of max dimension range; initial = half of that; step = 1/10 of initial. MDS: max = effectiveRange/2, step = max/10
     const epsMin = 0;
-    const epsMax = selectedMethod === 'umap' ? spread * 2 : effectiveRange / 2;
-    const epsStep = epsMax > 0 ? epsMax / 10 : 0.1;
-    const epsDefault = Math.min(epsMax, effectiveRange * 0.1);
+    let epsMax, epsStep, epsDefault;
+    if (selectedMethod === 'umap') {
+        epsMax = effectiveRange / 2;
+        epsDefault = epsMax / 2;  // half of max
+        epsStep = epsDefault / 10;  // 1/10 of initial
+    } else {
+        epsMax = effectiveRange / 2;
+        epsStep = epsMax > 0 ? epsMax / 10 : 0.1;
+        epsDefault = epsMax / 2;  // MDS: start at half the maximum
+    }
     
-    // Console report for MDS/clustering debugging
+    // Console report for projection/clustering debugging (MDS or UMAP)
+    const methodLabel = selectedMethod === 'umap' ? 'UMAP' : 'MDS';
     const dim1Min = Math.min(...xs);
     const dim1Max = Math.max(...xs);
     const dim2Min = Math.min(...ys);
     const dim2Max = Math.max(...ys);
-    console.log('[MDS projection] dimension 1 (x): min =', dim1Min, ', max =', dim1Max);
-    console.log('[MDS projection] dimension 2 (y): min =', dim2Min, ', max =', dim2Max);
-    console.log('[MDS clustering] maximum radius (epsMax) =', epsMax, ', radius step size (epsStep) =', epsStep);
+    console.log('[' + methodLabel + ' projection] dimension 1 (x): min =', dim1Min, ', max =', dim1Max);
+    console.log('[' + methodLabel + ' projection] dimension 2 (y): min =', dim2Min, ', max =', dim2Max);
+    console.log('[' + methodLabel + ' clustering] maximum radius (epsMax) =', epsMax, ', radius step size (epsStep) =', epsStep);
     
     // Store data for DBSCAN updates
     window.mdsData = { leaves, coords: projectionCoords, subtypeName };
@@ -3846,16 +3854,16 @@ function showProjectionPlot(selectedMethod) {
             minDist = minDistSlider ? parseFloat(minDistSlider.value) : 0.1;
             projectionCoords = performProjection(selectedMethod, distanceMatrix, nNeighbors, spread, minDist);
             
-            // Update coordinate ranges for epsilon slider (step = 1/10 of max)
+            // UMAP: max = half of max dimension range; initial = half of max; step = 1/10 of initial
             const xs = projectionCoords.map(c => c.x);
             const ys = projectionCoords.map(c => c.y);
             const rangeX = Math.max(...xs) - Math.min(...xs);
             const rangeY = Math.max(...ys) - Math.min(...ys);
-            const minRange = Math.min(rangeX, rangeY);
-            const epsMax = spread * 2;
-            const epsStep = epsMax > 0 ? epsMax / 10 : 0.1;
+            const effectiveRange = (rangeX > 0 || rangeY > 0) ? Math.max(rangeX, rangeY) : 1;
+            const epsMax = effectiveRange / 2;
+            const epsDefault = epsMax / 2;
+            const epsStep = epsDefault / 10;
             const epsMin = 0;
-            const epsDefault = Math.min(epsMax, minRange > 0 ? minRange * 0.1 : epsStep);
             
             epsSlider.min = epsMin.toString();
             epsSlider.max = epsMax.toString();
@@ -4301,6 +4309,7 @@ function showHierarchicalModal() {
     }
     
     const maxDepth = state.tree.maxDepth;
+    console.log('[Hierarchical clustering] max root-to-leaf length =', maxDepth);
     
     // Set up sliders
     const slider1 = document.getElementById('hier-slider-1');
@@ -4310,19 +4319,27 @@ function showHierarchicalModal() {
     const value2 = document.getElementById('hier-value-2');
     const value3 = document.getElementById('hier-value-3');
     
-    // Set max values (allow one step past maximum depth)
-    const step = 0.01;
-    slider1.max = maxDepth + step;
-    slider2.max = maxDepth + step;
-    slider3.max = maxDepth + step;
+    // Max = max root-to-leaf rounded up (e.g. 0.005746 → 0.006, 0.0345 → 0.04); step = 0.001
+    const sliderMax = maxDepth < 0.01
+        ? Math.ceil(maxDepth * 1000) / 1000
+        : Math.ceil(maxDepth * 100) / 100;
+    const step = 0.001;
+    slider1.max = sliderMax.toString();
+    slider2.max = sliderMax.toString();
+    slider3.max = sliderMax.toString();
+    slider1.step = step.toString();
+    slider2.step = step.toString();
+    slider3.step = step.toString();
     
-    // Initialize values
-    slider1.value = 0;
-    slider2.value = 0;
-    slider3.value = 0;
-    value1.textContent = '0.00';
-    value2.textContent = '0.00';
-    value3.textContent = '0.00';
+    // Start the three sliders at 0.001, 0.002, 0.003
+    slider1.value = 0.001;
+    slider2.value = 0.002;
+    slider3.value = 0.003;
+    value1.textContent = (0.001).toFixed(3);
+    value2.textContent = (0.002).toFixed(3);
+    value3.textContent = (0.003).toFixed(3);
+    state.hierarchicalDepths = [0.001, 0.002, 0.003];
+    applyHierarchicalClustering(0.001, 0.002, 0.003);
     
     // Function to update clustering
     function updateHierarchicalClustering() {
@@ -4339,18 +4356,18 @@ function showHierarchicalModal() {
     // Slider event handlers with constraints
     slider1.addEventListener('input', () => {
         const val = parseFloat(slider1.value);
-        value1.textContent = val.toFixed(2);
+        value1.textContent = val.toFixed(3);
         
         // Constrain slider2 >= slider1
         if (parseFloat(slider2.value) < val) {
             slider2.value = val;
-            value2.textContent = val.toFixed(2);
+            value2.textContent = val.toFixed(3);
         }
         
         // Constrain slider3 >= slider2
         if (parseFloat(slider3.value) < parseFloat(slider2.value)) {
             slider3.value = slider2.value;
-            value3.textContent = slider2.value;
+            value3.textContent = parseFloat(slider2.value).toFixed(3);
         }
         
         updateHierarchicalClustering();
@@ -4363,16 +4380,16 @@ function showHierarchicalModal() {
         // Constrain slider2 >= slider1
         if (val < val1) {
             slider2.value = val1;
-            value2.textContent = val1.toFixed(2);
+            value2.textContent = val1.toFixed(3);
             return;
         }
         
-        value2.textContent = val.toFixed(2);
+        value2.textContent = val.toFixed(3);
         
         // Constrain slider3 >= slider2
         if (parseFloat(slider3.value) < val) {
             slider3.value = val;
-            value3.textContent = val.toFixed(2);
+            value3.textContent = val.toFixed(3);
         }
         
         updateHierarchicalClustering();
@@ -4385,11 +4402,11 @@ function showHierarchicalModal() {
         // Constrain slider3 >= slider2
         if (val < val2) {
             slider3.value = val2;
-            value3.textContent = val2.toFixed(2);
+            value3.textContent = val2.toFixed(3);
             return;
         }
         
-        value3.textContent = val.toFixed(2);
+        value3.textContent = val.toFixed(3);
         updateHierarchicalClustering();
     });
     
