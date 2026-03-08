@@ -648,11 +648,12 @@
     <div class="item" id="ctx-info-cluster">Cluster: Not assigned</div>
 </div>
 
-<div id="pdb3d-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 10001;">
-    <div id="pdb3d-window" style="position: fixed; left: 5%; top: 5%; width: 90vw; max-width: 1000px; height: 85vh; background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; z-index: 10002;">
+<div id="pdb3d-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 10001; pointer-events: none;">
+    <div id="pdb3d-window" style="position: fixed; left: 5%; top: 5%; width: 90vw; max-width: 1000px; height: 85vh; background: var(--panel-bg, #fff); border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; z-index: 10002; pointer-events: auto;">
         <div id="pdb3d-title-bar" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color, #d1d5db); cursor: move; user-select: none; background: #fff; z-index: 10;">
             <span id="pdb3d-title" style="font-weight: 600;">PDB 3D Structure</span>
             <div style="display: flex; gap: 8px; align-items: center;">
+                <button id="btn-new-epitope-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">New epitope</button>
                 <button id="btn-fullscreen-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Full screen</button>
                 <button id="btn-export-png-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Export PNG</button>
                 <button id="btn-close-pdb3d" type="button" style="padding: 6px 12px; cursor: pointer;">Close</button>
@@ -699,6 +700,28 @@
             </div>
         </div>
         <div id="pdb3d-viewer" style="flex: 1; min-height: 0; width: 100%; position: relative; z-index: 1;"></div>
+    </div>
+</div>
+<div id="new-epitope-dialog-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 10010;">
+    <div id="new-epitope-dialog" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); min-width: 320px;">
+        <h3 style="margin: 0 0 15px 0;">New epitope (distance-based)</h3>
+        <p style="margin: 0 0 12px 0; font-size: 12px; color: #374151;">Select one intrinsic and one extrinsic chain. Compute minimum distance from each intrinsic residue to the extrinsic chain; residues below the cutoff form the epitope.</p>
+        <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">Intrinsic chain</label>
+            <select id="new-epitope-intrinsic-chain" style="width: 100%; padding: 6px 8px; font-size: 13px;"></select>
+        </div>
+        <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">Extrinsic chain</label>
+            <select id="new-epitope-extrinsic-chain" style="width: 100%; padding: 6px 8px; font-size: 13px;"></select>
+        </div>
+        <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">Distance cutoff (&Aring;): <span id="new-epitope-cutoff-value">8</span></label>
+            <input type="range" id="new-epitope-cutoff-slider" min="3" max="20" step="0.5" value="8" style="width: 100%;">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+            <button type="button" id="new-epitope-cancel" style="padding: 8px 16px; border: 1px solid #ccc; background: white; cursor: pointer;">Cancel</button>
+            <button type="button" id="new-epitope-compute" style="padding: 8px 16px; border: 1px solid #2563eb; background: #2563eb; color: white; cursor: pointer;">Compute</button>
+        </div>
     </div>
 </div>
 
@@ -1256,6 +1279,66 @@ async function init() {
     }
     if (dom.pdbOverlay) {
         dom.pdbOverlay.addEventListener('click', e => { if (e.target === dom.pdbOverlay) closePdbViewer(); });
+    }
+    var btnNewEpitopePdb3d = document.getElementById('btn-new-epitope-pdb3d');
+    var newEpitopeOverlay = document.getElementById('new-epitope-dialog-overlay');
+    var newEpitopeIntrinsicSel = document.getElementById('new-epitope-intrinsic-chain');
+    var newEpitopeExtrinsicSel = document.getElementById('new-epitope-extrinsic-chain');
+    var newEpitopeCutoffSlider = document.getElementById('new-epitope-cutoff-slider');
+    var newEpitopeCutoffValue = document.getElementById('new-epitope-cutoff-value');
+    var newEpitopeCancel = document.getElementById('new-epitope-cancel');
+    var newEpitopeCompute = document.getElementById('new-epitope-compute');
+    if (btnNewEpitopePdb3d && newEpitopeOverlay) {
+        btnNewEpitopePdb3d.addEventListener('click', function () {
+            if (!pdb3dIntrinsicChainIds.length || !pdb3dExtrinsicChainIds.length) {
+                alert('Open the molecule viewer with at least one intrinsic and one extrinsic chain first.');
+                return;
+            }
+            newEpitopeIntrinsicSel.innerHTML = '';
+            pdb3dIntrinsicChainIds.forEach(function (id) {
+                var opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = id;
+                newEpitopeIntrinsicSel.appendChild(opt);
+            });
+            newEpitopeExtrinsicSel.innerHTML = '';
+            pdb3dExtrinsicChainIds.forEach(function (id) {
+                var opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = id;
+                newEpitopeExtrinsicSel.appendChild(opt);
+            });
+            if (newEpitopeCutoffSlider && newEpitopeCutoffValue) {
+                newEpitopeCutoffValue.textContent = newEpitopeCutoffSlider.value;
+            }
+            newEpitopeOverlay.style.display = 'flex';
+        });
+    }
+    if (newEpitopeCutoffSlider && newEpitopeCutoffValue) {
+        newEpitopeCutoffSlider.addEventListener('input', function () {
+            newEpitopeCutoffValue.textContent = newEpitopeCutoffSlider.value;
+        });
+    }
+    if (newEpitopeCancel && newEpitopeOverlay) {
+        newEpitopeCancel.addEventListener('click', function () { newEpitopeOverlay.style.display = 'none'; });
+    }
+    if (newEpitopeCompute && newEpitopeOverlay) {
+        newEpitopeCompute.addEventListener('click', function () {
+            var intrinsicChain = newEpitopeIntrinsicSel && newEpitopeIntrinsicSel.value;
+            var extrinsicChain = newEpitopeExtrinsicSel && newEpitopeExtrinsicSel.value;
+            var cutoff = newEpitopeCutoffSlider ? parseFloat(newEpitopeCutoffSlider.value) : 8;
+            if (!intrinsicChain || !extrinsicChain) {
+                alert('Please select one intrinsic and one extrinsic chain.');
+                return;
+            }
+            var result = computeDistanceBasedEpitope(state.pdbFileContent, intrinsicChain, extrinsicChain, cutoff);
+            if (result && result.regions && result.regions.length > 0) {
+                if (!state.epitopes) state.epitopes = [];
+                state.epitopes.push({ name: result.name, regions: result.regions });
+                selectEpitope(result.name);
+            }
+            newEpitopeOverlay.style.display = 'none';
+        });
     }
     dom.btnInferTree.addEventListener('click', showInferModal);
     dom.btnExportTree.addEventListener('click', exportTree);
@@ -5597,9 +5680,9 @@ function showEpitopeSelector() {
         return;
     }
     
-    // Create a simple selector dialog
+    // Create a simple selector dialog (z-index above PDB viewer so it appears in front when viewer is open)
     const selector = document.createElement('div');
-    selector.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 10000; min-width: 300px;';
+    selector.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 10010; min-width: 300px;';
     
     const title = document.createElement('h3');
     title.textContent = 'Select Epitope';
@@ -5706,6 +5789,11 @@ function selectEpitope(epitopeName) {
     enableButtonsAfterSelectEpitope();
     
     recalc();
+    
+    // Update PDB 3D viewer if open so epitope coloring reflects the new selection
+    if (typeof pdb3dViewerInstance !== 'undefined' && pdb3dViewerInstance && typeof applyPdb3dStyleToViewer === 'function') {
+        applyPdb3dStyleToViewer();
+    }
 }
 
 function setTreeWidth(w) {
@@ -7259,6 +7347,160 @@ function filterStructureByChains(text, chainIds) {
     return isCifStructure(text) ? filterCifByChains(text, chainIds) : filterPdbByChains(text, chainIds);
 }
 
+/** Get per-residue atoms with coordinates for a chain from PDB text. Returns [ { resSeq, atoms: [{x,y,z}] } ]. */
+function getChainAtomsFromPdb(pdbText, chainId) {
+    var byRes = new Map();
+    var lines = (pdbText || '').split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.startsWith('ATOM ') || line.startsWith('HETATM ')) {
+            var ch = (line.substring(21, 22) || ' ').trim() || 'A';
+            if (ch !== chainId) continue;
+            var resName = (line.substring(17, 20) || '').trim();
+            if (PDB_RESIDUE_TO_ONE[resName] === '') continue;
+            var resSeq = parseInt(line.substring(22, 26), 10) || 0;
+            var x = parseFloat(line.substring(30, 38)) || 0;
+            var y = parseFloat(line.substring(38, 46)) || 0;
+            var z = parseFloat(line.substring(46, 54)) || 0;
+            if (!byRes.has(resSeq)) byRes.set(resSeq, []);
+            byRes.get(resSeq).push({ x: x, y: y, z: z });
+        }
+    }
+    var resSeqs = Array.from(byRes.keys()).sort(function (a, b) { return a - b; });
+    return resSeqs.map(function (resSeq) { return { resSeq: resSeq, atoms: byRes.get(resSeq) }; });
+}
+
+/** Get per-residue atoms with coordinates for a chain from CIF text. Returns [ { resSeq, atoms: [{x,y,z}] } ]. */
+function getChainAtomsFromCif(cifText, chainId) {
+    var lines = (cifText || '').split(/\r?\n/);
+    var colChain = -1, colSeq = -1, colComp = -1, colX = -1, colY = -1, colZ = -1;
+    var inAtomSite = false;
+    var columns = [];
+    var byRes = new Map();
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        if (trimmed.startsWith('loop_')) {
+            inAtomSite = false;
+            columns = [];
+            colChain = colSeq = colComp = colX = colY = colZ = -1;
+            continue;
+        }
+        if (trimmed.startsWith('_atom_site.')) {
+            var name = trimmed.slice(11).split(/\s/)[0];
+            columns.push(name);
+            if (name === 'label_asym_id' || name === 'auth_asym_id') colChain = columns.length - 1;
+            if (name === 'label_seq_id' || name === 'auth_seq_id') colSeq = columns.length - 1;
+            if (name === 'label_comp_id' || name === 'auth_comp_id') colComp = columns.length - 1;
+            if (name === 'Cartn_x' || name === 'auth_Cartn_x') colX = columns.length - 1;
+            if (name === 'Cartn_y' || name === 'auth_Cartn_y') colY = columns.length - 1;
+            if (name === 'Cartn_z' || name === 'auth_Cartn_z') colZ = columns.length - 1;
+            inAtomSite = true;
+            continue;
+        }
+        if (inAtomSite && columns.length > 0 && colChain >= 0 && colSeq >= 0 && colComp >= 0 && colX >= 0 && colY >= 0 && colZ >= 0) {
+            if (trimmed.startsWith('_') || trimmed === '' || trimmed.startsWith('#')) { inAtomSite = false; continue; }
+            var parts = line.split(/\s+/);
+            if (parts.length < columns.length) continue;
+            if ((parts[colChain] || '').trim() !== chainId) continue;
+            var resName = (parts[colComp] || '').trim().slice(0, 3);
+            if (PDB_RESIDUE_TO_ONE[resName] === '') continue;
+            var resSeq = parseInt(parts[colSeq], 10) || 0;
+            var x = parseFloat(parts[colX]) || 0;
+            var y = parseFloat(parts[colY]) || 0;
+            var z = parseFloat(parts[colZ]) || 0;
+            if (!byRes.has(resSeq)) byRes.set(resSeq, []);
+            byRes.get(resSeq).push({ x: x, y: y, z: z });
+        }
+    }
+    var resSeqs = Array.from(byRes.keys()).sort(function (a, b) { return a - b; });
+    return resSeqs.map(function (resSeq) { return { resSeq: resSeq, atoms: byRes.get(resSeq) }; });
+}
+
+/** Get per-residue atoms for a chain (PDB or CIF). Returns [ { resSeq, atoms: [{x,y,z}] } ]. */
+function getChainAtoms(text, chainId) {
+    return isCifStructure(text) ? getChainAtomsFromCif(text, chainId) : getChainAtomsFromPdb(text, chainId);
+}
+
+/** Compute distance-based epitope: residues on intrinsic chain whose min distance to extrinsic chain is below cutoff.
+ * Returns { name, cutoff, residues: [ { resSeq, refCoords: { single } or { pair } }, ... ] } or null. Epitope name = pdbCode_cutoff. Reference coords are 1-based. */
+function computeDistanceBasedEpitope(pdbContent, intrinsicChainId, extrinsicChainId, cutoff) {
+    if (!pdbContent) return null;
+    var intrinsicResidues = getChainAtoms(pdbContent, intrinsicChainId);
+    var extrinsicResidues = getChainAtoms(pdbContent, extrinsicChainId);
+    if (!intrinsicResidues.length || !extrinsicResidues.length) return null;
+    var extrinsicAtoms = [];
+    extrinsicResidues.forEach(function (r) {
+        r.atoms.forEach(function (a) { extrinsicAtoms.push(a); });
+    });
+    if (!extrinsicAtoms.length) return null;
+    function dist(a, b) {
+        var dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    function minDistToExtrinsic(atoms) {
+        var d = Infinity;
+        for (var i = 0; i < atoms.length; i++) {
+            for (var j = 0; j < extrinsicAtoms.length; j++) {
+                var t = dist(atoms[i], extrinsicAtoms[j]);
+                if (t < d) d = t;
+            }
+        }
+        return d;
+    }
+    var residuesBelowCutoff = [];
+    intrinsicResidues.forEach(function (r) {
+        var minD = minDistToExtrinsic(r.atoms);
+        if (minD < cutoff) residuesBelowCutoff.push(r.resSeq);
+    });
+    var pdbCode = (state.pdbFileName || 'PDB').replace(/\.(pdb|ent|cif)$/i, '');
+    var name = pdbCode + '_' + cutoff;
+    var residueRefs = [];
+    residuesBelowCutoff.forEach(function (resSeq) {
+        var refCoords = getRefCoordsForPdbResidue(intrinsicChainId, resSeq);
+        residueRefs.push({ resSeq: resSeq, refCoords: refCoords });
+    });
+    var formatted = formatEpitopeAsFileLine(name, residueRefs);
+    if (formatted && formatted.line) console.log(formatted.line);
+    return { name: name, cutoff: cutoff, residues: residueRefs, epitopeLine: formatted && formatted.line, regions: formatted && formatted.regions };
+}
+
+/** Convert residueRefs (with refCoords single or pair) to [start,end] ranges, merge joining/overlapping regions, then format as epitope file line. Returns { line, regions } (regions = [{ start, end }, ...]). */
+function formatEpitopeAsFileLine(epitopeName, residueRefs) {
+    var ranges = [];
+    residueRefs.forEach(function (item) {
+        var rc = item.refCoords;
+        if (!rc) return;
+        var start, end;
+        if (rc.single != null) {
+            start = rc.single;
+            end = rc.single;
+        } else if (rc.pair && rc.pair.length >= 2) {
+            start = rc.pair[0];
+            end = rc.pair[1];
+        } else return;
+        ranges.push([start, end]);
+    });
+    if (ranges.length === 0) return { line: epitopeName, regions: [] };
+    ranges.sort(function (a, b) { return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]; });
+    var merged = [ranges[0].slice()];
+    for (var i = 1; i < ranges.length; i++) {
+        var prev = merged[merged.length - 1];
+        var cur = ranges[i];
+        if (cur[0] <= prev[1] + 1) {
+            if (cur[1] > prev[1]) prev[1] = cur[1];
+        } else {
+            merged.push(cur.slice());
+        }
+    }
+    var regions = merged.map(function (r) { return { start: r[0], end: r[1] }; });
+    var parts = [epitopeName];
+    merged.forEach(function (r) {
+        parts.push(r[0] === r[1] ? String(r[0]) : r[0] + ':' + r[1]);
+    });
+    return { line: parts.join(','), regions: regions };
+}
+
 /** Filter PDB text to only include ATOM/HETATM lines for the given chain IDs. */
 function filterPdbByChains(pdbText, chainIds) {
     const set = new Set(chainIds);
@@ -7306,6 +7548,52 @@ function getRefCoordForPdbResidue(chainId, resSeq) {
             if (resSeqs[fullChainIndex] === resSeqNum) {
                 return state.refMap[col];
             }
+        }
+    }
+    return null;
+}
+
+/** Reference coord(s) for PDB residue (chainId, resSeq) by finding where it sits in the panel alignment and reading ref from there.
+ * Returns null if not in alignment. Includes one-letter residue from the chain row at that column.
+ * If residue aligns to a non-gap in the reference: { single: refCoord, resLetter } (1-based).
+ * If it aligns to a gap in the reference: { pair: [refBefore, refAfter], resLetter } (first non-gap before, first non-gap after). */
+function getRefCoordsForPdbResidue(chainId, resSeq) {
+    if (!state.viewSequences || !state.refMap) return null;
+    var resSeqLists = getStructureChainResSeqLists(state.pdbFileContent);
+    var resSeqs = resSeqLists.get(chainId);
+    if (!resSeqs) return null;
+    var resSeqNum = parseInt(resSeq, 10);
+    var refView = state.viewSequences[state.refIndex];
+    var refSeq = refView && refView.seq;
+    if (!refSeq) return null;
+    for (var v = 0; v < state.viewSequences.length; v++) {
+        var view = state.viewSequences[v];
+        var m = (view.name || '').match(/^[A-Za-z0-9]+_Chain_(.+)$/);
+        if (!m || m[1] !== chainId) continue;
+        var row = view.seq || [];
+        var chainStart = (view.chainStart != null && view.chainStart >= 0) ? view.chainStart : 0;
+        for (var col = 0; col < row.length && col < state.refMap.length; col++) {
+            if (row[col] === '-' || row[col] === '.') continue;
+            var residueIndexInRow = pdbRowResidueIndexAtColumn(row, col);
+            var fullChainIndex = chainStart + residueIndexInRow;
+            if (fullChainIndex < 0 || fullChainIndex >= resSeqs.length) continue;
+            if (resSeqs[fullChainIndex] !== resSeqNum) continue;
+            var resLetter = (normToOneLetter(row[col]) || String(row[col]).trim() || '?').toUpperCase();
+            if (resLetter.length > 1) resLetter = resLetter.charAt(0);
+            var refCoord = state.refMap[col];
+            var refChar = refSeq[col];
+            if (refChar !== '-' && refChar !== '.') {
+                return { single: refCoord, resLetter: resLetter };
+            }
+            var refBefore = refCoord;
+            var refAfter = refBefore;
+            for (var c = col + 1; c < refSeq.length && c < state.refMap.length; c++) {
+                if (refSeq[c] !== '-' && refSeq[c] !== '.') {
+                    refAfter = state.refMap[c];
+                    break;
+                }
+            }
+            return { pair: [refBefore, refAfter], resLetter: resLetter };
         }
     }
     return null;
@@ -7520,6 +7808,7 @@ function applyPdb3dStyleToViewer() {
         try { pdb3dViewerInstance.setView(savedView); } catch (e) { /* ignore */ }
     }
     pdb3dViewerInstance.render();
+    updatePdb3dAALabels(pdb3dViewerInstance);
 }
 
 function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
