@@ -448,7 +448,8 @@
             <select id="sel-projection-method" style="width: 100%;">
                 <option value="mds">MDS (Classical Multidimensional Scaling)</option>
                 <option value="umap">UMAP (Uniform Manifold Approximation and Projection)</option>
-                <option value="hierarchical">Hierarchical (Tree-based Clustering)</option>
+                <option value="hierarchical">Hierarchical (tree-cut clustering)</option>
+                <option value="hierarchical-clade">Hierarchical (tree-clade clustering)</option>
             </select>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -483,6 +484,24 @@
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button id="btn-hier-cancel">Cancel</button>
             <button id="btn-hier-accept" class="active">Accept</button>
+        </div>
+    </div>
+</div>
+
+<div id="hierarchical-clade-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
+    <div class="help-box" style="width: 420px; pointer-events: auto;">
+        <h2>Tree-clade clustering</h2>
+        <p style="margin: 0 0 15px 0; font-size: 12px; color: #374151;">A new clade starts when the incoming branch length to a node is greater than the threshold. Leaves are grouped by the clade that contains them.</p>
+        <div style="margin: 20px 0; display: flex; flex-direction: column; gap: 15px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-size: 12px; color: #374151; min-width: 140px;">Branch length threshold:</label>
+                <input type="range" id="clade-threshold-slider" min="0" max="0.01" step="0.0001" value="0.001" style="flex: 1;">
+                <span id="clade-threshold-value" style="font-size: 11px; color: #374151; min-width: 55px; text-align: right;">0.001</span>
+            </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button id="btn-clade-cancel">Cancel</button>
+            <button id="btn-clade-accept" class="active">Accept</button>
         </div>
     </div>
 </div>
@@ -1367,6 +1386,8 @@ async function init() {
             document.getElementById('method-select-overlay').style.display = 'none';
             if (selectedMethod === 'hierarchical') {
                 showHierarchicalModal();
+            } else if (selectedMethod === 'hierarchical-clade') {
+                showHierarchicalCladeModal();
             } else {
                 showProjectionPlot(selectedMethod);
             }
@@ -4610,6 +4631,168 @@ function showHierarchicalModal() {
     
     // Initial clustering
     updateHierarchicalClustering();
+}
+
+function showHierarchicalCladeModal() {
+    if (!state.tree || !state.tree.root) {
+        alert("Please load or infer a tree first.");
+        return;
+    }
+    if (!state.tree.maxDepth) {
+        let totalLen = 0;
+        function checkLen(n) { totalLen += (n.len || 0); n.children.forEach(checkLen); }
+        checkLen(state.tree.root);
+        const useCladogram = (totalLen === 0);
+        let maxDepth = 0;
+        function layoutX(node, currentDepth) {
+            let dist = useCladogram ? (node === state.tree.root ? 0 : 1) : (node.len || 0);
+            node.xDepth = currentDepth + dist;
+            if (node.xDepth > maxDepth) maxDepth = node.xDepth;
+            node.children.forEach(c => layoutX(c, node.xDepth));
+        }
+        layoutX(state.tree.root, 0);
+        state.tree.maxDepth = maxDepth;
+    }
+    let maxBranch = 0;
+    function collectMaxBranch(node) {
+        const len = node.len != null ? node.len : 0;
+        if (len > maxBranch) maxBranch = len;
+        if (node.children) node.children.forEach(collectMaxBranch);
+    }
+    collectMaxBranch(state.tree.root);
+    const sliderMax = Math.max(0.01, maxBranch < 0.01 ? Math.ceil(maxBranch * 1000) / 1000 : Math.ceil(maxBranch * 100) / 100);
+    const slider = document.getElementById('clade-threshold-slider');
+    const valueSpan = document.getElementById('clade-threshold-value');
+    slider.min = '0';
+    slider.max = sliderMax.toString();
+    slider.step = '0.0001';
+    slider.value = Math.min(0.001, sliderMax).toString();
+    valueSpan.textContent = parseFloat(slider.value).toFixed(4);
+    function updateCladeClustering() {
+        const threshold = parseFloat(slider.value);
+        valueSpan.textContent = threshold.toFixed(4);
+        applyCladeClustering(threshold);
+    }
+    slider.oninput = updateCladeClustering;
+    document.getElementById('btn-clade-cancel').onclick = () => {
+        document.getElementById('hierarchical-clade-overlay').style.display = 'none';
+        recalc();
+    };
+    document.getElementById('btn-clade-accept').onclick = () => {
+        const delimiter = state.groupDelimiter || '_';
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+        const nameMapping = new Map();
+        state.rawSequences.forEach(seq => {
+            if (seq.name) {
+                const originalName = seq.name.replace(clusterPattern, '');
+                const clusterId = state.leafClusters ? state.leafClusters.get(originalName) : undefined;
+                if (clusterId !== undefined && clusterId !== -1) {
+                    const oldName = seq.name;
+                    const newName = originalName + `${delimiter}cl-${clusterId}`;
+                    seq.name = newName;
+                    if (oldName !== newName) nameMapping.set(oldName, newName);
+                } else if (clusterId === -1) {
+                    const oldName = seq.name;
+                    const newName = originalName + `${delimiter}cl-na`;
+                    seq.name = newName;
+                    if (oldName !== newName) nameMapping.set(oldName, newName);
+                }
+            }
+        });
+        if (state.tree && state.tree.root && nameMapping.size > 0) {
+            function updateTreeNodeNames(node) {
+                if (node.name) {
+                    if (nameMapping.has(node.name)) node.name = nameMapping.get(node.name);
+                    else {
+                        const originalNodeName = node.name.replace(clusterPattern, '');
+                        for (const [oldName, newName] of nameMapping.entries()) {
+                            if (oldName.replace(clusterPattern, '') === originalNodeName) {
+                                node.name = newName;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (node.children) node.children.forEach(updateTreeNodeNames);
+            }
+            updateTreeNodeNames(state.tree.root);
+        }
+        if (state.leafClusters && state.leafClusters.size > 0) {
+            const updatedLeafClusters = new Map();
+            state.rawSequences.forEach(seq => {
+                if (seq.name) {
+                    const originalName = seq.name.replace(clusterPattern, '');
+                    const clusterId = state.leafClusters.get(originalName);
+                    if (clusterId !== undefined) updatedLeafClusters.set(seq.name, clusterId);
+                }
+            });
+            state.leafClusters = updatedLeafClusters;
+        }
+        if (state.sequenceGroups && state.sequenceGroups.size > 0) {
+            const updatedSequenceGroups = new Map();
+            state.rawSequences.forEach(seq => {
+                if (seq.name) {
+                    const originalName = seq.name.replace(clusterPattern, '');
+                    const groupId = state.sequenceGroups.get(originalName);
+                    if (groupId !== undefined) updatedSequenceGroups.set(seq.name, groupId);
+                }
+            });
+            state.sequenceGroups = updatedSequenceGroups;
+        }
+        document.getElementById('hierarchical-clade-overlay').style.display = 'none';
+        recalc();
+    };
+    document.getElementById('hierarchical-clade-overlay').style.display = 'flex';
+    updateCladeClustering();
+}
+
+function applyCladeClustering(threshold) {
+    if (!state.tree || !state.tree.root) return;
+    const leafToCluster = new Map();
+    let nextClusterId = 2;
+    const delimiter = state.groupDelimiter || '_';
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const subtypeNameWithSuffix = (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length)
+        ? state.rawSequences[state.subtypeIndex].name
+        : null;
+    const subtypeName = subtypeNameWithSuffix ? subtypeNameWithSuffix.replace(clusterPattern, '') : null;
+    function assignSubtype(node) {
+        if (!node.children || node.children.length === 0) {
+            if (node.name) {
+                const originalNodeName = node.name.replace(clusterPattern, '');
+                if (originalNodeName === subtypeName) leafToCluster.set(node.name, 0);
+            }
+        } else {
+            node.children.forEach(assignSubtype);
+        }
+    }
+    assignSubtype(state.tree.root);
+    let currentClusterId = 1;
+    function dfs(node) {
+        const incomingLen = (node !== state.tree.root && node.len != null) ? node.len : 0;
+        if (node !== state.tree.root && incomingLen > threshold) {
+            currentClusterId = nextClusterId++;
+        }
+        const savedClusterId = currentClusterId;
+        if (!node.children || node.children.length === 0) {
+            if (node.name) {
+                const originalNodeName = node.name.replace(clusterPattern, '');
+                if (originalNodeName !== subtypeName)
+                    leafToCluster.set(node.name, currentClusterId);
+            }
+        } else {
+            node.children.forEach(dfs);
+        }
+        currentClusterId = savedClusterId;
+    }
+    dfs(state.tree.root);
+    const nameToCluster = new Map();
+    for (const [leafName, clusterId] of leafToCluster.entries()) {
+        nameToCluster.set(leafName.replace(clusterPattern, ''), clusterId);
+    }
+    state.leafClusters = nameToCluster;
+    updateColorLegend();
+    recalc();
 }
 
 function applyHierarchicalClustering(depth1, depth2, depth3) {
