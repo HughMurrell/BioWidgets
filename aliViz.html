@@ -223,9 +223,9 @@
             <div style="display:flex; gap:5px; align-items:center;">
                 <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+                <button id="btn-sort-sequences" title="Sort by current grouping, or by name if no grouping (REF and SUBTYPE remain first)">Sort</button>
                 <button id="btn-prune" title="Remove sequences from selected groups">Prune</button>
                 <button id="btn-subtype" title="Add founder sequence from selected group">Add Founder</button>
-                <button id="btn-sort-sequences" title="Sort by current grouping, or by name if no grouping (REF and SUBTYPE remain first)">Sort</button>
             </div>
         </div>
         <div class="control-group">
@@ -2893,7 +2893,8 @@ function finalizeLoad(seqs) {
         setMode('NT', false);
     }
     
-    // Enable buttons that become usable after a file is loaded
+    // Re-apply startup disabled state, then enable only buttons valid after a fresh load
+    disableButtonsOnStartup();
     enableButtonsAfterLoad();
     
     // Calculate and set names panel width to accommodate all names
