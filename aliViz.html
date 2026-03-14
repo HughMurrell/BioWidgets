@@ -484,6 +484,10 @@
                     <input type="range" id="hier-min-leaves-slider" min="1" max="5" step="1" value="1" style="flex: 1;">
                     <span id="hier-min-leaves-value" style="font-size: 11px; color: #374151; min-width: 60px; text-align: right;">1</span>
                 </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <label style="font-size: 12px; color: #374151; min-width: 120px;">Calinski–Harabasz:</label>
+                    <span id="hier-ch-value" style="font-size: 11px; color: #374151; font-weight: 500;">—</span>
+                </div>
             </div>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -508,6 +512,10 @@
                 <input type="range" id="clade-min-leaves-slider" min="1" max="5" step="1" value="1" style="flex: 1;">
                 <span id="clade-min-leaves-value" style="font-size: 11px; color: #374151; min-width: 55px; text-align: right;">1</span>
             </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-size: 12px; color: #374151; min-width: 140px;">Calinski–Harabasz:</label>
+                <span id="clade-ch-value" style="font-size: 11px; color: #374151; font-weight: 500;">—</span>
+            </div>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button id="btn-clade-cancel">Cancel</button>
@@ -531,6 +539,10 @@
                     <label style="font-size: 11px; color: #6b7280; min-width: 80px;">Min Neighbors:</label>
                     <input type="range" id="mds-minpts-slider" min="0" max="5" step="1" value="2" style="flex: 1;">
                     <span id="mds-minpts-value" style="font-size: 11px; color: #374151; min-width: 50px; text-align: right;">2</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <label style="font-size: 11px; color: #6b7280; min-width: 80px;">Calinski–Harabasz:</label>
+                    <span id="mds-ch-value" style="font-size: 11px; color: #374151; font-weight: 500;">—</span>
                 </div>
             </div>
             <div id="umap-params-container" style="display: none; flex-direction: column; gap: 5px;">
@@ -4085,6 +4097,20 @@ function showProjectionPlot(selectedMethod) {
         
         currentClusters = clusters; // Store for apply button
         
+        const chEl = document.getElementById('mds-ch-value');
+        if (chEl) {
+            const delimiter = state.groupDelimiter || '_';
+            const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+            const nameToCluster = new Map();
+            for (let i = 0; i < leaves.length; i++) {
+                if (clusters[i] === -1) continue;
+                const orig = (leaves[i].name || '').toString().replace(clusterPattern, '');
+                if (orig) nameToCluster.set(orig, clusters[i]);
+            }
+            const ch = calinskiHarabaszTree(nameToCluster);
+            chEl.textContent = ch != null ? ch.toFixed(2) : '—';
+        }
+        
         // Draw projection plot with clusters and epsilon circles
         drawMdsPlot(leaves, projectionCoords, subtypeName, clusters, eps, founderName);
     };
@@ -4828,6 +4854,76 @@ function showHierarchicalCladeModal() {
     updateCladeClustering();
 }
 
+/** Calinski-Harabasz index for tree-based clustering. Uses branch distance to MRCA for within-cluster and branch distance from MRCA to root for between-cluster. Returns number or null if undefined.
+ * optionalLeafClusters: if provided, Map(originalLeafName -> clusterId) to use instead of state.leafClusters (e.g. for MDS/UMAP so all methods use the same tree-based index). */
+function calinskiHarabaszTree(optionalLeafClusters) {
+    const leafClusters = optionalLeafClusters != null ? optionalLeafClusters : state.leafClusters;
+    if (!state.tree || !state.tree.root || !leafClusters || leafClusters.size === 0) return null;
+    const root = state.tree.root;
+    const useCladogram = !!state.tree.useCladogram;
+    const delimiter = state.groupDelimiter || '_';
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    function pathToRoot(node) {
+        const p = [];
+        let n = node;
+        while (n) { p.push(n); n = n.parent; }
+        return p;
+    }
+    function distToRoot(node) {
+        let d = 0;
+        let n = node;
+        while (n && n !== root) {
+            d += useCladogram ? 1 : (n.len || 0);
+            n = n.parent;
+        }
+        return d;
+    }
+    function getMRCA(leafNodes) {
+        if (leafNodes.length === 0) return null;
+        if (leafNodes.length === 1) return leafNodes[0];
+        const paths = leafNodes.map(leaf => pathToRoot(leaf));
+        for (let i = 0; i < paths[0].length; i++) {
+            const node = paths[0][i];
+            if (paths.every(p => p.includes(node))) return node;
+        }
+        return null;
+    }
+    const clusterToLeaves = new Map();
+    function collectLeaves(node) {
+        if (!node.children || node.children.length === 0) {
+            if (node.name) {
+                const orig = node.name.replace(clusterPattern, '');
+                const cid = leafClusters.get(orig);
+                if (cid !== undefined && cid !== -1) {
+                    if (!clusterToLeaves.has(cid)) clusterToLeaves.set(cid, []);
+                    clusterToLeaves.get(cid).push(node);
+                }
+            }
+        } else {
+            node.children.forEach(collectLeaves);
+        }
+    }
+    collectLeaves(root);
+    const k = clusterToLeaves.size;
+    const n = [...clusterToLeaves.values()].reduce((sum, list) => sum + list.length, 0);
+    if (k < 2 || n <= k) return null;
+    let W = 0;
+    let B = 0;
+    clusterToLeaves.forEach((leaves, cid) => {
+        const mrca = getMRCA(leaves);
+        if (!mrca) return;
+        const dMrca = distToRoot(mrca);
+        B += leaves.length * dMrca * dMrca;
+        leaves.forEach(leaf => {
+            const dLeaf = distToRoot(leaf);
+            W += (dLeaf - dMrca) * (dLeaf - dMrca);
+        });
+    });
+    if (W <= 0) return null;
+    const ch = (B / (k - 1)) / (W / (n - k));
+    return ch / k; // bias against high k
+}
+
 function applyCladeClustering(threshold, minLeaves) {
     if (!state.tree || !state.tree.root) return;
     minLeaves = (minLeaves != null && minLeaves >= 1) ? Math.min(5, Math.max(1, minLeaves)) : 1;
@@ -4891,6 +4987,8 @@ function applyCladeClustering(threshold, minLeaves) {
         nameToCluster.set(name, oldToNew.get(cid));
     }
     state.leafClusters = nameToCluster;
+    const chEl = document.getElementById('clade-ch-value');
+    if (chEl) chEl.textContent = (function () { const ch = calinskiHarabaszTree(); return ch != null ? ch.toFixed(2) : '—'; })();
     updateColorLegend();
     recalc();
 }
@@ -5156,7 +5254,8 @@ function applyHierarchicalClustering(depth1, depth2, depth3, minLeaves) {
     }
     
     state.leafClusters = nameToCluster;
-    
+    const chEl = document.getElementById('hier-ch-value');
+    if (chEl) chEl.textContent = (function () { const ch = calinskiHarabaszTree(); return ch != null ? ch.toFixed(2) : '—'; })();
     // Update legend and re-render
     updateColorLegend();
     recalc();
