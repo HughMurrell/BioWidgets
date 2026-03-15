@@ -4675,44 +4675,44 @@ function showHierarchicalModal() {
         if (v2 < v1) { v2 = v1; slider2.value = v2.toFixed(3); value2.textContent = slider2.value; }
         if (v3 < v2) { v3 = v2; slider3.value = v3.toFixed(3); value3.textContent = slider3.value; }
     }
-    /** Optimise one level (1, 2, or 3): search [minVal, maxVal] for best CH; set that slider and enforce order. */
-    function optimizeOneLevel(level, minVal, maxVal) {
-        const minLeaves = parseInt(minLeavesSlider.value, 10);
-        const d1 = parseFloat(slider1.value);
-        const d2 = parseFloat(slider2.value);
-        const d3 = parseFloat(slider3.value);
-        const nSteps = Math.min(80, Math.max(15, Math.ceil((maxVal - minVal) / step)));
-        let bestVal = minVal;
-        let bestCh = -Infinity;
-        for (let i = 0; i <= nSteps; i++) {
-            const t = i < nSteps ? minVal + (i / nSteps) * (maxVal - minVal) : maxVal;
-            const d1u = level === 1 ? t : d1;
-            const d2u = level === 2 ? t : d2;
-            const d3u = level === 3 ? t : d3;
-            const map = computeHierarchicalClusterMap(d1u, d2u, d3u, minLeaves);
-            if (!map) continue;
-            const ch = calinskiHarabaszTree(map);
-            const chNum = (ch === Infinity) ? 1e308 : (ch != null && Number.isFinite(ch) ? ch : -Infinity);
-            if (chNum > bestCh) { bestCh = chNum; bestVal = t; }
-        }
-        if (level === 1) { slider1.value = bestVal.toFixed(3); value1.textContent = slider1.value; }
-        else if (level === 2) { slider2.value = bestVal.toFixed(3); value2.textContent = slider2.value; }
-        else { slider3.value = bestVal.toFixed(3); value3.textContent = slider3.value; }
-        enforceLevelOrder();
-    }
     document.getElementById('btn-hier-auto').onclick = function () {
-        // 1. Move sliders 2 and 3 to maximum
-        slider2.value = sliderMaxNum.toFixed(3);
+        const minLeaves = parseInt(minLeavesSlider.value, 10);
+        // Full grid search: sample n+1 values from [slider1Min, sliderMaxNum], try every (d1,d2,d3) with d1 <= d2 <= d3
+        const n = 20;
+        const vals = [];
+        for (let i = 0; i <= n; i++) {
+            vals.push(slider1Min + (i / n) * (sliderMaxNum - slider1Min));
+        }
+        let bestD1 = slider1Min;
+        let bestD2 = slider1Min;
+        let bestD3 = slider1Min;
+        let bestCh = -Infinity;
+        for (let i = 0; i <= n; i++) {
+            const d1 = vals[i];
+            for (let j = i; j <= n; j++) {
+                const d2 = vals[j];
+                for (let k = j; k <= n; k++) {
+                    const d3 = vals[k];
+                    const map = computeHierarchicalClusterMap(d1, d2, d3, minLeaves);
+                    if (!map) continue;
+                    const ch = calinskiHarabaszTree(map);
+                    const chNum = (ch === Infinity) ? 1e308 : (ch != null && Number.isFinite(ch) ? ch : -Infinity);
+                    if (chNum > bestCh) {
+                        bestCh = chNum;
+                        bestD1 = d1;
+                        bestD2 = d2;
+                        bestD3 = d3;
+                    }
+                }
+            }
+        }
+        slider1.value = bestD1.toFixed(3);
+        value1.textContent = slider1.value;
+        slider2.value = bestD2.toFixed(3);
         value2.textContent = slider2.value;
-        slider3.value = sliderMaxNum.toFixed(3);
+        slider3.value = bestD3.toFixed(3);
         value3.textContent = slider3.value;
-        // 2. Optimise slider 1 over [min, max] of slider 1
-        optimizeOneLevel(1, slider1Min, sliderMaxNum);
-        // 3. Optimise slider 2 over [current d1, max]
-        optimizeOneLevel(2, parseFloat(slider1.value), sliderMaxNum);
-        // 4. Optimise slider 3 over [current d2, max]
-        optimizeOneLevel(3, parseFloat(slider2.value), sliderMaxNum);
-        state.hierarchicalDepths = [parseFloat(slider1.value), parseFloat(slider2.value), parseFloat(slider3.value)];
+        state.hierarchicalDepths = [bestD1, bestD2, bestD3];
         updateHierarchicalClustering();
     };
 
@@ -5056,7 +5056,7 @@ function calinskiHarabaszTree(optionalLeafClusters) {
         }
         collectMaxBranch(root);
         const halfMax = maxBranch / 2;
-        B = n * halfMax * halfMax;
+        B = (n / 2) * halfMax * halfMax;
         console.log('Calinski–Harabasz (k=1): numerator =', B, ', W =', W, ', n =', n);
     } else {
         clusterToLeaves.forEach((leaves, cid) => {
@@ -5077,7 +5077,7 @@ function calinskiHarabaszTree(optionalLeafClusters) {
     if (W <= 0) return Infinity; // best possible clustering
     const numerator = k === 1 ? B : B / (k - 1);
     const ch = numerator / (W / (n - k));
-    return ch / Math.pow(10, k); // bias against high k
+    return ch / Math.pow(2, k); // bias against high k
 }
 
 /** Return nameToCluster map for tree-clade clustering with given threshold and minLeaves (no state change). */
