@@ -4906,21 +4906,47 @@ function calinskiHarabaszTree(optionalLeafClusters) {
     collectLeaves(root);
     const k = clusterToLeaves.size;
     const n = [...clusterToLeaves.values()].reduce((sum, list) => sum + list.length, 0);
-    if (k < 2 || n <= k) return null;
+    if (k < 1 || n < 1 || (k === 1 && n < 2)) return null;
     let W = 0;
     let B = 0;
-    clusterToLeaves.forEach((leaves, cid) => {
-        const mrca = getMRCA(leaves);
-        if (!mrca) return;
-        const dMrca = distToRoot(mrca);
-        B += leaves.length * dMrca * dMrca;
-        leaves.forEach(leaf => {
+    if (k === 1) {
+        const leavesList = clusterToLeaves.values().next().value;
+        if (!leavesList) return null;
+        leavesList.forEach(leaf => {
             const dLeaf = distToRoot(leaf);
-            W += (dLeaf - dMrca) * (dLeaf - dMrca);
+            W += dLeaf * dLeaf;
         });
-    });
+        let maxBranch = 0;
+        function collectMaxBranch(node) {
+            if (node !== root) {
+                const branchLen = useCladogram ? 1 : (node.len || 0);
+                if (branchLen > maxBranch) maxBranch = branchLen;
+            }
+            if (node.children) node.children.forEach(collectMaxBranch);
+        }
+        collectMaxBranch(root);
+        const halfMax = maxBranch / 2;
+        B = n * halfMax * halfMax;
+        console.log('Calinski–Harabasz (k=1): numerator =', B, ', W =', W, ', n =', n);
+    } else {
+        clusterToLeaves.forEach((leaves, cid) => {
+            const mrca = getMRCA(leaves);
+            if (!mrca) return;
+            const dMrca = distToRoot(mrca);
+            B += leaves.length * dMrca * dMrca;
+            leaves.forEach(leaf => {
+                const dLeaf = distToRoot(leaf);
+                W += (dLeaf - dMrca) * (dLeaf - dMrca);
+            });
+        });
+        if (k === 2) {
+            const numerator = B / (k - 1);
+            console.log('Calinski–Harabasz (k=2): numerator =', numerator, ', W =', W, ', n =', n);
+        }
+    }
     if (W <= 0) return null;
-    const ch = (B / (k - 1)) / (W / (n - k));
+    const numerator = k === 1 ? B : B / (k - 1);
+    const ch = numerator / (W / (n - k));
     return ch / k; // bias against high k
 }
 
