@@ -2571,12 +2571,23 @@ function runInferTask() {
         const delimiter = state.groupDelimiter || '_';
         const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
         
-        // Remove cluster suffixes from sequence names
-        state.rawSequences.forEach(seq => {
-            if (seq.name) {
-                seq.name = seq.name.replace(clusterPattern, '');
+        // Remove cluster suffixes from sequence names and keep group coloring by updating sequenceGroups keys
+        if (state.rawSequences && state.rawSequences.length > 0) {
+            const newSequenceGroups = state.sequenceGroups ? new Map() : null;
+            state.rawSequences.forEach(seq => {
+                if (seq.name) {
+                    const oldName = seq.name;
+                    const newName = oldName.replace(clusterPattern, '');
+                    seq.name = newName;
+                    if (newSequenceGroups && state.sequenceGroups && state.sequenceGroups.has(oldName)) {
+                        newSequenceGroups.set(newName, state.sequenceGroups.get(oldName));
+                    }
+                }
+            });
+            if (newSequenceGroups) {
+                state.sequenceGroups = newSequenceGroups;
             }
-        });
+        }
         
         // Also remove from tree nodes if tree exists
         if (state.tree && state.tree.root) {
@@ -4735,9 +4746,48 @@ function showHierarchicalModal() {
     // Button handlers
     document.getElementById('btn-hier-cancel').onclick = () => {
         document.getElementById('hierarchical-overlay').style.display = 'none';
-        state.hierarchicalActive = false;
-        state.hierarchicalDepths = [0, 0, 0];
-        // Restore previous clustering if any
+        // Clear clustering state and remove cluster annotations, preserving group coloring
+        if (state.leafClusters || state.hierarchicalActive) {
+            const delimiter = state.groupDelimiter || '_';
+            const suffix = `${delimiter}cl-`;
+            // Remove cluster suffixes from sequence names and remap sequenceGroups to new names
+            if (state.rawSequences && state.rawSequences.length > 0) {
+                const newSequenceGroups = state.sequenceGroups ? new Map() : null;
+                state.rawSequences.forEach(seq => {
+                    if (seq.name) {
+                        const oldName = seq.name;
+                        const idx = oldName.lastIndexOf(suffix);
+                        const newName = idx !== -1 ? oldName.slice(0, idx) : oldName;
+                        seq.name = newName;
+                        if (newSequenceGroups && state.sequenceGroups && state.sequenceGroups.has(oldName)) {
+                            newSequenceGroups.set(newName, state.sequenceGroups.get(oldName));
+                        }
+                    }
+                });
+                if (newSequenceGroups) {
+                    state.sequenceGroups = newSequenceGroups;
+                }
+            }
+            // Also remove from tree nodes if tree exists
+            if (state.tree && state.tree.root) {
+                function removeClusterSuffixesFromTree(node) {
+                    if (node.name) {
+                        const idx = node.name.lastIndexOf(suffix);
+                        if (idx !== -1) {
+                            node.name = node.name.slice(0, idx);
+                        }
+                    }
+                    if (node.children) {
+                        node.children.forEach(removeClusterSuffixesFromTree);
+                    }
+                }
+                removeClusterSuffixesFromTree(state.tree.root);
+            }
+            state.leafClusters = null;
+            state.hierarchicalActive = false;
+            state.hierarchicalDepths = [0, 0, 0];
+            updateColorLegend();
+        }
         recalc();
     };
     
@@ -4927,6 +4977,46 @@ function showHierarchicalCladeModal() {
     }
     document.getElementById('btn-clade-cancel').onclick = () => {
         document.getElementById('hierarchical-clade-overlay').style.display = 'none';
+        // Clear clustering state and remove cluster annotations, preserving group coloring
+        if (state.leafClusters) {
+            const delimiter = state.groupDelimiter || '_';
+            const suffix = `${delimiter}cl-`;
+            // Remove cluster suffixes from sequence names and remap sequenceGroups to new names
+            if (state.rawSequences && state.rawSequences.length > 0) {
+                const newSequenceGroups = state.sequenceGroups ? new Map() : null;
+                state.rawSequences.forEach(seq => {
+                    if (seq.name) {
+                        const oldName = seq.name;
+                        const idx = oldName.lastIndexOf(suffix);
+                        const newName = idx !== -1 ? oldName.slice(0, idx) : oldName;
+                        seq.name = newName;
+                        if (newSequenceGroups && state.sequenceGroups && state.sequenceGroups.has(oldName)) {
+                            newSequenceGroups.set(newName, state.sequenceGroups.get(oldName));
+                        }
+                    }
+                });
+                if (newSequenceGroups) {
+                    state.sequenceGroups = newSequenceGroups;
+                }
+            }
+            // Also remove from tree nodes if tree exists
+            if (state.tree && state.tree.root) {
+                function removeClusterSuffixesFromTree(node) {
+                    if (node.name) {
+                        const idx = node.name.lastIndexOf(suffix);
+                        if (idx !== -1) {
+                            node.name = node.name.slice(0, idx);
+                        }
+                    }
+                    if (node.children) {
+                        node.children.forEach(removeClusterSuffixesFromTree);
+                    }
+                }
+                removeClusterSuffixesFromTree(state.tree.root);
+            }
+            state.leafClusters = null;
+            updateColorLegend();
+        }
         recalc();
     };
     document.getElementById('btn-clade-accept').onclick = () => {
