@@ -172,7 +172,7 @@ Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use
 
 ---
 
-## 7. 3D structure
+## 7. PDB structure
 
 ### Load file / Fetch
 - **Function:** Load a PDB/CIF from file or fetch by **PDB ID** from RCSB. Chains are added as sequences (e.g. `xxxx_Chain_A [PDB_A]`) and aligned to the reference in AA mode.
@@ -180,7 +180,13 @@ Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use
 
 ### View 3D
 - **Function:** Open the 3D viewer (3Dmol.js). Chains can be toggled and styled. Epitope residues (from loaded or 3D-defined epitopes) are colored on intrinsic chains; rest can be gray.
-- **New epitope:** Define a distance-based epitope from the 3D structure (see §5). Other buttons: Full screen, Export PNG, Close.
+- **Chain categories:** The 3D viewer categorizes chains into three groups:
+  - **Intrinsic (≥50%)**: Chains present in the alignment panel that align at **≥50%** coverage/identity to the alignment reference.
+  - **Extrinsic (<50%)**: Chains present in the alignment panel that align at **<50%** coverage/identity.
+  - **Superficial**: Chains **not** present in the alignment panel.
+- **Epitope residue coloring** is applied to intrinsic chains; clicking on an active epitope residue initiates a **partial logo** dialogue; you can show/hide chains and set styles separately per category.
+- **New epitope:** Define a distance-based epitope from the 3D structure (see §5).
+- **Other buttons:** Full screen, Export PNG, Close.
 
 ---
 
@@ -200,7 +206,7 @@ Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use
 ## 9. Color legend
 
 - **Groups:** Lists group labels and colors for sequence **names** (from Group).
-- **Clusters:** Lists cluster IDs and colors for **tree** branches and cluster tags (from any clustering method).  
+- **Clusters:** Lists cluster IDs for cluster tags and colors for tree tips (from any clustering method).  
 Cluster colors are removed when clustering is cleared (e.g. Cancel). Group colors are preserved after Cancel by rekeying group membership to the stripped (no `_cl-*`) names.
 
 ---
