@@ -87,6 +87,11 @@ Clicking **Cluster** opens a method selector, then the corresponding clustering 
 Each method allows the user to cluster sequences. Special sequences such as Reference, Subtype or any PDB chains are excluded from the clustering.
 - **Methods (selector):** **Hierarchical (tree-clade clustering)** (default), **Hierarchical (tree-cut clustering)**, **UMAP**, **MDS**.
 
+### Auto button behavior (optimizes Calinski–Harabasz)
+- **Tree-clade Auto:** searches the branch-length threshold (step to max) to maximize the **Calinski–Harabasz** index for the current **min leaves per cluster**, then sets the slider to the best threshold.
+- **Tree-cut Auto:** performs a full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from the slider range) and sets the sliders to the triple that maximizes the **Calinski–Harabasz** index.
+- **MDS/UMAP eps Auto:** varies the **radius (eps)** from the slider minimum (step) to max and selects the eps that maximizes the **Calinski–Harabasz** index for the current **min neighbors**.
+
 ### 4.1 Hierarchical (tree-clade clustering)
 - **Function:** Define clusters by **clades** on the tree: a new clade (and thus a new cluster) starts when the **incoming branch length** to a node exceeds a threshold.
 - **Parameters:**
@@ -169,6 +174,27 @@ Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use
 
 - **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Cluster 0 (subtype) and noise (−1) are included in the tree-based computation where applicable.
 - **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Noise (−1) is excluded from clustering; remaining cluster IDs are used in the CH computation.
+
+---
+
+## 6.1 Ball–Hall-Adapted index (tree-based)
+
+This index is displayed alongside the Calinski–Harabasz value in the tree-based hierarchical clustering dialogs.
+
+- **Ball–Hall dispersion for the current clustering (k clusters):**  
+  For each cluster c, let MRCA(c) be the most recent common ancestor of that cluster’s leaves, and let `dist(x, y)` be the branch-length distance between nodes. Each leaf contributes the squared distance from the leaf to its cluster’s MRCA:
+  - `dist(leaf, MRCA(c)) = dist(leaf, root) − dist(MRCA(c), root)`
+  - **BH(k) = Σ<sub>c</sub> Σ<sub>leaf in c</sub> dist(leaf, MRCA(c))²**
+
+- **Ball–Hall dispersion for k=1 (whole tree):**  
+  When there is only one cluster, MRCA(c) is the tree root, so:
+  - **BH(1) = Σ<sub>leaf</sub> dist(leaf, root)²**
+
+- **Ball–Hall-Adapted value (requested adaptation):**  
+  The adapted index compares dispersion for the full tree to dispersion for the current clustering, then applies the same **2<sup>k</sup>** penalty used for Calinski–Harabasz:
+  - **BH<sub>adapted</sub> = [ BH(1) / BH(k) ] / 2<sup>k</sup>**
+
+If BH(k) = 0, the adapted index is returned as ∞.
 
 ---
 
