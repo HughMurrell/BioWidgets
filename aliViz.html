@@ -9739,6 +9739,9 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
     function aaFill(letter) {
         return (CONFIG.colors.AA[letter] || CONFIG.colors.AA['default'] || '#000000');
     }
+    // The app palette maps '-' to white (useful in the sequence panel background), but
+    // the logo background is white too—so gaps would become invisible.
+    const gapLogoFill = '#6b7280'; // Visible grey for the gap glyph (nabla ∇)
 
     const refSeq = state.viewSequences[state.refIndex]?.seq;
     if (!refSeq || !state.refMap) {
@@ -10184,11 +10187,14 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
         text.setAttribute('y', textY);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'alphabetic'); // Use alphabetic baseline like labels
-        text.setAttribute('font-family', 'Courier New, Courier, monospace'); // Fixed-width font for consistent character alignment
+        text.setAttribute(
+            'font-family',
+            'Courier New, Courier, "DejaVu Sans", "Arial Unicode MS", "Segoe UI Symbol", sans-serif, monospace'
+        ); // Font fallback so ∇ renders even if Courier lacks it
         text.setAttribute('font-size', '16');
         text.setAttribute('font-weight', 'bold');
         if (isGap) {
-            text.setAttribute('fill', aaFill('-'));
+            text.setAttribute('fill', gapLogoFill);
             text.textContent = '∇'; // Nabla character for gaps
         } else if (isDot) {
             text.setAttribute('fill', aaFill('default'));
@@ -10327,12 +10333,15 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                     text.setAttribute('y', yCurrentBottom);
                     text.setAttribute('text-anchor', 'middle');
                     text.setAttribute('dominant-baseline', 'alphabetic'); // Use alphabetic baseline like labels
-                    text.setAttribute('font-family', 'Courier New, Courier, monospace'); // Fixed-width font for consistent character alignment
+                    text.setAttribute(
+                        'font-family',
+                        'Courier New, Courier, "DejaVu Sans", "Arial Unicode MS", "Segoe UI Symbol", sans-serif, monospace'
+                    ); // Font fallback so ∇ renders even if Courier lacks it
                     text.setAttribute('font-size', baseFontSize.toString());
                     text.setAttribute('font-weight', 'bold');
                     // Handle gaps (nabla character) and AAs using CONFIG.colors.AA
                     if (aa === '∇') {
-                        text.setAttribute('fill', aaFill('-'));
+                        text.setAttribute('fill', gapLogoFill);
                     } else {
                         text.setAttribute('fill', aaFill(aa));
                     }
