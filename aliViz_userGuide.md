@@ -87,10 +87,11 @@ Clicking **Cluster** opens a method selector, then the corresponding clustering 
 Each method allows the user to cluster sequences. Special sequences such as Reference, Subtype or any PDB chains are excluded from the clustering.
 - **Methods (selector):** **Hierarchical (tree-clade clustering)** (default), **Hierarchical (tree-cut clustering)**, **UMAP**, **MDS**.
 
-### Auto button behavior (optimizes Calinski–Harabasz)
-- **Tree-clade Auto:** searches the branch-length threshold (step to max) to maximize the **Calinski–Harabasz** index for the current **min leaves per cluster**, then sets the slider to the best threshold.
-- **Tree-cut Auto:** performs a full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from the slider range) and sets the sliders to the triple that maximizes the **Calinski–Harabasz** index.
-- **MDS/UMAP eps Auto:** varies the **radius (eps)** from the slider minimum (step) to max and selects the eps that maximizes the **Calinski–Harabasz** index for the current **min neighbors**.
+### Auto button behavior (optimizes selected index)
+- **Radio buttons (Calinski vs Ball-Hall-Adapted):** choose which index each dialog’s **Auto** button uses when searching slider values. Default is **Calinski–Harabasz**; switch to **Ball-Hall-Adapted** to optimize that index instead.
+- **Tree-clade Auto:** searches the branch-length threshold (step to max) to maximize the **selected index** for the current **min leaves per cluster**, then sets the slider to the best threshold.
+- **Tree-cut Auto:** performs a full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from the slider range) and sets the sliders to the triple that maximizes the **selected index**.
+- **MDS/UMAP eps Auto:** varies the **radius (eps)** from the slider minimum (step) to max and selects the eps that maximizes the **selected index** for the current **min neighbors**.
 
 ### 4.1 Hierarchical (tree-clade clustering)
 - **Function:** Define clusters by **clades** on the tree: a new clade (and thus a new cluster) starts when the **incoming branch length** to a node exceeds a threshold.
