@@ -88,7 +88,7 @@ Each method allows the user to cluster sequences. Special sequences such as Refe
 - **Methods (selector):** **Hierarchical (tree-clade clustering)** (default), **Hierarchical (tree-cut clustering)**, **UMAP**, **MDS**.
 
 ### Auto button behavior (optimizes selected index)
-- **Radio buttons (Calinski vs Ball-Hall-Adapted):** choose which index each dialog’s **Auto** button uses when searching slider values. Default is **Calinski–Harabasz**; switch to **Ball-Hall-Adapted** to optimize that index instead.
+- **Radio buttons (Calinski vs Ball-Hall-Adapted):** choose which index the dialog’s **Auto** button maximizes while it searches slider values. This does not change the clustering method itself; it only changes the scoring metric used by Auto (the radio choice is read when you press **Auto**). Default is **Calinski–Harabasz**; switch to **Ball-Hall-Adapted** to optimize that index instead.
 - **Tree-clade Auto:** searches the branch-length threshold (step to max) to maximize the **selected index** for the current **min leaves per cluster**, then sets the slider to the best threshold.
 - **Tree-cut Auto:** performs a full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from the slider range) and sets the sliders to the triple that maximizes the **selected index**.
 - **MDS/UMAP eps Auto:** varies the **radius (eps)** from the slider minimum (step) to max and selects the eps that maximizes the **selected index** for the current **min neighbors**.
@@ -99,7 +99,7 @@ Each method allows the user to cluster sequences. Special sequences such as Refe
   - **Branch length threshold:** Minimum branch length that starts a new clade (slider from step to max). Leaves are assigned to the clade that contains them.
   - **Min leaves per cluster:** Clusters with fewer than this many leaves are relabelled as noise (`_cl-na`).
 - **Algorithm:** DFS from root. When traversing an edge longer than the threshold, increment cluster ID. Assign each leaf to the current cluster. Then apply min-leaves filter, mark small clusters as noise, and renumber clusters 1, 2, 3, …
-- **Auto:** Searches the threshold (from step to max) to **maximize the Calinski–Harabasz index** (see §6) for the current min-leaves. Sets the slider to the best value.
+- **Auto:** Searches the threshold (from step to max) to **maximize the Calinski–Harabasz index** (see §4.6) for the current min-leaves. Sets the slider to the best value.
 - **Accept:** Applies the clustering: adds `_cl-<id>` or `_cl-na` to sequence and tree node names, updates the legend and tree colors.
 - **Cancel:** Removes all clustering: clears `state.leafClusters`, strips `_cl-*` from names and tree nodes, updates legend and redraws. **Group colors** on sequence names are preserved (group mapping is rekeyed to the stripped names).
 
@@ -126,6 +126,41 @@ Each method allows the user to cluster sequences. Special sequences such as Refe
 
 ### 4.5 DBSCAN (used in MDS/UMAP)
 - **Algorithm:** Standard DBSCAN. Points within **eps** (Euclidean in 2D) are neighbors. If a point has ≥ **minPts** neighbors, it and all density-reachable points form a cluster. Otherwise it is noise (-1).
+
+### 4.6. Calinski–Harabasz index (tree-based)
+
+Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use the **same** index on the **tree**.
+
+- **Definitions:**  
+  - **k** = number of clusters, **n** = number of leaves in those clusters.  
+  - **Between-cluster (B):** For each cluster, take the MRCA of its leaves; *d*<sub>MRCA</sub> = branch distance from MRCA to root. Then B = Σ<sub>c</sub> n<sub>c</sub> · *d*<sub>MRCA</sub>² (for k ≥ 2; for k = 1 a synthetic B is used: (n/2)·(halfMax)² where halfMax = half the longest branch in the tree).  
+  - **Within-cluster (W):** For each leaf, *d*<sub>leaf</sub> = distance to root; W = Σ over leaves of (*d*<sub>leaf</sub> − *d*<sub>MRCA</sub>)² for that leaf’s cluster.
+
+- **Formula:**  
+  **CH** = [ (B/(k−1)) / (W/(n−k)) ] × 1/(2<sup>k</sup>)  
+  (for k = 1 the numerator is B and denominator W/(n−1); then the same 1/2<sup>k</sup> factor). The 2<sup>k</sup> term biases against large k.
+
+- **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Cluster 0 (subtype) and noise (−1) are included in the tree-based computation where applicable.
+- **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Noise (−1) is excluded from clustering; remaining cluster IDs are used in the CH computation.
+
+### 4.7. Ball–Hall-Adapted index (tree-based)
+
+This index is displayed alongside the Calinski–Harabasz value in the tree-based hierarchical clustering dialogs.
+
+- **Ball–Hall dispersion for the current clustering (k clusters):**  
+  For each cluster c, let MRCA(c) be the most recent common ancestor of that cluster’s leaves, and let `dist(x, y)` be the branch-length distance between nodes. Each leaf contributes the squared distance from the leaf to its cluster’s MRCA:
+  - `dist(leaf, MRCA(c)) = dist(leaf, root) − dist(MRCA(c), root)`
+  - **BH(k) = Σ<sub>c</sub> Σ<sub>leaf in c</sub> dist(leaf, MRCA(c))²**
+
+- **Ball–Hall dispersion for k=1 (whole tree):**  
+  When there is only one cluster, MRCA(c) is the tree root, so:
+  - **BH(1) = Σ<sub>leaf</sub> dist(leaf, root)²**
+
+- **Ball–Hall-Adapted value (requested adaptation):**  
+  The adapted index compares dispersion for the full tree to dispersion for the current clustering, then applies the same **2<sup>k</sup>** penalty used for Calinski–Harabasz:
+  - **BH<sub>adapted</sub> = [ BH(1) / BH(k) ] / 2<sup>k</sup>**
+
+If BH(k) = 0, the adapted index is returned as ∞.
 
 ---
 
@@ -160,46 +195,7 @@ Each method allows the user to cluster sequences. Special sequences such as Refe
 
 ---
 
-## 6. Calinski–Harabasz index (tree-based)
-
-Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use the **same** index on the **tree**.
-
-- **Definitions:**  
-  - **k** = number of clusters, **n** = number of leaves in those clusters.  
-  - **Between-cluster (B):** For each cluster, take the MRCA of its leaves; *d*<sub>MRCA</sub> = branch distance from MRCA to root. Then B = Σ<sub>c</sub> n<sub>c</sub> · *d*<sub>MRCA</sub>² (for k ≥ 2; for k = 1 a synthetic B is used: (n/2)·(halfMax)² where halfMax = half the longest branch in the tree).  
-  - **Within-cluster (W):** For each leaf, *d*<sub>leaf</sub> = distance to root; W = Σ over leaves of (*d*<sub>leaf</sub> − *d*<sub>MRCA</sub>)² for that leaf’s cluster.
-
-- **Formula:**  
-  **CH** = [ (B/(k−1)) / (W/(n−k)) ] × 1/(2<sup>k</sup>)  
-  (for k = 1 the numerator is B and denominator W/(n−1); then the same 1/2<sup>k</sup> factor). The 2<sup>k</sup> term biases against large k.
-
-- **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Cluster 0 (subtype) and noise (−1) are included in the tree-based computation where applicable.
-- **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Noise (−1) is excluded from clustering; remaining cluster IDs are used in the CH computation.
-
----
-
-## 6.1 Ball–Hall-Adapted index (tree-based)
-
-This index is displayed alongside the Calinski–Harabasz value in the tree-based hierarchical clustering dialogs.
-
-- **Ball–Hall dispersion for the current clustering (k clusters):**  
-  For each cluster c, let MRCA(c) be the most recent common ancestor of that cluster’s leaves, and let `dist(x, y)` be the branch-length distance between nodes. Each leaf contributes the squared distance from the leaf to its cluster’s MRCA:
-  - `dist(leaf, MRCA(c)) = dist(leaf, root) − dist(MRCA(c), root)`
-  - **BH(k) = Σ<sub>c</sub> Σ<sub>leaf in c</sub> dist(leaf, MRCA(c))²**
-
-- **Ball–Hall dispersion for k=1 (whole tree):**  
-  When there is only one cluster, MRCA(c) is the tree root, so:
-  - **BH(1) = Σ<sub>leaf</sub> dist(leaf, root)²**
-
-- **Ball–Hall-Adapted value (requested adaptation):**  
-  The adapted index compares dispersion for the full tree to dispersion for the current clustering, then applies the same **2<sup>k</sup>** penalty used for Calinski–Harabasz:
-  - **BH<sub>adapted</sub> = [ BH(1) / BH(k) ] / 2<sup>k</sup>**
-
-If BH(k) = 0, the adapted index is returned as ∞.
-
----
-
-## 7. PDB structure
+## 6. PDB structure
 
 ### Load file / Fetch
 - **Function:** Load a PDB/CIF from file or fetch by **PDB ID** from RCSB. Chains are added as sequences (e.g. `xxxx_Chain_A [PDB_A]`) and aligned to the reference in AA mode.
@@ -217,7 +213,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 
 ---
 
-## 8. Other controls
+## 7. Other controls
 
 ### fasta (Download)
 - **Function:** Download the **current view** (NT or AA) as FASTA. Filename includes mode, e.g. `alignment_AA.fasta`.
@@ -230,7 +226,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 
 ---
 
-## 9. Color legend
+## 8. Color legend
 
 - **Groups:** Lists group labels and colors for sequence **names** (from Group).
 - **Clusters:** Lists cluster IDs for cluster tags and colors for tree tips (from any clustering method).  
@@ -238,7 +234,7 @@ Cluster colors are removed when clustering is cleared (e.g. Cancel). Group color
 
 ---
 
-## 10. Summary of algorithms and formulas
+## 9. Summary of algorithms and formulas
 
 | Feature        | Algorithm / formula |
 |----------------|---------------------|
