@@ -65,7 +65,7 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 - **Modes:**
   - **By Depth** (default): At each node, compute the maximum root-to-leaf distance in each child’s subtree (using branch lengths). Sort children by that depth (ascending). Shallower subtrees appear first.
   - **By Weight:** At each node, sort children by number of leaves (ascending). Lighter subtrees appear first.
-- **Result:** Tree drawing order and `state.viewSequences` are updated to follow the new leaf order. Histogram, Cluster, and tree export are enabled after ladderizing.
+- **Result:** Tree drawing order and `state.viewSequences` are updated to follow the new leaf order. Histogram, Cluster, and tree export (Newick **tree** and **svg**) are enabled after ladderizing.
 
 ### Histogram
 - **Function:** Show a histogram of **root-to-leaf distances** (sum of branch lengths from root to each leaf).
@@ -75,6 +75,19 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 ### tree (Export tree)
 - **Function:** Export the current tree in **Newick** format.
 - **Usage:** Click “tree” to download a `.txt` or Newick file containing the current tree with names and branch lengths (if present).
+
+### svg (Export tree as SVG)
+- **Function:** Download a **vector (SVG)** figure of the current tree for publications or slides.
+- **Requirement:** A tree must be loaded and **ladderized** (same as the Newick export).
+- **Usage:** Click **svg** in the phylogeny toolbar. A dialog lets you choose **Linear** or **Circular** layout, then **Export** to save `tree.svg`. **Cancel** closes the dialog without downloading.
+
+#### Layout and drawing
+- **Linear** matches the on-screen rectangular cladogram: horizontal branches to children, a vertical “backbone” at each internal node, small circles at internal nodes, **diamond** markers at tips (cluster colors where clustering applies), and **dashed** connector lines from each tip to its sequence label. Connectors use the same **group / label** coloring as the name column (e.g. group hues, magenta for reference / subtype / founder / PDB as in the app).
+- **Circular** lays leaves **evenly by angle** around the origin (depth is still radial). Branches are drawn **orthogonally in polar coordinates**: an **arc** along the circle at the parent’s depth (the circumferential segment), then a **radial** segment to each child—so paths do not cross as straight chords. The root is drawn as radials from the center when depth is zero. Tip **diamonds** are rotated so a vertex points outward; **labels** follow the radius with start-aligned text so they sit outside the diamonds. Short **dotted** lines run from the outer tip of each diamond to the start of its label, using the same label/group color.
+
+#### Legend and page size
+- The SVG includes a **Color Legend** panel on the **right**, matching the floating legend in the app: **Groups** (alphabetically by group name) and **Clusters** (cluster IDs plus **Noise** when used), with the same colors as in aliViz. If there are no groups or clusters, the legend states that explicitly.
+- The figure width is split **7/8** for the tree plot and **1/8** for the legend. The **circular** plot’s height (and total SVG height) grows as needed so long radial labels stay inside the canvas.
 
 ### Clear Tree
 - **Function:** Remove the current tree. Clustering state is cleared. Histogram, Cluster, and related buttons are disabled.

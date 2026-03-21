@@ -3170,18 +3170,90 @@ function buildTreeSvgCircular() {
         return { x: cx + r * Math.cos(th), y: cy + r * Math.sin(th) };
     }
 
-    function drawEdges(node) {
+    /** Smallest arc (CCW) that contains all angles; t1 may be > t0 + 2π if it wraps. */
+    function minArcContainingPoints(angles) {
+        if (angles.length === 0) return null;
+        if (angles.length === 1) return { t0: angles[0], t1: angles[0] };
+        const sorted = [...angles].sort((a, b) => a - b);
+        const n = sorted.length;
+        let maxGap = -1;
+        let gapAfter = 0;
+        for (let i = 0; i < n; i++) {
+            const next = (i + 1) % n;
+            const cur = sorted[i];
+            const nxt = next === 0 ? sorted[0] + 2 * Math.PI : sorted[next];
+            const gap = nxt - cur;
+            if (gap > maxGap) {
+                maxGap = gap;
+                gapAfter = i;
+            }
+        }
+        const startIdx = (gapAfter + 1) % n;
+        const endIdx = gapAfter;
+        let t0;
+        let t1;
+        if (startIdx <= endIdx) {
+            t0 = sorted[startIdx];
+            t1 = sorted[endIdx];
+        } else {
+            t0 = sorted[startIdx];
+            t1 = sorted[endIdx] + 2 * Math.PI;
+        }
+        return { t0, t1 };
+    }
+
+    function appendArcPolyline(r, t0, t1) {
+        let span = t1 - t0;
+        if (span < 0) span += 2 * Math.PI;
+        if (span < 1e-8) return;
+        const nSeg = Math.max(8, Math.ceil(span / (Math.PI / 32)));
+        const pts = [];
+        for (let i = 0; i <= nSeg; i++) {
+            const t = t0 + (span * i) / nSeg;
+            const x = cx + r * Math.cos(t);
+            const y = cy + r * Math.sin(t);
+            pts.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+        }
+        parts.push(`<polyline points="${pts.join(' ')}" fill="none"/>\n`);
+    }
+
+    /** Orthogonal polar cladogram: circumferential arc at parent radius, then radial to each child (like linear H+V). */
+    function drawOrthoEdges(node) {
         if (!node || node.hidden) return;
         if (!node.children || node.children.length === 0) return;
-        const p = radXY(node);
-        node.children.forEach(c => {
-            if (c.hidden) return;
-            const q = radXY(c);
-            parts.push(`<line x1="${p.x.toFixed(2)}" y1="${p.y.toFixed(2)}" x2="${q.x.toFixed(2)}" y2="${q.y.toFixed(2)}"/>\n`);
-            drawEdges(c);
-        });
+        const visibleChildren = node.children.filter(c => !c.hidden);
+        visibleChildren.forEach(drawOrthoEdges);
+
+        const rP = (node.xDepth / maxD) * R;
+        const ths = visibleChildren.map(c => c._svgAngle);
+
+        if (rP > 1e-6) {
+            if (visibleChildren.length > 1) {
+                const arc = minArcContainingPoints(ths);
+                if (arc && Math.abs(arc.t1 - arc.t0) > 1e-6) {
+                    appendArcPolyline(rP, arc.t0, arc.t1);
+                }
+            }
+            visibleChildren.forEach(c => {
+                const rC = (c.xDepth / maxD) * R;
+                const thC = c._svgAngle;
+                const x1 = cx + rP * Math.cos(thC);
+                const y1 = cy + rP * Math.sin(thC);
+                const x2 = cx + rC * Math.cos(thC);
+                const y2 = cy + rC * Math.sin(thC);
+                parts.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>\n`);
+            });
+        } else {
+            visibleChildren.forEach(c => {
+                const rC = (c.xDepth / maxD) * R;
+                const thC = c._svgAngle;
+                const x2 = cx + rC * Math.cos(thC);
+                const y2 = cy + rC * Math.sin(thC);
+                parts.push(`<line x1="${cx.toFixed(2)}" y1="${cy.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>\n`);
+            });
+        }
     }
-    drawEdges(root);
+    drawOrthoEdges(root);
 
     parts.push('</g>\n');
 
