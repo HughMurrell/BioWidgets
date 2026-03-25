@@ -438,7 +438,8 @@
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;">Choose dimensionality reduction method:</label>
             <select id="sel-projection-method" style="width: 100%;">
-                <option value="hierarchical-clade" selected>Hierarchical (tree-clade clustering)</option>
+                <option value="none" selected>None</option>
+                <option value="hierarchical-clade">Hierarchical (tree-clade clustering)</option>
                 <option value="hierarchical">Hierarchical (tree-cut clustering)</option>
                 <option value="umap">UMAP (Uniform Manifold Approximation and Projection)</option>
                 <option value="mds">MDS (Classical Multidimensional Scaling)</option>
@@ -963,6 +964,7 @@ const state = {
     aioliCLI: null,
     isAASequence: false, // Flag to track if sequences are already amino acids (not DNA to be translated)
     leafClusters: null, // Map from leaf name to cluster ID (from MDS clustering)
+    lastAcceptedClusterMethod: null, // 'Hierarchical', 'Hierarchical-clade', 'UMAP', or 'MDS'
     hierarchicalActive: false, // Whether hierarchical clustering modal is active
     hierarchicalDepths: [0, 0, 0], // Current depth values for hierarchical clustering sliders
     sequenceGroups: null, // Map from sequence name to group ID (from grouping by name field)
@@ -1506,7 +1508,41 @@ async function init() {
             const methodSelect = document.getElementById('sel-projection-method');
             const selectedMethod = methodSelect ? methodSelect.value : 'mds';
             document.getElementById('method-select-overlay').style.display = 'none';
-            if (selectedMethod === 'hierarchical') {
+            if (selectedMethod === 'none') {
+                // Clear any current clustering and remove cluster suffixes from names.
+                const delimiter = state.groupDelimiter || '_';
+                const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+
+                if (state.rawSequences && state.rawSequences.length > 0) {
+                    const newSequenceGroups = state.sequenceGroups ? new Map() : null;
+                    state.rawSequences.forEach(seq => {
+                        if (!seq.name) return;
+                        const oldName = seq.name;
+                        const newName = oldName.replace(clusterPattern, '');
+                        seq.name = newName;
+                        if (newSequenceGroups && state.sequenceGroups && state.sequenceGroups.has(oldName)) {
+                            newSequenceGroups.set(newName, state.sequenceGroups.get(oldName));
+                        }
+                    });
+                    if (newSequenceGroups) state.sequenceGroups = newSequenceGroups;
+                }
+
+                if (state.tree && state.tree.root) {
+                    function removeClusterSuffixesFromTree(node) {
+                        if (node.name) node.name = node.name.replace(clusterPattern, '');
+                        if (node.children) node.children.forEach(removeClusterSuffixesFromTree);
+                    }
+                    removeClusterSuffixesFromTree(state.tree.root);
+                }
+
+                state.leafClusters = null;
+                state.hierarchicalActive = false;
+                state.hierarchicalDepths = [0, 0, 0];
+                state.lastAcceptedClusterMethod = null;
+
+                updateColorLegend();
+                recalc();
+            } else if (selectedMethod === 'hierarchical') {
                 showHierarchicalModal();
             } else if (selectedMethod === 'hierarchical-clade') {
                 showHierarchicalCladeModal();
@@ -3044,6 +3080,53 @@ function getSvgLeafDisplayLabel(nodeName) {
     return escapeXml(label);
 }
 
+function truncateTitle(s, maxChars) {
+    const str = String(s == null ? '' : s);
+    if (str.length <= maxChars) return str;
+    if (maxChars <= 3) return str.slice(0, maxChars);
+    return str.slice(0, maxChars - 3) + '...';
+}
+
+function getSvgTreeTitleLines() {
+    const rawName = state.currentFileName || dom.file?.files?.[0]?.name || 'Alignment';
+    const baseName = rawName.replace(/\.[^.]+$/, '');
+    // User request: show full FASTA filename (no ellipsis truncation).
+    const fastaName = baseName;
+
+    const inferSel = document.getElementById('sel-infer-method')?.value || 'fasttree';
+    const inferLabel = inferSel === 'nj'
+        ? 'Neighbor-Joining'
+        : (inferSel === 'fasttree' ? 'FastTree (bioWASM)' : String(inferSel));
+
+    // Cluster method name (4 options). Use last accepted clustering choice.
+    let clusterMethod = state.lastAcceptedClusterMethod;
+    if (!clusterMethod) {
+        const projSel = document.getElementById('sel-projection-method')?.value;
+        clusterMethod = projSel || null;
+    }
+
+    let clusterLabel = 'No clustering';
+    if (clusterMethod) {
+        const m = String(clusterMethod);
+        if (m === 'hierarchical' || m === 'Hierarchical' || m === 'hierarchical-cut') {
+            clusterLabel = 'Hierarchical (tree-cut clustering)';
+        } else if (m === 'hierarchical-clade' || m === 'Hierarchical-clade' || m === 'hierarchical-clade') {
+            clusterLabel = 'Hierarchical (tree-clade clustering)';
+        } else if (m === 'umap' || m === 'UMAP') {
+            clusterLabel = 'UMAP';
+        } else if (m === 'mds' || m === 'MDS') {
+            clusterLabel = 'MDS';
+        } else {
+            clusterLabel = m;
+        }
+    }
+
+    return [
+        escapeXml(fastaName),
+        escapeXml(`Infer: ${inferLabel} | Cluster: ${clusterLabel}`)
+    ];
+}
+
 /** Approximate horizontal width in px for circular SVG labels (11px bold sans). */
 function estimateSvgCircularLabelWidthPx(nodeName) {
     const r = findViewSeqRowForTreeNode(nodeName);
@@ -3216,6 +3299,7 @@ function buildTreeSvgCircular() {
     const diamond = 10;
     /** Extra margin so longest label + perpendicular text height stay inside viewBox. */
     const plotMargin = 64;
+    const titleSpace = 44;
 
     assignRadialLeafAngles(root);
     assignRadialInternalAngles(root);
@@ -3240,14 +3324,22 @@ function buildTreeSvgCircular() {
     const plotW = size;
     const totalW = plotW * (8 / 7);
     const legendW = totalW - plotW;
-    const totalH = size;
+    const totalH = size + titleSpace;
     const cx = plotW / 2;
-    const cy = size / 2;
+    const cy = titleSpace + size / 2;
 
     const parts = [];
     parts.push(`<?xml version="1.0" encoding="UTF-8"?>\n`);
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">\n`);
     parts.push(`<rect width="${totalW}" height="${totalH}" fill="white"/>\n`);
+
+    const titleLines = getSvgTreeTitleLines();
+    const titleX = plotW / 2;
+    parts.push(`<g font-family="sans-serif" fill="#111827" text-anchor="middle">\n`);
+    parts.push(`<text x="${titleX}" y="20" font-size="13" font-weight="700">${titleLines[0]}</text>\n`);
+    parts.push(`<text x="${titleX}" y="36" font-size="11">${titleLines[1]}</text>\n`);
+    parts.push(`</g>\n`);
+
     parts.push(`<g stroke="#374151" stroke-width="1" fill="none">\n`);
 
     function radXY(node) {
@@ -3380,7 +3472,7 @@ function buildTreeSvgCircular() {
 
     appendSvgTreeScaleBarCircular(parts, plotW, R, maxD, plotMargin);
 
-    appendTreeSvgColorLegend(parts, plotW, 0, legendW, totalH);
+    appendTreeSvgColorLegend(parts, plotW, titleSpace, legendW, totalH);
 
     parts.push('</svg>');
     return parts.join('');
@@ -3397,17 +3489,26 @@ function buildTreeSvgLinear() {
     const svgH = nRows * rowH;
     const labelX0 = leftPad + 5 + branchW + 14;
     let maxLabelW = 420;
+    // Reserve space at top for a 2-line title (keeps scale bar/legend in plot area).
+    const titleSpace = 44;
 
     const plotW = labelX0 + maxLabelW + padding;
     const totalW = plotW * (8 / 7);
     const legendW = totalW - plotW;
-    const totalH = svgH + padding * 2;
+    const totalH = svgH + padding * 2 + titleSpace;
 
     const parts = [];
     parts.push(`<?xml version="1.0" encoding="UTF-8"?>\n`);
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">\n`);
     parts.push(`<rect width="${totalW}" height="${totalH}" fill="white"/>\n`);
-    parts.push(`<g transform="translate(${padding},${padding})" stroke="#374151" stroke-width="1" fill="none">\n`);
+    const titleLines = getSvgTreeTitleLines();
+    const titleX = plotW / 2;
+    parts.push(`<g font-family="sans-serif" fill="#111827" text-anchor="middle">\n`);
+    parts.push(`<text x="${titleX}" y="20" font-size="13" font-weight="700">${titleLines[0]}</text>\n`);
+    parts.push(`<text x="${titleX}" y="36" font-size="11">${titleLines[1]}</text>\n`);
+    parts.push(`</g>\n`);
+    // Main plot group shifted down to leave room for the title.
+    parts.push(`<g transform="translate(${padding},${padding + titleSpace})" stroke="#374151" stroke-width="1" fill="none">\n`);
 
     function nx(node) {
         return leftPad + node.xDepth * xScale;
@@ -3467,7 +3568,7 @@ function buildTreeSvgLinear() {
     }
 
     parts.push('</g>\n');
-    parts.push(`<g transform="translate(${padding},${padding})" font-family="sans-serif" font-size="11">\n`);
+    parts.push(`<g transform="translate(${padding},${padding + titleSpace})" font-family="sans-serif" font-size="11">\n`);
     function drawLabels(node) {
         if (!node || node.hidden) return;
         if (!node.children || node.children.length === 0) {
@@ -3483,11 +3584,11 @@ function buildTreeSvgLinear() {
     drawLabels(state.tree.root);
     parts.push('</g>\n');
 
-    parts.push(`<g transform="translate(${padding},${padding})">\n`);
+    parts.push(`<g transform="translate(${padding},${padding + titleSpace})">\n`);
     appendSvgTreeScaleBarLinear(parts, xScale, maxD);
     parts.push('</g>\n');
 
-    appendTreeSvgColorLegend(parts, plotW, 0, legendW, totalH);
+    appendTreeSvgColorLegend(parts, plotW, titleSpace, legendW, totalH);
 
     parts.push('</svg>');
     return parts.join('');
