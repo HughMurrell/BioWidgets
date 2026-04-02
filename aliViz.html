@@ -453,18 +453,47 @@
 </div>
 
 <div id="tree-svg-export-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
-    <div class="help-box" style="width: 420px; pointer-events: auto;">
+    <div class="help-box" style="width: 480px; pointer-events: auto;">
         <h2>Export tree as SVG</h2>
         <p style="font-size: 13px; color: #374151; margin: 0 0 12px 0;">Tip labels use <strong>group</strong> colors; tip markers use <strong>cluster</strong> colors (when clustering is active).</p>
-        <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                <input type="radio" name="tree-svg-layout" id="tree-svg-linear" value="linear" checked>
-                Linear (rectangular cladogram)
-            </label>
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                <input type="radio" name="tree-svg-layout" id="tree-svg-circular" value="circular">
-                Circular (radial layout)
-            </label>
+        <div style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px;">
+            <div>
+                <h3 style="margin: 0 0 8px 0; font-size: 12px; font-weight: 600; color: #374151; text-transform: capitalize; letter-spacing: 0.04em;">Geometry</h3>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <input type="radio" name="tree-svg-layout" id="tree-svg-linear" value="linear" checked>
+                        Linear (rectangular cladogram)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <input type="radio" name="tree-svg-layout" id="tree-svg-circular" value="circular">
+                        Circular (radial layout)
+                    </label>
+                </div>
+            </div>
+            <div>
+                <h3 style="margin: 0 0 8px 0; font-size: 12px; font-weight: 600; color: #374151; text-transform: capitalize; letter-spacing: 0.04em;">Scale</h3>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <input type="radio" name="tree-svg-scale" id="tree-svg-scale-auto" value="auto" checked>
+                        Auto (fit tree to available space)
+                    </label>
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                            <input type="radio" name="tree-svg-scale" id="tree-svg-scale-fixed" value="fixed">
+                            Fixed
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
+                            <span id="tree-svg-fixed-scale-hint">Branch length / 1 cm:</span>
+                            <select id="tree-svg-fixed-scale-select" disabled style="font-size: 12px; padding: 2px 6px; min-width: 5.5em;">
+                                <option value="0.1">0.1</option>
+                                <option value="0.01">0.01</option>
+                                <option value="0.001" selected>0.001</option>
+                                <option value="0.0001">0.0001</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+            </div>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px;">
             <button type="button" id="btn-tree-svg-cancel">Cancel</button>
@@ -630,7 +659,7 @@
 
 <div id="color-legend" style="position: fixed; top: 100px; right: 20px; background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 5000; display: none; max-width: 250px; font-size: 12px;">
     <div id="legend-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: move; user-select: none;">
-        <h3 style="margin: 0; font-size: 14px; color: #374151;">Color Legend</h3>
+        <h3 style="margin: 0; font-size: 14px; color: #374151;">Legend</h3>
         <button onclick="document.getElementById('color-legend').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #6b7280;">×</button>
     </div>
     <div id="legend-groups" style="margin-bottom: 15px;">
@@ -1467,8 +1496,20 @@ async function init() {
     }
     dom.btnInferTree.addEventListener('click', showInferModal);
     dom.btnExportTree.addEventListener('click', exportTree);
+    function syncTreeSvgFixedScaleControls() {
+        const fixed = document.getElementById('tree-svg-scale-fixed');
+        const sel = document.getElementById('tree-svg-fixed-scale-select');
+        const hint = document.getElementById('tree-svg-fixed-scale-hint');
+        if (!sel) return;
+        const on = !!(fixed && fixed.checked);
+        sel.disabled = !on;
+        if (hint) hint.style.opacity = on ? '1' : '0.5';
+    }
     if (dom.btnExportTreeSvg) {
-        dom.btnExportTreeSvg.addEventListener('click', showTreeSvgExportModal);
+        dom.btnExportTreeSvg.addEventListener('click', () => {
+            showTreeSvgExportModal();
+            syncTreeSvgFixedScaleControls();
+        });
     }
     const treeSvgOverlay = document.getElementById('tree-svg-export-overlay');
     const btnTreeSvgCancel = document.getElementById('btn-tree-svg-cancel');
@@ -1478,11 +1519,19 @@ async function init() {
             treeSvgOverlay.style.display = 'none';
         });
     }
+    document.querySelectorAll('input[name="tree-svg-scale"]').forEach(el => {
+        el.addEventListener('change', syncTreeSvgFixedScaleControls);
+    });
     if (btnTreeSvgExport && treeSvgOverlay) {
         btnTreeSvgExport.addEventListener('click', () => {
             const circular = document.getElementById('tree-svg-circular') && document.getElementById('tree-svg-circular').checked;
+            const scaleFixed = document.getElementById('tree-svg-scale-fixed') && document.getElementById('tree-svg-scale-fixed').checked;
+            const scaleMode = scaleFixed ? 'fixed' : 'auto';
+            const sel = document.getElementById('tree-svg-fixed-scale-select');
+            let fixedBranchPerCm = sel ? parseFloat(sel.value, 10) : 0.001;
+            if (!isFinite(fixedBranchPerCm) || fixedBranchPerCm <= 0) fixedBranchPerCm = 0.001;
             treeSvgOverlay.style.display = 'none';
-            exportTreeAsSvg(circular ? 'circular' : 'linear');
+            exportTreeAsSvg(circular ? 'circular' : 'linear', scaleMode, scaleFixed ? fixedBranchPerCm : null);
         });
     }
     dom.btnLadderizeTree.addEventListener('click', showLadderizeModal);
@@ -1649,7 +1698,7 @@ async function init() {
                     if (clusterId === -1) {
                         clusterText = 'Noise';
                     } else {
-                        clusterText = `Cluster ${clusterId}`;
+                        clusterText = String(clusterId);
                     }
                 }
             }
@@ -2524,11 +2573,29 @@ function formatPhyloBranchLength(value) {
     return sign + dec;
 }
 
-/** Branch-length scale bar on exported tree SVG (same px/length mapping as tree drawing). */
-function appendSvgTreeScaleBarLinear(parts, xScale, maxD) {
-    const scaleVal = pickPhyloScaleBarValue(maxD);
-    if (scaleVal == null) return;
-    const pxLen = scaleVal * xScale;
+/** CSS/SVG px per centimeter (1 in = 96 px, 1 in = 2.54 cm). Used for fixed branch-length scale in SVG export. */
+const SVG_PX_PER_CM = 96 / 2.54;
+
+/** Pixels per tree branch-length unit when user selects fixed scale (branch length per 1 cm of plot). */
+function getSvgPxPerBranchUnit(branchLengthPerCm) {
+    const s = parseFloat(branchLengthPerCm, 10);
+    if (!isFinite(s) || s <= 0) return SVG_PX_PER_CM / 0.001;
+    return SVG_PX_PER_CM / s;
+}
+
+/** Branch-length scale bar on exported tree SVG (same px/length mapping as tree drawing).
+ *  @param {number|null|undefined} fixedBranchPerCm If set, bar is always 1 cm long and label is this branch length per cm. */
+function appendSvgTreeScaleBarLinear(parts, xScale, maxD, fixedBranchPerCm) {
+    let pxLen;
+    let scaleVal;
+    if (fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
+        pxLen = SVG_PX_PER_CM;
+        scaleVal = parseFloat(fixedBranchPerCm, 10);
+    } else {
+        scaleVal = pickPhyloScaleBarValue(maxD);
+        if (scaleVal == null) return;
+        pxLen = scaleVal * xScale;
+    }
     const x0 = 5;
     const y0 = 12;
     const labelX = x0 + pxLen + 8;
@@ -2543,11 +2610,19 @@ function appendSvgTreeScaleBarLinear(parts, xScale, maxD) {
     parts.push('</g>\n');
 }
 
-/** Top area of circular plot: below top margin, inset from right by bar length; number left of bar. */
-function appendSvgTreeScaleBarCircular(parts, plotW, R, maxD, plotMargin) {
-    const scaleVal = pickPhyloScaleBarValue(maxD);
-    if (scaleVal == null) return;
-    const pxLen = scaleVal * (R / maxD);
+/** Top area of circular plot: below top margin, inset from right by bar length; number left of bar.
+ *  @param {number|null|undefined} fixedBranchPerCm If set, bar is always 1 cm long and label is this branch length per cm. */
+function appendSvgTreeScaleBarCircular(parts, plotW, R, maxD, plotMargin, fixedBranchPerCm) {
+    let pxLen;
+    let scaleVal;
+    if (fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
+        pxLen = SVG_PX_PER_CM;
+        scaleVal = parseFloat(fixedBranchPerCm, 10);
+    } else {
+        scaleVal = pickPhyloScaleBarValue(maxD);
+        if (scaleVal == null) return;
+        pxLen = scaleVal * (R / maxD);
+    }
     const margin = plotMargin != null ? plotMargin : 48;
     const y0 = margin + 8;
     const padR = 10;
@@ -2648,7 +2723,7 @@ function updateColorLegend() {
                 colorBox.style.borderRadius = '3px';
                 
                 const label = document.createElement('span');
-                label.textContent = `Cluster ${clusterId}`;
+                label.textContent = String(clusterId);
                 label.style.color = '#374151';
                 
                 item.appendChild(colorBox);
@@ -3175,7 +3250,7 @@ function appendTreeSvgColorLegend(parts, legendX, legendY, legendW, legendH) {
         return;
     }
 
-    leg.push(`<text x="${x0}" y="${y}" font-family="sans-serif" font-size="14" font-weight="700" fill="#374151">Color Legend</text>\n`);
+    leg.push(`<text x="${x0}" y="${y}" font-family="sans-serif" font-size="14" font-weight="700" fill="#374151">Legend</text>\n`);
     y += 22;
 
     leg.push(`<g font-family="sans-serif" font-size="11">\n`);
@@ -3204,7 +3279,7 @@ function appendTreeSvgColorLegend(parts, legendX, legendY, legendW, legendH) {
         clusterIds.forEach(clusterId => {
             const color = getClusterColor(clusterId);
             leg.push(`<rect x="${x0}" y="${y - sw / 2 + 1}" width="${sw}" height="${sw}" fill="${color}" stroke="#d1d5db" stroke-width="1" rx="2"/>\n`);
-            leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">${escapeXml(`Cluster ${clusterId}`)}</text>\n`);
+            leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">${escapeXml(String(clusterId))}</text>\n`);
             y += rowH;
         });
         if (hasNoise) {
@@ -3232,14 +3307,17 @@ function showTreeSvgExportModal() {
     }
 }
 
-function exportTreeAsSvg(layout) {
+function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm) {
     if (!state.tree || !state.tree.root) {
         alert('No tree to export.');
         return;
     }
+    if (scaleMode !== 'fixed' && scaleMode !== 'auto') scaleMode = 'auto';
     let svgStr;
     try {
-        svgStr = layout === 'circular' ? buildTreeSvgCircular() : buildTreeSvgLinear();
+        svgStr = layout === 'circular'
+            ? buildTreeSvgCircular(scaleMode, fixedBranchPerCm)
+            : buildTreeSvgLinear(scaleMode, fixedBranchPerCm);
     } catch (e) {
         console.error(e);
         alert('Failed to build SVG: ' + (e && e.message ? e.message : e));
@@ -3290,10 +3368,19 @@ function assignRadialInternalAngles(node) {
     node._svgAngle = count ? sum / count : 0;
 }
 
-function buildTreeSvgCircular() {
+/** @param {'auto'|'fixed'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot.
+ *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm). */
+function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
+    if (scaleMode !== 'fixed' && scaleMode !== 'auto') scaleMode = 'auto';
     const root = state.tree.root;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
-    const R = 260;
+    let R;
+    if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
+        const pxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm);
+        R = maxD * pxPerUnit;
+    } else {
+        R = 260;
+    }
     /** Gap along the radius from the tip diamond to the inner edge of the label (first glyph) (px). */
     const labelGapPastDiamond = 48;
     const diamond = 10;
@@ -3470,7 +3557,14 @@ function buildTreeSvgCircular() {
         parts.push(`<text x="${lx.toFixed(2)}" y="${ly.toFixed(2)}" fill="${labFill}" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="start" dominant-baseline="middle" transform="rotate(${deg}, ${lx.toFixed(2)}, ${ly.toFixed(2)})">${getSvgLeafDisplayLabel(node.name)}</text>\n`);
     });
 
-    appendSvgTreeScaleBarCircular(parts, plotW, R, maxD, plotMargin);
+    appendSvgTreeScaleBarCircular(
+        parts,
+        plotW,
+        R,
+        maxD,
+        plotMargin,
+        scaleMode === 'fixed' ? fixedBranchPerCm : null
+    );
 
     appendTreeSvgColorLegend(parts, plotW, titleSpace, legendW, totalH);
 
@@ -3478,11 +3572,23 @@ function buildTreeSvgCircular() {
     return parts.join('');
 }
 
-function buildTreeSvgLinear() {
+/** @param {'auto'|'fixed'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot.
+ *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm). */
+function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
+    if (scaleMode !== 'fixed' && scaleMode !== 'auto') scaleMode = 'auto';
     const padding = 15;
-    const branchW = 520;
+    const branchWAuto = 520;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
-    const xScale = branchW / maxD;
+    let branchW;
+    let xScale;
+    if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
+        const pxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm);
+        xScale = pxPerUnit;
+        branchW = maxD * pxPerUnit;
+    } else {
+        branchW = branchWAuto;
+        xScale = branchW / maxD;
+    }
     const rowH = CONFIG.rowHeight;
     const leftPad = 5;
     const nRows = Math.max(1, state.viewSequences.length);
@@ -3502,10 +3608,10 @@ function buildTreeSvgLinear() {
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">\n`);
     parts.push(`<rect width="${totalW}" height="${totalH}" fill="white"/>\n`);
     const titleLines = getSvgTreeTitleLines();
-    const titleX = plotW / 2;
-    parts.push(`<g font-family="sans-serif" fill="#111827" text-anchor="middle">\n`);
-    parts.push(`<text x="${titleX}" y="20" font-size="13" font-weight="700">${titleLines[0]}</text>\n`);
-    parts.push(`<text x="${titleX}" y="36" font-size="11">${titleLines[1]}</text>\n`);
+    const titleLineX = padding + 5;
+    parts.push(`<g font-family="sans-serif" fill="#111827" text-anchor="start">\n`);
+    parts.push(`<text x="${titleLineX}" y="20" font-size="13" font-weight="700">${titleLines[0]}</text>\n`);
+    parts.push(`<text x="${titleLineX}" y="36" font-size="11">${titleLines[1]}</text>\n`);
     parts.push(`</g>\n`);
     // Main plot group shifted down to leave room for the title.
     parts.push(`<g transform="translate(${padding},${padding + titleSpace})" stroke="#374151" stroke-width="1" fill="none">\n`);
@@ -3585,7 +3691,7 @@ function buildTreeSvgLinear() {
     parts.push('</g>\n');
 
     parts.push(`<g transform="translate(${padding},${padding + titleSpace})">\n`);
-    appendSvgTreeScaleBarLinear(parts, xScale, maxD);
+    appendSvgTreeScaleBarLinear(parts, xScale, maxD, scaleMode === 'fixed' ? fixedBranchPerCm : null);
     parts.push('</g>\n');
 
     appendTreeSvgColorLegend(parts, plotW, titleSpace, legendW, totalH);
