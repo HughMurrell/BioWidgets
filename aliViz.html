@@ -2584,18 +2584,16 @@ function getSvgPxPerBranchUnit(branchLengthPerCm) {
 }
 
 /** Branch-length scale bar on exported tree SVG (same px/length mapping as tree drawing).
- *  @param {number|null|undefined} fixedBranchPerCm If set, bar is always 1 cm long and label is this branch length per cm. */
+ *  @param {number|null|undefined} fixedBranchPerCm If set, label uses this branch length per cm value. */
 function appendSvgTreeScaleBarLinear(parts, xScale, maxD, fixedBranchPerCm) {
-    let pxLen;
     let scaleVal;
     if (fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
-        pxLen = SVG_PX_PER_CM;
         scaleVal = parseFloat(fixedBranchPerCm, 10);
     } else {
         scaleVal = pickPhyloScaleBarValue(maxD);
         if (scaleVal == null) return;
-        pxLen = scaleVal * xScale;
     }
+    const pxLen = scaleVal * xScale;
     const x0 = 5;
     const y0 = 12;
     const labelX = x0 + pxLen + 8;
@@ -2611,18 +2609,17 @@ function appendSvgTreeScaleBarLinear(parts, xScale, maxD, fixedBranchPerCm) {
 }
 
 /** Top area of circular plot: below top margin, inset from right by bar length; number left of bar.
- *  @param {number|null|undefined} fixedBranchPerCm If set, bar is always 1 cm long and label is this branch length per cm. */
-function appendSvgTreeScaleBarCircular(parts, plotW, R, maxD, plotMargin, fixedBranchPerCm) {
-    let pxLen;
+ *  @param {number} pxPerUnit Exact branch-length mapping used in rendered circular tree (px per branch-length unit).
+ *  @param {number|null|undefined} fixedBranchPerCm If set, label uses this branch length per cm value. */
+function appendSvgTreeScaleBarCircular(parts, plotW, R, maxD, plotMargin, fixedBranchPerCm, pxPerUnit) {
     let scaleVal;
     if (fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
-        pxLen = SVG_PX_PER_CM;
         scaleVal = parseFloat(fixedBranchPerCm, 10);
     } else {
         scaleVal = pickPhyloScaleBarValue(maxD);
         if (scaleVal == null) return;
-        pxLen = scaleVal * (R / maxD);
     }
+    const pxLen = scaleVal * pxPerUnit;
     const margin = plotMargin != null ? plotMargin : 48;
     const y0 = margin + 8;
     const padR = 10;
@@ -3374,12 +3371,14 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
     if (scaleMode !== 'fixed' && scaleMode !== 'auto') scaleMode = 'auto';
     const root = state.tree.root;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
-    let R;
+    const R = 260;
+    let fixedPxPerUnit = null;
     if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
-        const pxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm);
-        R = maxD * pxPerUnit;
-    } else {
-        R = 260;
+        fixedPxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm);
+    }
+    const circularPxPerUnit = fixedPxPerUnit != null ? fixedPxPerUnit * 0.5 : (R / maxD);
+    function radialR(node) {
+        return node.xDepth * circularPxPerUnit;
     }
     /** Gap along the radius from the tip diamond to the inner edge of the label (first glyph) (px). */
     const labelGapPastDiamond = 48;
@@ -3397,7 +3396,7 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
     let maxRadialExtent = 0;
     leaves.forEach(node => {
         const th = node._svgAngle;
-        const rTip = (node.xDepth / maxD) * R;
+        const rTip = radialR(node);
         const labelRadial = rTip + diamond + labelGapPastDiamond;
         const w = estimateSvgCircularLabelWidthPx(node.name);
         const lineHalf = 5.5;
@@ -3419,6 +3418,7 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
     parts.push(`<?xml version="1.0" encoding="UTF-8"?>\n`);
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">\n`);
     parts.push(`<rect width="${totalW}" height="${totalH}" fill="white"/>\n`);
+    parts.push(`<defs><clipPath id="clipTreeCircularSvg"><circle cx="${cx}" cy="${cy}" r="${R}"/></clipPath></defs>\n`);
 
     const titleLines = getSvgTreeTitleLines();
     const titleX = plotW / 2;
@@ -3427,10 +3427,10 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
     parts.push(`<text x="${titleX}" y="36" font-size="11">${titleLines[1]}</text>\n`);
     parts.push(`</g>\n`);
 
-    parts.push(`<g stroke="#374151" stroke-width="1" fill="none">\n`);
+    parts.push(`<g stroke="#374151" stroke-width="1" fill="none" clip-path="url(#clipTreeCircularSvg)">\n`);
 
     function radXY(node) {
-        const r = (node.xDepth / maxD) * R;
+        const r = radialR(node);
         const th = node._svgAngle;
         return { x: cx + r * Math.cos(th), y: cy + r * Math.sin(th) };
     }
@@ -3489,7 +3489,7 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
         const visibleChildren = node.children.filter(c => !c.hidden);
         visibleChildren.forEach(drawOrthoEdges);
 
-        const rP = (node.xDepth / maxD) * R;
+        const rP = radialR(node);
         const ths = visibleChildren.map(c => c._svgAngle);
 
         if (rP > 1e-6) {
@@ -3500,7 +3500,7 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
                 }
             }
             visibleChildren.forEach(c => {
-                const rC = (c.xDepth / maxD) * R;
+                const rC = radialR(c);
                 const thC = c._svgAngle;
                 const x1 = cx + rP * Math.cos(thC);
                 const y1 = cy + rP * Math.sin(thC);
@@ -3510,7 +3510,7 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
             });
         } else {
             visibleChildren.forEach(c => {
-                const rC = (c.xDepth / maxD) * R;
+                const rC = radialR(c);
                 const thC = c._svgAngle;
                 const x2 = cx + rC * Math.cos(thC);
                 const y2 = cy + rC * Math.sin(thC);
@@ -3527,11 +3527,11 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
         const th = node._svgAngle;
         const dx = Math.cos(th);
         const dy = Math.sin(th);
-        const rTip = (node.xDepth / maxD) * R;
+        const rTip = radialR(node);
         const labelRadial = rTip + diamond + labelGapPastDiamond;
-        const dOut = rTip + diamond;
-        const tx = cx + dOut * dx;
-        const ty = cy + dOut * dy;
+        const rDashStart = Math.min(rTip + diamond, R);
+        const tx = cx + rDashStart * dx;
+        const ty = cy + rDashStart * dy;
         const lx = cx + labelRadial * dx;
         const ly = cy + labelRadial * dy;
         const lineStroke = getSvgLeafLabelFill(node.name);
@@ -3539,21 +3539,28 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
     });
     parts.push('</g>\n');
 
+    parts.push(`<g>\n`);
     leaves.forEach(node => {
         const p = radXY(node);
         const th = node._svgAngle;
         const tipFill = getSvgLeafTipFill(node.name);
-        const labFill = getSvgLeafLabelFill(node.name);
-        const dx = Math.cos(th);
-        const dy = Math.sin(th);
-        const rTip = (node.xDepth / maxD) * R;
-        const labelRadial = rTip + diamond + labelGapPastDiamond;
-        const lx = cx + labelRadial * dx;
-        const ly = cy + labelRadial * dy;
         const deg = (th * 180) / Math.PI;
         const diamondRot = deg + 90;
         const pts = `${p.x.toFixed(2)},${(p.y - diamond).toFixed(2)} ${(p.x + diamond).toFixed(2)},${p.y.toFixed(2)} ${p.x.toFixed(2)},${(p.y + diamond).toFixed(2)} ${(p.x - diamond).toFixed(2)},${p.y.toFixed(2)}`;
         parts.push(`<g transform="rotate(${diamondRot}, ${p.x.toFixed(2)}, ${p.y.toFixed(2)})"><polygon points="${pts}" fill="${tipFill}" stroke="#374151" stroke-width="0.5"/></g>\n`);
+    });
+    parts.push('</g>\n');
+
+    leaves.forEach(node => {
+        const th = node._svgAngle;
+        const dx = Math.cos(th);
+        const dy = Math.sin(th);
+        const rTip = radialR(node);
+        const labelRadial = rTip + diamond + labelGapPastDiamond;
+        const lx = cx + labelRadial * dx;
+        const ly = cy + labelRadial * dy;
+        const labFill = getSvgLeafLabelFill(node.name);
+        const deg = (th * 180) / Math.PI;
         parts.push(`<text x="${lx.toFixed(2)}" y="${ly.toFixed(2)}" fill="${labFill}" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="start" dominant-baseline="middle" transform="rotate(${deg}, ${lx.toFixed(2)}, ${ly.toFixed(2)})">${getSvgLeafDisplayLabel(node.name)}</text>\n`);
     });
 
@@ -3563,7 +3570,8 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
         R,
         maxD,
         plotMargin,
-        scaleMode === 'fixed' ? fixedBranchPerCm : null
+        scaleMode === 'fixed' ? fixedBranchPerCm : null,
+        circularPxPerUnit
     );
 
     appendTreeSvgColorLegend(parts, plotW, titleSpace, legendW, totalH);
@@ -3577,18 +3585,11 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm) {
 function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
     if (scaleMode !== 'fixed' && scaleMode !== 'auto') scaleMode = 'auto';
     const padding = 15;
-    const branchWAuto = 520;
+    const branchW = 520;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
-    let branchW;
-    let xScale;
-    if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
-        const pxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm);
-        xScale = pxPerUnit;
-        branchW = maxD * pxPerUnit;
-    } else {
-        branchW = branchWAuto;
-        xScale = branchW / maxD;
-    }
+    const isFixedScale =
+        scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10));
+    const xScale = isFixedScale ? getSvgPxPerBranchUnit(fixedBranchPerCm) : branchW / maxD;
     const rowH = CONFIG.rowHeight;
     const leftPad = 5;
     const nRows = Math.max(1, state.viewSequences.length);
@@ -3607,6 +3608,7 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
     parts.push(`<?xml version="1.0" encoding="UTF-8"?>\n`);
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">\n`);
     parts.push(`<rect width="${totalW}" height="${totalH}" fill="white"/>\n`);
+    parts.push(`<defs><clipPath id="clipTreeLinearSvg"><rect x="${leftPad}" y="0" width="${branchW}" height="${svgH}"/></clipPath></defs>\n`);
     const titleLines = getSvgTreeTitleLines();
     const titleLineX = padding + 5;
     parts.push(`<g font-family="sans-serif" fill="#111827" text-anchor="start">\n`);
@@ -3615,6 +3617,7 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
     parts.push(`</g>\n`);
     // Main plot group shifted down to leave room for the title.
     parts.push(`<g transform="translate(${padding},${padding + titleSpace})" stroke="#374151" stroke-width="1" fill="none">\n`);
+    parts.push(`<g clip-path="url(#clipTreeLinearSvg)">\n`);
 
     function nx(node) {
         return leftPad + node.xDepth * xScale;
@@ -3622,6 +3625,9 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
     function ny(node) {
         return node.yRow * rowH + rowH / 2;
     }
+
+    const markerInternalNodes = [];
+    const markerLeafNodes = [];
 
     function drawNode(node) {
         if (!node || node.hidden) return;
@@ -3642,14 +3648,9 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
             if (minY !== Infinity) {
                 parts.push(`<line x1="${x}" y1="${minY}" x2="${x}" y2="${maxY}"/>\n`);
             }
-            parts.push(`<circle cx="${x}" cy="${y}" r="3" fill="#374151" stroke="none"/>\n`);
+            markerInternalNodes.push(node);
         } else {
-            const connectorStroke = getSvgLeafLabelFill(node.name);
-            parts.push(`<line x1="${x}" y1="${y}" x2="${labelX0 - 6}" y2="${y}" stroke-dasharray="2 4" stroke="${connectorStroke}"/>\n`);
-            const tipFill = getSvgLeafTipFill(node.name);
-            const d = 10;
-            const pts = `${x},${y - d} ${x + d},${y} ${x},${y + d} ${x - d},${y}`;
-            parts.push(`<polygon points="${pts}" fill="${tipFill}" stroke="#374151" stroke-width="0.5"/>\n`);
+            markerLeafNodes.push(node);
         }
     }
     drawNode(state.tree.root);
@@ -3672,6 +3673,36 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm) {
         }
         parts.push('</g>\n');
     }
+
+    parts.push('</g>\n');
+
+    parts.push('<g stroke="#374151" fill="none">\n');
+    markerInternalNodes.forEach(node => {
+        const x = nx(node);
+        const y = ny(node);
+        parts.push(`<circle cx="${x}" cy="${y}" r="3" fill="#374151" stroke="none"/>\n`);
+    });
+    markerLeafNodes.forEach(node => {
+        const x = nx(node);
+        const y = ny(node);
+        const tipFill = getSvgLeafTipFill(node.name);
+        const d = 10;
+        const pts = `${x},${y - d} ${x + d},${y} ${x},${y + d} ${x - d},${y}`;
+        parts.push(`<polygon points="${pts}" fill="${tipFill}" stroke="#374151" stroke-width="0.5"/>\n`);
+    });
+    parts.push('</g>\n');
+
+    parts.push(`<g fill="none" stroke="#374151" stroke-width="1">\n`);
+    const leavesLin = [];
+    collectVisibleLeaves(state.tree.root, leavesLin);
+    leavesLin.forEach(node => {
+        const x = nx(node);
+        const y = ny(node);
+        const xStart = Math.min(x, leftPad + branchW);
+        const connectorStroke = getSvgLeafLabelFill(node.name);
+        parts.push(`<line x1="${xStart}" y1="${y}" x2="${labelX0 - 6}" y2="${y}" stroke-dasharray="2 4" stroke="${connectorStroke}"/>\n`);
+    });
+    parts.push('</g>\n');
 
     parts.push('</g>\n');
     parts.push(`<g transform="translate(${padding},${padding + titleSpace})" font-family="sans-serif" font-size="11">\n`);
