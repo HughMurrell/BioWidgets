@@ -1530,8 +1530,8 @@ async function init() {
             const sel = document.getElementById('tree-svg-fixed-scale-select');
             let fixedBranchPerCm = sel ? parseFloat(sel.value, 10) : 0.001;
             if (!isFinite(fixedBranchPerCm) || fixedBranchPerCm <= 0) fixedBranchPerCm = 0.001;
-            treeSvgOverlay.style.display = 'none';
-            exportTreeAsSvg(circular ? 'circular' : 'linear', scaleMode, scaleFixed ? fixedBranchPerCm : null);
+            const ok = exportTreeAsSvg(circular ? 'circular' : 'linear', scaleMode, scaleFixed ? fixedBranchPerCm : null);
+            if (ok) treeSvgOverlay.style.display = 'none';
         });
     }
     dom.btnLadderizeTree.addEventListener('click', showLadderizeModal);
@@ -2573,6 +2573,19 @@ function formatPhyloBranchLength(value) {
     return sign + dec;
 }
 
+/** Plain decimal, 3 significant figures (e.g. 0.00922958 → 0.00923); falls back to formatPhyloBranchLength if toPrecision uses scientific notation. */
+function formatThreeSignificantFigures(value) {
+    if (value == null || !isFinite(value)) return '';
+    if (value === 0) return '0';
+    const sign = value < 0 ? '-' : '';
+    const v = Math.abs(value);
+    let s = v.toPrecision(3);
+    if (/[eE]/.test(s)) {
+        s = formatPhyloBranchLength(parseFloat(s));
+    }
+    return sign + s;
+}
+
 /** CSS/SVG px per centimeter (1 in = 96 px, 1 in = 2.54 cm). Used for fixed branch-length scale in SVG export. */
 const SVG_PX_PER_CM = 96 / 2.54;
 
@@ -3193,9 +3206,14 @@ function getSvgTreeTitleLines() {
         }
     }
 
+    let maxDepthStr = '—';
+    if (state.tree && state.tree.maxDepth != null && isFinite(state.tree.maxDepth)) {
+        maxDepthStr = formatThreeSignificantFigures(state.tree.maxDepth);
+    }
+
     return [
         escapeXml(fastaName),
-        escapeXml(`Infer: ${inferLabel} | Cluster: ${clusterLabel}`)
+        escapeXml(`Infer: ${inferLabel} | Max depth: ${maxDepthStr} | Cluster: ${clusterLabel}`)
     ];
 }
 
@@ -3304,12 +3322,40 @@ function showTreeSvgExportModal() {
     }
 }
 
+/** Linear fixed plot uses 520 px branch width; circular uses R=260 with half the px/unit, so same maxD*pxPerUnit limit. */
+const FIXED_SVG_DEPTH_SPAN_LIMIT_PX = 520;
+
+/** @returns {string|null} Error message if fixed scale would overflow, else null. */
+function checkFixedScaleSvgOverflow(fixedBranchPerCm) {
+    if (fixedBranchPerCm == null || !isFinite(parseFloat(fixedBranchPerCm, 10))) return null;
+    const s = parseFloat(fixedBranchPerCm, 10);
+    if (s <= 0) return null;
+    if (!state.tree || state.tree.maxDepth == null || !isFinite(state.tree.maxDepth)) return null;
+    const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
+    const pxPerUnit = getSvgPxPerBranchUnit(s);
+    const depthSpanPx = maxD * pxPerUnit;
+    if (depthSpanPx <= FIXED_SVG_DEPTH_SPAN_LIMIT_PX + 1e-9) return null;
+    return (
+        'Fixed-scale SVG export would overflow the available plot space at this branch-length setting. ' +
+        'Choose a larger branch-length-per-cm value in the dropdown (larger value draws the tree more compactly), ' +
+        'or switch to Auto scale.'
+    );
+}
+
+/** @returns {boolean} True if export succeeded. */
 function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm) {
     if (!state.tree || !state.tree.root) {
         alert('No tree to export.');
-        return;
+        return false;
     }
     if (scaleMode !== 'fixed' && scaleMode !== 'auto') scaleMode = 'auto';
+    if (scaleMode === 'fixed') {
+        const overflowMsg = checkFixedScaleSvgOverflow(fixedBranchPerCm);
+        if (overflowMsg) {
+            alert(overflowMsg);
+            return false;
+        }
+    }
     let svgStr;
     try {
         svgStr = layout === 'circular'
@@ -3318,7 +3364,7 @@ function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm) {
     } catch (e) {
         console.error(e);
         alert('Failed to build SVG: ' + (e && e.message ? e.message : e));
-        return;
+        return false;
     }
     const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -3329,6 +3375,7 @@ function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    return true;
 }
 
 function collectVisibleLeaves(node, out) {
