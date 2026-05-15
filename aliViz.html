@@ -485,9 +485,13 @@
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
                             <span id="tree-svg-fixed-scale-hint">Branch length / 1 cm:</span>
                             <select id="tree-svg-fixed-scale-select" disabled style="font-size: 12px; padding: 2px 6px; min-width: 5.5em;">
+                                <option value="0.5">0.5</option>
                                 <option value="0.1">0.1</option>
+                                <option value="0.05">0.05</option>
                                 <option value="0.01">0.01</option>
+                                <option value="0.005">0.005</option>
                                 <option value="0.001" selected>0.001</option>
+                                <option value="0.0005">0.0005</option>
                                 <option value="0.0001">0.0001</option>
                             </select>
                         </label>
@@ -1874,17 +1878,19 @@ function handleClipboardPaste(text) {
     const trimmed = text.trim();
     if(!trimmed) return;
 
-    const fastaEntries = parseClipboardFasta(trimmed);
-    if(fastaEntries.length) {
-        appendSequencesFromClipboard(fastaEntries);
+    const clipboardFasta = parseClipboardFasta(trimmed);
+    if(clipboardFasta.seqs.length) {
+        alertAlignmentReplacements(clipboardFasta.replacements);
+        appendSequencesFromClipboard(clipboardFasta.seqs);
         return;
     }
 
     const lines = trimmed.split(/\r?\n/).filter(line => line.trim().length > 0);
     if(lines.length === 1) {
-        const seqStr = lines[0].replace(/\s+/g, '').toUpperCase().replace(/[^A-Z-]/g, '');
-        if(seqStr.length) {
-            appendSequencesFromClipboard([{ name: null, seq: seqStr.split('') }]);
+        const sanitized = sanitizeAlignmentSequenceLine(lines[0].replace(/\s+/g, ''));
+        if(sanitized.text.length) {
+            alertAlignmentReplacements(sanitized.replacements);
+            appendSequencesFromClipboard([{ name: null, seq: sanitized.text.split('') }]);
             return;
         }
     }
@@ -1898,6 +1904,7 @@ function parseClipboardFasta(text) {
     let currentName = null;
     let buffer = [];
     let sawHeader = false;
+    const replacements = new Map();
 
     for(let rawLine of lines) {
         const line = rawLine.trim();
@@ -1911,7 +1918,9 @@ function parseClipboardFasta(text) {
             currentName = line.substring(1).trim() || null;
             buffer = [];
         } else if(currentName !== null) {
-            buffer.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+            const sanitized = sanitizeAlignmentSequenceLine(line);
+            mergeAlignmentReplacementCounts(replacements, sanitized.replacements);
+            buffer.push(sanitized.text);
         }
     }
 
@@ -1920,8 +1929,8 @@ function parseClipboardFasta(text) {
         if(seqStr.length) seqs.push({ name: currentName, seq: seqStr.split('') });
     }
 
-    if(!sawHeader) return [];
-    return seqs;
+    if(!sawHeader) return { seqs: [], replacements };
+    return { seqs, replacements };
 }
 
 function appendSequencesFromClipboard(entries) {
@@ -3794,21 +3803,74 @@ function treeToNewick(node) {
     }
 }
 
+/** Sanitize one sequence line: A–Z, gap (-), and stop (*) kept; other symbols → X (same length). */
+function sanitizeAlignmentSequenceLine(line, extraAllowed) {
+    const allowedSet = new Set(['-', '*'].concat(extraAllowed || []));
+    const upper = String(line).toUpperCase();
+    const replacements = new Map();
+    let out = '';
+    for (let i = 0; i < upper.length; i++) {
+        const ch = upper[i];
+        if ((ch >= 'A' && ch <= 'Z') || allowedSet.has(ch)) {
+            out += ch;
+        } else {
+            out += 'X';
+            replacements.set(ch, (replacements.get(ch) || 0) + 1);
+        }
+    }
+    return { text: out, replacements };
+}
+
+function mergeAlignmentReplacementCounts(target, source) {
+    if (!source) return target;
+    source.forEach((count, ch) => {
+        target.set(ch, (target.get(ch) || 0) + count);
+    });
+    return target;
+}
+
+function describeReplacedAlignmentChar(ch) {
+    if (ch === ' ') return 'space';
+    if (ch === '\t') return 'tab';
+    if (ch.length === 1) {
+        const code = ch.charCodeAt(0);
+        if (code < 32 || code > 127) return 'U+' + code.toString(16).toUpperCase().padStart(4, '0');
+        return '"' + ch + '"';
+    }
+    return JSON.stringify(ch);
+}
+
+function alertAlignmentReplacements(counts) {
+    if (!counts || !counts.size) return;
+    const parts = [];
+    counts.forEach((count, ch) => {
+        parts.push(`${describeReplacedAlignmentChar(ch)} → X (${count})`);
+    });
+    parts.sort((a, b) => a.localeCompare(b));
+    alert(
+        'Non-standard alignment characters were replaced with X (alignment length unchanged):\n\n' +
+        parts.join('\n')
+    );
+}
+
 function parseFastq(text) {
     const lines = text.split(/\r?\n/);
     const seqs = [];
+    const replacements = new Map();
     for(let i=0; i<lines.length; i++) {
         const line = lines[i].trim();
         if(!line) continue;
         if(line.startsWith('@')) {
             const name = line.substring(1); 
             if(i + 1 < lines.length) {
-                const seqStr = lines[i+1].trim().toUpperCase().replace(/[^A-Z-]/g, '');
-                seqs.push({ name: name, seq: seqStr.split('') });
+                const sanitized = sanitizeAlignmentSequenceLine(lines[i + 1].trim());
+                mergeAlignmentReplacementCounts(replacements, sanitized.replacements);
+                seqs.push({ name: name, seq: sanitized.text.split('') });
                 i += 3; 
             }
         }
     }
+    alertAlignmentReplacements(replacements);
     finalizeLoad(seqs);
 }
 
@@ -3816,6 +3878,7 @@ function parseFasta(text) {
     const lines = text.split(/\r?\n/);
     const seqs = [];
     let name = null, buf = [];
+    const replacements = new Map();
     for(let line of lines) {
         line = line.trim();
         if(!line) continue;
@@ -3824,7 +3887,9 @@ function parseFasta(text) {
             name = line.substring(1).trim();
             buf = [];
         } else {
-            buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+            const sanitized = sanitizeAlignmentSequenceLine(line);
+            mergeAlignmentReplacementCounts(replacements, sanitized.replacements);
+            buf.push(sanitized.text);
         }
     }
     if(name) seqs.push({name, seq: buf.join('').split('')});
@@ -3841,6 +3906,7 @@ function parseFasta(text) {
         }
     }
     
+    alertAlignmentReplacements(replacements);
     finalizeLoad(seqs);
 }
 
@@ -8789,14 +8855,14 @@ function parseFastaToSeqs(text) {
         const t = line.trim();
         if (!t) continue;
         if (t.startsWith('>')) {
-            if (name) seqs.push({ name, seq: buf.join('').toUpperCase().replace(/[^A-Z.-]/g, '').split('') });
+            if (name) seqs.push({ name, seq: buf.join('').split('') });
             name = t.substring(1).trim();
             buf = [];
         } else {
-            buf.push(t.toUpperCase().replace(/[^A-Z.-]/g, ''));
+            buf.push(sanitizeAlignmentSequenceLine(t, ['.']).text);
         }
     }
-    if (name) seqs.push({ name, seq: buf.join('').toUpperCase().replace(/[^A-Z.-]/g, '').split('') });
+    if (name) seqs.push({ name, seq: buf.join('').split('') });
     return seqs;
 }
 
