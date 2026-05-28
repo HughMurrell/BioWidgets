@@ -82,6 +82,16 @@
             background: white; font-size: 13px; cursor: pointer;
             white-space: nowrap;
         }
+
+        /* Hide native file input chrome; use custom button + filename field instead. */
+        #inp-file {
+            display: none !important;
+            width: 0 !important;
+            height: 0 !important;
+            opacity: 0 !important;
+            position: absolute !important;
+            pointer-events: none !important;
+        }
         button:hover { background-color: #f3f4f6; }
         button.active { background-color: var(--primary); color: white; border-color: var(--primary); }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -221,7 +231,13 @@
         <div class="control-group">
             <label>Sequences</label>
             <div style="display:flex; gap:5px; align-items:center;">
-                <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt">
+                <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt" style="display:none;">
+                <button id="btn-choose-file" type="button">Choose file</button>
+                <input type="text" id="inp-file-name" value="No file chosen" readonly style="min-width: 180px; max-width: 260px; padding: 4px 6px; font-size: 12px; color: #374151; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 4px;">
+                <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:#374151; white-space:nowrap;">
+                    <input type="checkbox" id="chk-has-subtype">
+                    Has subtype
+                </label>
                 <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
                 <button id="btn-sort-sequences" title="Sort by current grouping, or by name if no grouping (REF and SUBTYPE remain first)">Sort</button>
                 <button id="btn-prune" title="Remove sequences from selected groups">Prune</button>
@@ -233,8 +249,7 @@
             <label>Phylogeny</label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
-                <!-- Choose file button commented out -->
-                <!-- <input type="file" id="inp-tree"> -->
+                <input type="file" id="inp-tree" accept=".nwk,.newick,.tree,.treefile,.txt" style="display:none;">
                 <button id="btn-reroot-tree" title="Reroot tree on subtype sequence">Reroot</button>
                 <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
                 <button id="btn-histogram" title="Show histogram of root-to-leaf distances" disabled>Histogram</button>
@@ -385,6 +400,7 @@
             <select id="sel-infer-method" style="width: 100%;">
                 <option value="nj">Neighbor-Joining (Internal)</option>
                 <option value="fasttree" selected>FastTree (bioWASM)</option>
+                <option value="load-tree">Load inferred tree (Newick file)</option>
             </select>
         </div>
         
@@ -726,6 +742,17 @@
 <div id="subtype-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
     <div class="help-box" style="width: 450px;">
         <h2>Add Founder Sequence</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 6px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Founder Source</label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#374151; text-transform:none;">
+                <input type="radio" name="founder-source-mode" id="founder-source-consensus" value="consensus">
+                Consensus of a group
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#374151; text-transform:none;">
+                <input type="radio" name="founder-source-mode" id="founder-source-medoid" value="medoid" checked>
+                Medoid sequence of a group
+            </label>
+        </div>
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;">Select Group</label>
             <select id="sel-subtype-group" style="width: 100%;">
@@ -986,7 +1013,8 @@ const state = {
     treeWidth: 0, 
     namesWidth: 200,
     refIndex: 0, 
-    subtypeIndex: 1, // Second sequence (index 1) is the subtype
+    subtypeIndex: 1, // Sequence index used as subtype; may be out-of-range when subtype is not present
+    alignmentHasSubtype: true, // Whether loaded alignments include a dedicated subtype sequence
     refMap: [], 
     epitopes: [], // Array of {name: string, regions: [{start: number, end: number}]}
     selectedEpitope: null, // Selected epitope name or null
@@ -1004,6 +1032,7 @@ const state = {
     groupDelimiter: null, // Delimiter used for grouping
     groupFieldNum: null, // Field number (1-based) used for grouping
     groupNames: null, // Map from group ID to group value (for legend)
+    founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     originalSubtype: null, // Store original subtype sequence for reverting
     currentFileName: null, // Store the current alignment file name
     pdbFileContent: null, // Raw PDB/CIF text for 3D viewer (set when Load PDB/CIF or fetch by ID)
@@ -1015,6 +1044,9 @@ const state = {
 // --- DOM ---
 const dom = {
     file: document.getElementById('inp-file'),
+    btnChooseFile: document.getElementById('btn-choose-file'),
+    fileNameDisplay: document.getElementById('inp-file-name'),
+    chkHasSubtype: document.getElementById('chk-has-subtype'),
     fileTree: document.getElementById('inp-tree'),
     btnInferTree: document.getElementById('btn-infer-tree'),
     btnExportTree: document.getElementById('btn-export-tree'),
@@ -1187,6 +1219,17 @@ async function init() {
     // Disable buttons that require a file to be loaded
     disableButtonsOnStartup();
 
+    if (dom.chkHasSubtype) {
+        state.alignmentHasSubtype = !!dom.chkHasSubtype.checked;
+        dom.chkHasSubtype.addEventListener('change', function () {
+            applySubtypeToggleReset(!!dom.chkHasSubtype.checked);
+        });
+    }
+    if (dom.btnChooseFile && dom.file) {
+        dom.btnChooseFile.addEventListener('click', function () {
+            dom.file.click();
+        });
+    }
     dom.file.addEventListener('change', function (e) {
         if (e.target.files && e.target.files[0]) {
             loadFile(e.target.files[0]);
@@ -1968,6 +2011,9 @@ function clearAlignment() {
     state.maxLength = 0;
     state.refMap = [];
     state.pastedNameCounter = 1;
+    state.currentFileName = null;
+    state.founderSequenceName = null;
+    updateLoadedFileNameDisplay('');
     state.sequenceGroups = null;
     state.groupDelimiter = null;
     state.groupFieldNum = null;
@@ -2024,7 +2070,8 @@ function saveState() {
     const snapshot = {
         seqs: JSON.parse(JSON.stringify(state.rawSequences)),
         sel: state.selection ? { ...state.selection } : null,
-        refIdx: state.refIndex
+        refIdx: state.refIndex,
+        founderName: state.founderSequenceName
     };
     state.history.push(snapshot);
     if(state.history.length > CONFIG.maxHistory) state.history.shift();
@@ -2035,6 +2082,7 @@ function undo() {
     const prev = state.history.pop();
     state.rawSequences = prev.seqs;
     state.selection = prev.sel;
+    state.founderSequenceName = prev.founderName || null;
     if(prev.refIdx < state.rawSequences.length) state.refIndex = prev.refIdx;
     else state.refIndex = 0;
     
@@ -2042,6 +2090,96 @@ function undo() {
 }
 
 // --- Loading ---
+function getDefaultSubtypeIndexForLoadedSequences(count) {
+    if (count <= 0) return 0;
+    if (!state.alignmentHasSubtype) return count; // out-of-range sentinel means "no subtype"
+    return count > 1 ? 1 : 0;
+}
+
+/** Returns the designated subtype sequence if present and not a founder, otherwise null. */
+function getDesignatedSubtypeSequence() {
+    if (state.subtypeIndex < 0 || state.subtypeIndex >= state.rawSequences.length) return null;
+    const seq = state.rawSequences[state.subtypeIndex];
+    if (!seq) return null;
+    if (isFounderSequenceName(seq.name)) return null;
+    return seq;
+}
+
+function getClusterSuffixPattern() {
+    const delimiter = state.groupDelimiter || '_';
+    return new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+}
+
+function normalizeSequenceName(name) {
+    return String(name || '').replace(getClusterSuffixPattern(), '');
+}
+
+function isFounderSequenceName(name) {
+    if (!name) return false;
+    if (name.startsWith('consensus_of_')) return true;
+    if (!state.founderSequenceName) return false;
+    return normalizeSequenceName(name) === normalizeSequenceName(state.founderSequenceName);
+}
+
+function getFounderSequenceIndex() {
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (isFounderSequenceName(state.rawSequences[i]?.name)) return i;
+    }
+    return -1;
+}
+
+function updateLoadedFileNameDisplay(fileName) {
+    if (!dom.fileNameDisplay) return;
+    const trimmed = String(fileName || '').trim();
+    dom.fileNameDisplay.value = trimmed || 'No file chosen';
+    dom.fileNameDisplay.title = dom.fileNameDisplay.value;
+}
+
+function applySubtypeToggleReset(hasSubtype) {
+    const previous = state.alignmentHasSubtype;
+    state.alignmentHasSubtype = !!hasSubtype;
+    if (previous === state.alignmentHasSubtype) return;
+    if (!state.rawSequences || state.rawSequences.length === 0) return;
+
+    // Preserve ability to undo user-driven subtype toggles.
+    saveState();
+
+    // Remove cluster suffixes from sequence names before clearing clustering/grouping state.
+    const delimiter = state.groupDelimiter || '_';
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    state.rawSequences.forEach(seq => {
+        if (seq && seq.name) seq.name = seq.name.replace(clusterPattern, '');
+    });
+
+    // Toggling subtype semantics invalidates grouping, tree inference, and clustering outputs.
+    state.sequenceGroups = null;
+    state.groupNames = null;
+    state.groupDelimiter = null;
+    state.groupFieldNum = null;
+    state.leafClusters = null;
+    state.hierarchicalActive = false;
+    state.hierarchicalDepths = [0, 0, 0];
+    state.lastAcceptedClusterMethod = null;
+    state.founderSequenceName = null;
+
+    state.tree = null;
+    setTreeWidth(0);
+
+    state.refIndex = 0;
+    state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
+    state.originalSubtype = null;
+    if (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length) {
+        state.originalSubtype = JSON.parse(JSON.stringify(state.rawSequences[state.subtypeIndex]));
+    }
+
+    state.selection = null;
+    disableButtonsOnStartup();
+    enableButtonsAfterLoad();
+    updateColorLegend();
+    calculateNamesWidth();
+    recalc();
+}
+
 function loadFile(file) {
     if(!file) return;
     showOverlay(true);
@@ -2063,8 +2201,95 @@ function loadTreeFile(file) {
     if(!file) return;
     showOverlay(true);
     const reader = new FileReader();
-    reader.onload = e => parseTree(e.target.result, false, false); // Don't reroot when loading from file
+    reader.onload = e => {
+        const newick = e.target.result;
+        const validation = validateTreeNamesAgainstAlignment(newick);
+        if (!validation.ok) {
+            showOverlay(false);
+            alert(validation.message);
+            return;
+        }
+        parseTree(newick, false, false); // Don't reroot when loading from file
+    };
     reader.readAsText(file);
+}
+
+function extractLeafNamesFromNewick(newickText) {
+    const text = String(newickText || '').trim();
+    if (!text) return [];
+    let s = text.split(/\r?\n/).filter(Boolean).pop() || '';
+    s = s.trim();
+    if (!s) return [];
+    if (s.endsWith(';')) s = s.slice(0, -1);
+    s = s.replace(/\[[^\]]*\]/g, '');
+    const tokens = s.split(/([(),:;])/).map(t => t.trim()).filter(t => t !== '');
+    const root = { children: [], name: null };
+    let stack = [];
+    let current = root;
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        if (t === '(') {
+            const node = { children: [], name: null, parent: current };
+            current.children.push(node);
+            stack.push(current);
+            current = node;
+        } else if (t === ',') {
+            current = stack.length > 0 ? stack[stack.length - 1] : root;
+            const node = { children: [], name: null, parent: current };
+            current.children.push(node);
+            current = node;
+        } else if (t === ')') {
+            current = stack.length > 0 ? stack.pop() : root;
+        } else if (t === ':') {
+            i++; // skip branch length token
+        } else {
+            if (!current) continue;
+            const isInternal = current.children && current.children.length > 0;
+            if (!isInternal) current.name = t.replace(/^['"]|['"]$/g, '');
+        }
+    }
+    const leaves = [];
+    function walk(node) {
+        if (!node) return;
+        if (!node.children || node.children.length === 0) {
+            if (node.name) leaves.push(node.name);
+            return;
+        }
+        node.children.forEach(walk);
+    }
+    walk(root);
+    return leaves;
+}
+
+function validateTreeNamesAgainstAlignment(newickText) {
+    const treeNames = extractLeafNamesFromNewick(newickText).map(normalizeSequenceName);
+    if (treeNames.length === 0) {
+        return { ok: false, message: "Tree file appears empty or is not valid Newick." };
+    }
+    const treeSet = new Set(treeNames);
+    const subtypeSeq = getDesignatedSubtypeSequence();
+    const subtypeNameNorm = subtypeSeq ? normalizeSequenceName(subtypeSeq.name) : null;
+    const expectedSet = new Set();
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex) continue;
+        const seq = state.rawSequences[i];
+        if (!seq || !seq.name || isPdbChainSequence(seq)) continue;
+        const norm = normalizeSequenceName(seq.name);
+        if (subtypeNameNorm && norm === subtypeNameNorm) continue;
+        expectedSet.add(norm);
+    }
+    const missing = [];
+    expectedSet.forEach(n => { if (!treeSet.has(n)) missing.push(n); });
+    const extra = [];
+    treeSet.forEach(n => { if (!expectedSet.has(n)) extra.push(n); });
+    if (missing.length === 0 && extra.length === 0) return { ok: true };
+    const missingMsg = missing.slice(0, 5).join(', ');
+    const extraMsg = extra.slice(0, 5).join(', ');
+    let message = "Tree/alignment name mismatch.\n";
+    if (missing.length > 0) message += `Missing from tree (${missing.length}): ${missingMsg}${missing.length > 5 ? ', ...' : ''}\n`;
+    if (extra.length > 0) message += `Not in alignment (${extra.length}): ${extraMsg}${extra.length > 5 ? ', ...' : ''}\n`;
+    message += "Tree leaf names must match alignment names (reference/subtype excluded; founder label differences are tolerated).";
+    return { ok: false, message };
 }
 
 // --- Sort Sequences by Name (or by current grouping when present) ---
@@ -2091,7 +2316,7 @@ function sortSequencesByName() {
         const s = state.rawSequences[i];
         if (isPdbChainSequence(s)) {
             pdbChains.push(s);
-        } else if (s && s.name && s.name.startsWith('consensus_of_')) {
+        } else if (s && isFounderSequenceName(s.name)) {
             // Founder is a special sequence: keep it out of the sort and place it after subtype
             founderSeq = s;
         } else {
@@ -2148,9 +2373,9 @@ function sortSequencesByName() {
     const subtypeName = subtypeSeq ? subtypeSeq.name : null;
     if (subtypeName) {
         const newSubtypeIdx = state.rawSequences.findIndex(s => s.name === subtypeName);
-        state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 0;
+        state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     } else {
-        state.subtypeIndex = state.rawSequences.length > 1 ? 1 : 0;
+        state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     }
     
     // Recalculate view sequences
@@ -2348,7 +2573,7 @@ function applyPrune() {
     state.sequenceGroups = renumberedSequenceGroups;
     state.groupNames = renumberedGroupNames;
     state.refIndex = 0;
-    state.subtypeIndex = (state.rawSequences.length > 1) ? 1 : 0;
+    state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     state.tree = null;
     state.selection = null;
     recalc();
@@ -2358,6 +2583,8 @@ function applyPrune() {
 
 // --- Add Founder Sequence ---
 function showSubtypeModal() {
+    const medoidRadio = document.getElementById('founder-source-medoid');
+    if (medoidRadio) medoidRadio.checked = true;
     // Populate group selector
     const select = document.getElementById('sel-subtype-group');
     select.innerHTML = '';
@@ -2381,12 +2608,15 @@ function showSubtypeModal() {
         });
     }
     
-    // Add subtype option last
-    const subtypeOpt = document.createElement('option');
-    subtypeOpt.value = 'subtype';
-    subtypeOpt.textContent = '[SubType]';
-    if (!hasGroups) subtypeOpt.selected = true;
-    select.appendChild(subtypeOpt);
+    // Add subtype option last (only when a subtype sequence exists)
+    const hasSubtypeSeq = state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length;
+    if (hasSubtypeSeq) {
+        const subtypeOpt = document.createElement('option');
+        subtypeOpt.value = 'subtype';
+        subtypeOpt.textContent = '[SubType]';
+        if (!hasGroups) subtypeOpt.selected = true;
+        select.appendChild(subtypeOpt);
+    }
     
     document.getElementById('subtype-overlay').style.display = 'flex';
 }
@@ -2435,9 +2665,40 @@ function calculateFounder(sequences) {
     return founder;
 }
 
+function hammingDistancePadded(a, b) {
+    const len = Math.max(a ? a.length : 0, b ? b.length : 0);
+    let d = 0;
+    for (let i = 0; i < len; i++) {
+        const ca = (a && i < a.length) ? a[i] : '-';
+        const cb = (b && i < b.length) ? b[i] : '-';
+        if (ca !== cb) d++;
+    }
+    return d;
+}
+
+/** Return the entry whose sequence minimizes total padded Hamming distance to all entries. */
+function findMedoidEntry(entries) {
+    if (!entries || entries.length === 0) return null;
+    let bestIdx = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < entries.length; i++) {
+        let total = 0;
+        for (let j = 0; j < entries.length; j++) {
+            if (i === j) continue;
+            total += hammingDistancePadded(entries[i].seq, entries[j].seq);
+        }
+        if (total < bestScore) {
+            bestScore = total;
+            bestIdx = i;
+        }
+    }
+    return entries[bestIdx];
+}
+
 function applySubtypeFounder() {
     const select = document.getElementById('sel-subtype-group');
     const selected = (select && select.value != null) ? String(select.value) : '';
+    const founderMode = document.querySelector('input[name="founder-source-mode"]:checked')?.value || 'consensus';
     if (!selected) {
         alert("Please select a group or [SubType].");
         return;
@@ -2445,6 +2706,7 @@ function applySubtypeFounder() {
     
     let founder = null;
     let founderName = null;
+    let medoidRawIndex = -1;
     
     if (selected === 'subtype') {
         if (state.subtypeIndex == null || state.subtypeIndex < 0 || state.subtypeIndex >= state.rawSequences.length) {
@@ -2452,8 +2714,13 @@ function applySubtypeFounder() {
             return;
         }
         const subtypeSeq = state.rawSequences[state.subtypeIndex];
-        founder = subtypeSeq && subtypeSeq.seq ? [...subtypeSeq.seq] : null;
-        founderName = 'consensus_of_subtype';
+        if (founderMode === 'medoid') {
+            medoidRawIndex = state.subtypeIndex;
+            founder = subtypeSeq && subtypeSeq.seq ? [...subtypeSeq.seq] : null;
+        } else {
+            founder = subtypeSeq && subtypeSeq.seq ? [...subtypeSeq.seq] : null;
+        }
+        founderName = founderMode === 'medoid' ? (subtypeSeq ? subtypeSeq.name : null) : 'consensus_of_subtype';
     } else {
         const selectedGroupId = parseInt(selected, 10);
         if (isNaN(selectedGroupId)) {
@@ -2467,27 +2734,38 @@ function applySubtypeFounder() {
         
         // Get group value for naming
         const groupValue = state.groupNames.get(selectedGroupId) || `group${selectedGroupId}`;
-        founderName = `consensus_of_${groupValue}`;
+        founderName = founderMode === 'medoid' ? null : `consensus_of_${groupValue}`;
         
         // Find all sequences in the selected group
-        const groupSequences = [];
+        const groupEntries = [];
         for (let i = 0; i < state.rawSequences.length; i++) {
             if (i === state.refIndex || i === state.subtypeIndex) continue; // Exclude REF and subtype
             const seq = state.rawSequences[i];
             const groupId = state.sequenceGroups.get(seq.name);
             if (groupId === selectedGroupId) {
                 const seqArr = state.isAASequence ? state.viewSequences[i].seq : state.rawSequences[i].seq;
-                groupSequences.push(seqArr);
+                groupEntries.push({ rawIndex: i, seq: seqArr });
             }
         }
-        if (groupSequences.length === 0) {
+        if (groupEntries.length === 0) {
             alert("No sequences found in the selected group.");
             return;
         }
-        founder = calculateFounder(groupSequences);
-        if (!founder) {
-            alert("Failed to calculate founder sequence.");
-            return;
+        if (founderMode === 'medoid') {
+            const medoidEntry = findMedoidEntry(groupEntries);
+            if (!medoidEntry) {
+                alert("Failed to detect medoid sequence for the selected group.");
+                return;
+            }
+            medoidRawIndex = medoidEntry.rawIndex;
+            founder = medoidEntry.seq ? [...medoidEntry.seq] : null;
+            founderName = state.rawSequences[medoidRawIndex]?.name || null;
+        } else {
+            founder = calculateFounder(groupEntries.map(e => e.seq));
+            if (!founder) {
+                alert("Failed to calculate founder sequence.");
+                return;
+            }
         }
     }
     
@@ -2508,28 +2786,47 @@ function applySubtypeFounder() {
         updateColorLegend();
     }
     
-    // Create new founder sequence
-    const founderSeq = {
-        name: founderName,
-        seq: [...founder]
-    };
-    
-    // Check if a founder already exists and replace it, otherwise insert after subtype
-    let existingFounderIndex = -1;
-    for (let i = 0; i < state.rawSequences.length; i++) {
-        if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
-            existingFounderIndex = i;
-            break;
+    // Check if a founder already exists
+    let existingFounderIndex = getFounderSequenceIndex();
+
+    if (founderMode === 'medoid') {
+        if (medoidRawIndex < 0 || medoidRawIndex >= state.rawSequences.length) {
+            alert("Failed to assign medoid founder.");
+            return;
         }
-    }
-    
-    if (existingFounderIndex >= 0) {
-        // Replace existing founder
-        state.rawSequences[existingFounderIndex] = founderSeq;
+        // Remove synthetic consensus founder when switching to medoid.
+        if (existingFounderIndex >= 0 && existingFounderIndex !== medoidRawIndex) {
+            const existingFounder = state.rawSequences[existingFounderIndex];
+            if (existingFounder && existingFounder.name && existingFounder.name.startsWith('consensus_of_')) {
+                state.rawSequences.splice(existingFounderIndex, 1);
+                if (medoidRawIndex > existingFounderIndex) medoidRawIndex--;
+            }
+        }
+        if (medoidRawIndex < 0 || medoidRawIndex >= state.rawSequences.length) {
+            alert("Failed to assign medoid founder.");
+            return;
+        }
+        const medoidSeq = state.rawSequences[medoidRawIndex];
+        state.founderSequenceName = medoidSeq && medoidSeq.name ? medoidSeq.name : null;
     } else {
-        // Insert after subtype (at index subtypeIndex + 1)
-        const insertIndex = state.subtypeIndex + 1;
-        state.rawSequences.splice(insertIndex, 0, founderSeq);
+        // Create synthetic founder sequence from consensus
+        const founderSeq = {
+            name: founderName,
+            seq: [...founder]
+        };
+        // If current founder is a medoid-tagged sequence, keep its original name and replace/add synthetic founder.
+        if (existingFounderIndex >= 0 && state.rawSequences[existingFounderIndex] && !state.rawSequences[existingFounderIndex].name.startsWith('consensus_of_')) {
+            existingFounderIndex = -1;
+        }
+        if (existingFounderIndex >= 0) {
+            // Replace existing founder
+            state.rawSequences[existingFounderIndex] = founderSeq;
+        } else {
+            // Insert after subtype (at index subtypeIndex + 1)
+            const insertIndex = state.subtypeIndex + 1;
+            state.rawSequences.splice(insertIndex, 0, founderSeq);
+        }
+        state.founderSequenceName = founderSeq.name;
     }
     
     // Update view sequences
@@ -2792,6 +3089,14 @@ function loadFromURLParams() {
     if (alignmentURL) {
         showOverlay(true);
         dom.overlayMsg.textContent = "Loading alignment...";
+        try {
+            const urlObj = new URL(alignmentURL, window.location.href);
+            const last = (urlObj.pathname || '').split('/').pop();
+            if (last) state.currentFileName = decodeURIComponent(last);
+        } catch (_) {
+            const fallback = alignmentURL.split('?')[0].split('#')[0].split('/').pop();
+            if (fallback) state.currentFileName = fallback;
+        }
         
         fetch(alignmentURL)
             .then(response => {
@@ -2847,6 +3152,15 @@ function showInferModal() {
 function runInferTask() {
     const method = document.getElementById('sel-infer-method').value;
     document.getElementById('infer-overlay').style.display = 'none';
+
+    if (method === 'load-tree') {
+        if (!dom.fileTree) {
+            alert("Tree file input is unavailable.");
+            return;
+        }
+        dom.fileTree.click();
+        return;
+    }
 
     // Disable buttons that require ladderize (will be re-enabled after ladderize)
     if (dom.btnHistogram) dom.btnHistogram.disabled = true;
@@ -2917,13 +3231,19 @@ function inferTreeNJ() {
     
     setTimeout(() => {
         try {
-            // Exclude reference, [subtype], and PDB chain sequences from tree inference
+            // Exclude reference, optional subtype, and PDB chain sequences from tree inference
             const refName = state.rawSequences[state.refIndex]?.name;
+            const subtypeCandidate = state.rawSequences[state.subtypeIndex];
+            const excludeSubtype =
+                state.subtypeIndex >= 0 &&
+                state.subtypeIndex < state.rawSequences.length &&
+                subtypeCandidate &&
+                !isFounderSequenceName(subtypeCandidate.name);
             const nonRefSequences = state.rawSequences.filter((s, idx) =>
-                idx !== state.refIndex && idx !== state.subtypeIndex && !isPdbChainSequence(s));
+                idx !== state.refIndex && !(excludeSubtype && idx === state.subtypeIndex) && !isPdbChainSequence(s));
             
             if (nonRefSequences.length < 2) {
-                alert("Need at least 2 sequences (excluding reference, subtype, and PDB) to infer a tree.");
+                alert("Need at least 2 sequences (excluding reference, optional subtype, and PDB) to infer a tree.");
                 showOverlay(false);
                 return;
             }
@@ -2962,21 +3282,27 @@ async function runFastTreeTask() {
     dom.overlaySub.textContent = "via bioWASM";
 
     try {
-        // Exclude reference, [subtype], and PDB chain sequences from tree inference
+        // Exclude reference, optional subtype, and PDB chain sequences from tree inference
+        const subtypeCandidate = state.rawSequences[state.subtypeIndex];
+        const excludeSubtype =
+            state.subtypeIndex >= 0 &&
+            state.subtypeIndex < state.rawSequences.length &&
+            subtypeCandidate &&
+            !isFounderSequenceName(subtypeCandidate.name);
         const nonRefSequences = state.rawSequences.filter((s, idx) =>
-            idx !== state.refIndex && idx !== state.subtypeIndex && !isPdbChainSequence(s));
+            idx !== state.refIndex && !(excludeSubtype && idx === state.subtypeIndex) && !isPdbChainSequence(s));
         
         if (nonRefSequences.length < 2) {
-            alert("Need at least 2 sequences (excluding reference, subtype, and PDB) to infer a tree.");
+            alert("Need at least 2 sequences (excluding reference, optional subtype, and PDB) to infer a tree.");
             showOverlay(false);
             return;
         }
         
-        // Use indices as temporary names (excluding ref, subtype, and PDB chains)
+        // Use indices as temporary names (excluding ref, optional subtype, and PDB chains)
         const indexMap = new Map();
         let newIdx = 0;
         state.rawSequences.forEach((s, origIdx) => {
-            if (origIdx !== state.refIndex && origIdx !== state.subtypeIndex && !isPdbChainSequence(s)) {
+            if (origIdx !== state.refIndex && !(excludeSubtype && origIdx === state.subtypeIndex) && !isPdbChainSequence(s)) {
                 indexMap.set(newIdx, origIdx);
                 newIdx++;
             }
@@ -3107,18 +3433,16 @@ function escapeXml(s) {
 }
 
 function getTreeClusterPattern() {
-    const delimiter = state.groupDelimiter || '_';
-    return new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    return getClusterSuffixPattern();
 }
 
 function findViewSeqRowForTreeNode(nodeName) {
     if (!nodeName) return -1;
     const idx = state.viewSequences.findIndex(s => s.name === nodeName);
     if (idx >= 0) return idx;
-    const pat = getTreeClusterPattern();
-    const stripped = nodeName.replace(pat, '');
+    const stripped = normalizeSequenceName(nodeName);
     for (let i = 0; i < state.viewSequences.length; i++) {
-        if (state.viewSequences[i].name.replace(pat, '') === stripped) return i;
+        if (normalizeSequenceName(state.viewSequences[i].name) === stripped) return i;
     }
     return -1;
 }
@@ -3127,12 +3451,11 @@ function findViewSeqRowForTreeNode(nodeName) {
 function getSvgLeafTipFill(nodeName) {
     let fillColor = '#374151';
     if (!nodeName) return fillColor;
-    const clusterPattern = getTreeClusterPattern();
-    const originalNodeName = nodeName.replace(clusterPattern, '');
+    const originalNodeName = normalizeSequenceName(nodeName);
     const subtypeOriginalName = (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length)
-        ? state.rawSequences[state.subtypeIndex].name.replace(clusterPattern, '')
+        ? normalizeSequenceName(state.rawSequences[state.subtypeIndex].name)
         : '';
-    const isSubtype = state.subtypeIndex >= 0 && originalNodeName === subtypeOriginalName;
+    const isSubtype = state.subtypeIndex >= 0 && !isFounderSequenceName(originalNodeName) && originalNodeName === subtypeOriginalName;
     if (state.leafClusters && nodeName) {
         let clusterId = state.leafClusters.get(nodeName);
         if (clusterId === undefined) clusterId = state.leafClusters.get(originalNodeName);
@@ -3151,8 +3474,8 @@ function getSvgLeafLabelFill(nodeName) {
     const r = findViewSeqRowForTreeNode(nodeName);
     if (r < 0) return '#374151';
     const vs = state.viewSequences[r];
-    const isSubtype = vs.name === state.rawSequences[state.subtypeIndex]?.name;
-    const isFounder = vs.name && vs.name.startsWith('consensus_of_');
+    const isFounder = isFounderSequenceName(vs.name);
+    const isSubtype = !isFounder && vs.name === state.rawSequences[state.subtypeIndex]?.name;
     const isPdbChain = isPdbChainSequence(vs);
     if (r === state.refIndex || isSubtype || isFounder || isPdbChain) return '#ff00ff';
     const groupId = state.sequenceGroups ? state.sequenceGroups.get(vs.name) : undefined;
@@ -3164,8 +3487,8 @@ function getSvgLeafDisplayLabel(nodeName) {
     const r = findViewSeqRowForTreeNode(nodeName);
     if (r < 0) return escapeXml(nodeName || '');
     const vs = state.viewSequences[r];
-    const isSubtype = vs.name === state.rawSequences[state.subtypeIndex]?.name;
-    const isFounder = vs.name && vs.name.startsWith('consensus_of_');
+    const isFounder = isFounderSequenceName(vs.name);
+    const isSubtype = !isFounder && vs.name === state.rawSequences[state.subtypeIndex]?.name;
     const isPdbChain = isPdbChainSequence(vs);
     let label = isPdbChain ? getPdbChainDisplayLabel(vs) : vs.name;
     if (r === state.refIndex) label += ' [Reference]';
@@ -3233,7 +3556,7 @@ function estimateSvgCircularLabelWidthPx(nodeName) {
     if (r >= 0) {
         const vs = state.viewSequences[r];
         const isSubtype = vs.name === state.rawSequences[state.subtypeIndex]?.name;
-        const isFounder = vs.name && vs.name.startsWith('consensus_of_');
+        const isFounder = isFounderSequenceName(vs.name);
         const isPdbChain = isPdbChainSequence(vs);
         label = isPdbChain ? getPdbChainDisplayLabel(vs) : vs.name;
         if (r === state.refIndex) label += ' [Reference]';
@@ -3972,7 +4295,8 @@ function finalizeLoad(seqs) {
     state.history = [];
     state.tree = null;
     state.refIndex = 0; 
-    state.subtypeIndex = (seqs.length > 1) ? 1 : 0; // Second sequence is subtype, or first if only one sequence
+    state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(seqs.length);
+    state.founderSequenceName = null;
     
     // Clear previous grouping and clustering so color legend does not show stale data
     state.sequenceGroups = null;
@@ -3984,11 +4308,13 @@ function finalizeLoad(seqs) {
     state.hierarchicalDepths = [0, 0, 0];
     
     // Store original subtype
+    state.originalSubtype = null;
     if (state.subtypeIndex >= 0 && state.subtypeIndex < seqs.length) {
         state.originalSubtype = JSON.parse(JSON.stringify(seqs[state.subtypeIndex]));
     }
     
     state.pastedNameCounter = state.rawSequences.length + 1;
+    updateLoadedFileNameDisplay(state.currentFileName);
     
     // Detect sequence type and set mode accordingly
     const detectedType = detectSequenceType(seqs);
@@ -4028,7 +4354,7 @@ function showRerootModal() {
     // Check if founder exists
     let hasFounder = false;
     for (let i = 0; i < state.rawSequences.length; i++) {
-        if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
+        if (isFounderSequenceName(state.rawSequences[i].name)) {
             hasFounder = true;
             break;
         }
@@ -4085,7 +4411,7 @@ function rerootTreeOnTarget(targetType) {
         // Find founder sequence
         targetIndex = -1;
         for (let i = 0; i < state.rawSequences.length; i++) {
-            if (state.rawSequences[i].name && state.rawSequences[i].name.startsWith('consensus_of_')) {
+            if (isFounderSequenceName(state.rawSequences[i].name)) {
                 targetIndex = i;
                 targetName = state.rawSequences[i].name;
                 break;
@@ -4728,12 +5054,17 @@ function applyTreeOrder(root) {
     state.refIndex = 0; // Reference is always at index 0
     
     // Update subtype index to point to the subtype sequence by name (not position)
-    const newSubtypeIndex = state.rawSequences.findIndex(s => s.name === subtypeName);
-    if (newSubtypeIndex !== -1) {
-        state.subtypeIndex = newSubtypeIndex;
+    if (subtypeName) {
+        const newSubtypeIndex = state.rawSequences.findIndex(s => s.name === subtypeName);
+        if (newSubtypeIndex !== -1) {
+            state.subtypeIndex = newSubtypeIndex;
+        } else {
+            // Subtype not found in reordered list (shouldn't happen, but handle gracefully)
+            console.warn(`Subtype sequence "${subtypeName}" not found after reordering. Falling back to configured default.`);
+            state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
+        }
     } else {
-        // Subtype not found in reordered list (shouldn't happen, but handle gracefully)
-        console.warn(`Subtype sequence "${subtypeName}" not found after reordering. Keeping original index.`);
+        state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     }
 }
 
@@ -4924,10 +5255,9 @@ function showMdsModal() {
         return;
     }
     
-    // Get subtype name
-    const subtypeName = (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length) 
-        ? state.rawSequences[state.subtypeIndex].name 
-        : null;
+    // Get subtype name (founder should not be treated as subtype)
+    const subtypeSeq = getDesignatedSubtypeSequence();
+    const subtypeName = subtypeSeq ? subtypeSeq.name : null;
     
     // Calculate pairwise distance matrix
     const n = leaves.length;
@@ -5154,7 +5484,7 @@ function showProjectionPlot(selectedMethod) {
         let founderIdx = -1;
         let founderName = null;
         for (let i = 0; i < leaves.length; i++) {
-            if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
+            if (isFounderSequenceName(leaves[i].name)) {
                 founderIdx = i;
                 founderName = leaves[i].name;
                 break;
@@ -5304,7 +5634,7 @@ function showProjectionPlot(selectedMethod) {
             let founderIdx = -1;
             let founderName = null;
             for (let i = 0; i < leaves.length; i++) {
-                if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
+                if (isFounderSequenceName(leaves[i].name)) {
                     founderIdx = i;
                     founderName = leaves[i].name;
                     break;
@@ -6429,9 +6759,8 @@ function computeCladeClusterMap(threshold, minLeaves) {
     let nextClusterId = 2;
     const delimiter = state.groupDelimiter || '_';
     const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
-    const subtypeNameWithSuffix = (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length)
-        ? state.rawSequences[state.subtypeIndex].name
-        : null;
+    const subtypeSeq = getDesignatedSubtypeSequence();
+    const subtypeNameWithSuffix = subtypeSeq ? subtypeSeq.name : null;
     const subtypeName = subtypeNameWithSuffix ? subtypeNameWithSuffix.replace(clusterPattern, '') : null;
     function assignSubtype(node) {
         if (!node.children || node.children.length === 0) {
@@ -6506,9 +6835,8 @@ function computeHierarchicalClusterMap(depth1, depth2, depth3, minLeaves) {
     const root = state.tree.root;
     const delimiter = state.groupDelimiter || '_';
     const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
-    const subtypeNameWithSuffix = (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length)
-        ? state.rawSequences[state.subtypeIndex].name
-        : null;
+    const subtypeSeq = getDesignatedSubtypeSequence();
+    const subtypeNameWithSuffix = subtypeSeq ? subtypeSeq.name : null;
     const subtypeName = subtypeNameWithSuffix ? subtypeNameWithSuffix.replace(clusterPattern, '') : null;
 
     const leafToCluster = new Map();
@@ -7061,7 +7389,7 @@ function renumberClustersByDistanceFromSubtype(clusters, coords, subtypeIndex, l
     let founderIdxInLeaves = -1;
     let founderClusterId = null;
     for (let i = 0; i < leaves.length; i++) {
-        if (leaves[i].name && leaves[i].name.startsWith('consensus_of_')) {
+        if (isFounderSequenceName(leaves[i].name)) {
             founderIdxInLeaves = i;
             founderClusterId = clusters[i];
             break;
@@ -7788,8 +8116,8 @@ function calculateNamesWidth() {
     state.rawSequences.forEach((s, idx) => {
         let text = s.name;
         if(idx === state.refIndex) text += " [Reference]";
-        if(idx === state.subtypeIndex) text += " [Subtype]";
-        if(s.name && s.name.startsWith('consensus_of_')) {
+        if(idx === state.subtypeIndex && !isFounderSequenceName(s.name)) text += " [Subtype]";
+        if(isFounderSequenceName(s.name)) {
             text += " [Founder]";
         }
         const metrics = ctx.measureText(text);
@@ -8303,9 +8631,7 @@ function render() {
     if (state.highlightMatches) {
         if (state.highlightMatches === 'founder') {
             // Find founder sequence (consensus_of_ prefix)
-            const founderIndex = state.viewSequences.findIndex(s => 
-                s.name && s.name.startsWith('consensus_of_')
-            );
+            const founderIndex = state.viewSequences.findIndex(s => isFounderSequenceName(s.name));
             if (founderIndex >= 0) {
                 highlightSeq = state.viewSequences[founderIndex].seq;
             }
@@ -8387,9 +8713,9 @@ function render() {
         let isSel = state.selection && (r >= state.selection.r1 && r <= state.selection.r2);
         
         // Check if this is the subtype sequence in viewSequences
-        const isSubtype = state.viewSequences[r].name === state.rawSequences[state.subtypeIndex]?.name;
         // Check if this is a founder sequence
-        const isFounder = state.viewSequences[r].name && state.viewSequences[r].name.startsWith('consensus_of_');
+        const isFounder = isFounderSequenceName(state.viewSequences[r].name);
+        const isSubtype = !isFounder && state.viewSequences[r].name === state.rawSequences[state.subtypeIndex]?.name;
         // Check if this is a PDB chain sequence (3D visualization only)
         const isPdbChain = isPdbChainSequence(state.viewSequences[r]);
         
@@ -9097,7 +9423,7 @@ function applyStructureContent(text, fileName, format) {
         });
         state.rawSequences = pdbSeqs.length ? pdbSeqs : [{ name: pdbCode + '_Chain_?', seq: flat, isPdbChain: true, chainLength: (flat && flat.length) ? flat.length : 0 }];
         state.refIndex = 0;
-        state.subtypeIndex = 0;
+        state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     } else {
         showOverlay(true);
         if (dom.overlayMsg) dom.overlayMsg.textContent = 'Aligning structure chains to reference...';
@@ -9109,8 +9435,12 @@ function applyStructureContent(text, fileName, format) {
         }
         state.rawSequences = raw;
         state.refIndex = 0;
-        var newSubtypeIdx = raw.findIndex(function (s) { return s.name === subtypeName; });
-        state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : 0;
+        if (subtypeName) {
+            var newSubtypeIdx = raw.findIndex(function (s) { return s.name === subtypeName; });
+            state.subtypeIndex = newSubtypeIdx >= 0 ? newSubtypeIdx : getDefaultSubtypeIndexForLoadedSequences(raw.length);
+        } else {
+            state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(raw.length);
+        }
         showOverlay(false);
     }
     state.viewSequences = state.rawSequences.slice();
@@ -10141,7 +10471,7 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
         select.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 15px; font-size: 14px;';
         var hasReference = state.refIndex >= 0 && state.refIndex < state.rawSequences.length;
         var hasSubtype = state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length;
-        var founderIndex = state.rawSequences.findIndex(function (seq) { return seq.name && seq.name.startsWith('consensus_of_'); });
+        var founderIndex = state.rawSequences.findIndex(function (seq) { return isFounderSequenceName(seq.name); });
         var hasFounder = founderIndex !== -1;
         var pdbChains = state.rawSequences.filter(function (seq) { return isPdbChainSequence(seq); });
         if (hasReference) {
@@ -10510,9 +10840,7 @@ function showSequenceLogo() {
     // Check which sequences are available
     const hasReference = state.refIndex >= 0 && state.refIndex < state.rawSequences.length;
     const hasSubtype = state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length;
-    const founderIndex = state.rawSequences.findIndex(seq => 
-        seq.name && seq.name.startsWith('consensus_of_')
-    );
+    const founderIndex = state.rawSequences.findIndex(seq => isFounderSequenceName(seq.name));
     const hasFounder = founderIndex !== -1;
     const pdbChains = state.rawSequences.filter(seq => isPdbChainSequence(seq));
     
