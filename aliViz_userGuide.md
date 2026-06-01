@@ -1,14 +1,28 @@
 # aliViz User Guide
 
-aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading alignments, inferring and manipulating trees, grouping sequences, clustering (tree-based and projection-based), epitope definition and logos, and 3D structure viewing with epitope coloring.
+aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading alignments, inferring or importing trees, grouping sequences, clustering (tree-based and projection-based), epitope definition and logos, and 3D structure viewing with epitope coloring.
 
 ---
 
 ## 1. Loading and view controls
 
-### Choose File
-- **Function:** Load an alignment from a file (FASTA or FASTQ). The first sequence is treated as **Reference (REF)**, the second as **SubType**. Remaining sequences are aligned and displayed.
-- **Usage:** Click the file input or “Choose File” to select an alignment file.
+### Choose file
+- **Function:** Load an alignment from a **FASTA** or **FASTQ** file.
+- **Usage:** Click **Choose file**, select your alignment. The loaded filename appears in the text box beside the button (replacing the initial “No file chosen” placeholder).
+- **Reference:** The **first** sequence is always treated as **Reference (REF)**.
+- **Subtype:** If **Has subtype** is checked (see below), the **second** sequence is treated as **SubType**. If unchecked, no sequence is designated as subtype unless you add one later by other means.
+
+### Has subtype
+- **Function:** Tell aliViz whether the alignment includes a dedicated subtype sequence in position 2 (after reference).
+- **Default:** **Unchecked** (many alignments have no subtype).
+- **When checked:** Sequence 2 is the subtype; it receives the **[Subtype]** label and is excluded from tree inference (unless it is also the founder).
+- **When unchecked:** No subtype index is assigned; subtype labeling and subtype-specific clustering behaviour are disabled.
+- **After load:** You can toggle this checkbox. Changing it **clears grouping, tree inference, and clustering** and resets related state so you can re-run those steps with the new subtype setting.
+
+### Character sanitization (FASTA/FASTQ load)
+- **Allowed characters:** Uppercase letters **A–Z**, gap **`-`**, and stop codon **`*`** (common in amino acid alignments).
+- **Non-standard symbols:** Any other character in a sequence line is **replaced with `X`** (alignment length is unchanged). You receive an alert listing what was replaced (e.g. `? → X (12)`).
+- **Nucleotide alignments:** Standard IUPAC nucleotide letters are within A–Z and are kept as-is.
 
 ### View Mode: NT / AA
 - **Function:** Switch between **Nucleotide (NT)** and **Amino acid (AA)** view.
@@ -21,7 +35,8 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 
 ### Highlighter
 - **Function:** Highlight differences in the alignment with respect to a chosen reference.
-- **Options:** **Off** (default), **Founder** (consensus of a group), **SubType**, **Reference**. Mismatches against the selected sequence are highlighted.
+- **Options:** **Off** (default), **Founder**, **SubType**, **Reference**. Mismatches against the selected sequence are highlighted.
+- **Founder:** Works for both a **consensus** founder (`consensus_of_…` sequence) and a **medoid** founder (an existing sequence marked as founder; see §2).
 
 ---
 
@@ -29,11 +44,11 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 
 ### Group
 - **Function:** Assign sequences to groups using a delimiter and a field in the sequence name.
-- **Algorithm:** You specify a **delimiter** (e.g. `_`) and a **field number** (1-based). Each sequence name is split by the delimiter; the value at that field becomes the group label. REF, SubType, and PDB chain sequences are excluded from grouping. Groups are assigned unique IDs and used for coloring and legend.
+- **Algorithm:** You specify a **delimiter** (e.g. `_`) and a **field number** (1-based). Each sequence name is split by the delimiter; the value at that field becomes the group label. REF, SubType (if present), and PDB chain sequences are excluded from grouping. Groups are assigned unique IDs and used for coloring and legend.
 - **Result:** `state.sequenceGroups` (name → group ID) and `state.groupNames` (group ID → label) are set; sequence names are colored by group in the name panel.
 
 ### Sort
-- **Function:** Reorder sequences by current grouping (or by name if no grouping), keeping REF first and SubType second.
+- **Function:** Reorder sequences by current grouping (or by name if no grouping), keeping REF first and SubType second (when a subtype exists).
 - **Algorithm:** REF and SubType stay at the top; other sequences are sorted by group ID (from `state.sequenceGroups`), then by name within each group. PDB chains and founder are handled in the sort order.
 
 ### Prune
@@ -41,23 +56,30 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 - **Usage:** Open the Prune overlay, select groups to **remove**, then Apply. Removed sequences are deleted from the alignment. Group IDs are renumbered to 0, 1, 2, … for the remaining groups.
 
 ### Add Founder
-- **Function:** Add a **founder** (consensus) sequence for a chosen group.
-- **Algorithm:** You select a group. A consensus sequence is built from that group (e.g. majority character per column, gaps where no majority). It is inserted into the alignment and named e.g. `consensus_of_<groupLabel>`. The founder can be used as the Highlighter reference and as a reroot target.
+- **Function:** Designate a **founder** sequence for a chosen group (or from the subtype sequence when offered in the group list).
+- **Founder source (default: Medoid):**
+  - **Consensus of a group:** Builds a **new** consensus sequence (majority character per column, including gaps) from all sequences in the group (excluding REF and subtype). It is inserted into the alignment with a name such as `consensus_of_<groupLabel>` (or `consensus_of_subtype` when using the subtype option in consensus mode).
+  - **Medoid sequence of a group (default):** Selects an **existing** sequence in the group that minimizes total **padded Hamming distance** to all other sequences in that group. The sequence **keeps its original name**; it is marked as founder and shown with the **[Founder]** label in the name column and tree.
+- **Switching modes:** Replacing a consensus founder removes or overwrites the synthetic `consensus_of_` row; switching to medoid on a group removes a previous synthetic founder if present and tags the medoid sequence instead.
+- **Clustering:** The founder is **not** forced into cluster 0. When **no subtype** is present, cluster IDs start at **1** (cluster 0 is reserved for subtype when it exists). A medoid founder participates in clustering like any other sample sequence; the **[Founder]** label is preserved after clustering (name matching tolerates `_cl-*` suffixes added by clustering).
+- **Usage:** Group sequences first (for group-based founders). Open **Add Founder**, choose **Founder source**, select a group (or **[SubType]** when available), then **Add Founder**. Tree inference is cleared; re-infer or load a tree afterward.
 
 ---
 
 ## 3. Tree inference and manipulation
 
 ### Infer
-- **Function:** Infer a phylogeny from the current alignment (excluding REF, SubType, and PDB chains).
+- **Function:** Build or load a phylogeny for the current alignment (excluding REF, subtype when present, and PDB chains; **including** founder sequences, including medoid founders).
 - **Methods:**
-  - **FastTree** (default): Uses FastTree (via bioWASM) to infer a maximum-likelihood style tree from the alignment.
-  - **Neighbor Joining (NJ):** Uses PhyloTools to compute pairwise distances and build an NJ tree from the alignment.
-- **Note:** Before inference, any existing clustering is cleared and cluster suffixes (`_cl-*`) are removed from sequence and tree node names.
+  - **FastTree** (default in the infer dialog): Uses FastTree (via bioWASM) on the alignment. Model options appear for NT and AA.
+  - **Neighbor Joining (NJ):** Uses PhyloTools (pairwise distances → NJ tree).
+  - **Load inferred tree (Newick file):** Opens a file picker for an existing **Newick** tree. Accepted extensions: **`.nwk`**, **`.newick`**, **`.tree`**, **`.treefile`**, **`.txt`**.
+- **Loading an external tree:** Leaf names in the Newick file must match alignment sequence names after normalization (cluster suffixes `_cl-*` are ignored for comparison). **Reference**, **subtype** (if present), and **PDB chains** are excluded from the required leaf set. A medoid founder keeps its sample name in the alignment, so tree leaves should use that name—not a separate `consensus_of_` name. If names do not match, loading is aborted with a message listing missing or extra leaves.
+- **Note:** Before inference (NJ/FastTree), any existing clustering is cleared and cluster suffixes (`_cl-*`) are removed from sequence and tree node names.
 
 ### Reroot
 - **Function:** Reroot the tree on the **Founder** sequence.
-- **Targets:** **Founder** (default). *(The current app requires a founder sequence for rerooting.)*
+- **Targets:** **Founder** (requires a founder to be defined—consensus or medoid).
 - **Algorithm:** The founder leaf is located and the tree is rerooted at the edge leading to it so that the founder is the outgroup. Branch lengths and topology are preserved; only the root position changes.
 
 ### Ladderize
@@ -74,20 +96,29 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 
 ### tree (Export tree)
 - **Function:** Export the current tree in **Newick** format.
-- **Usage:** Click “tree” to download a `.txt` or Newick file containing the current tree with names and branch lengths (if present).
+- **Usage:** Click “tree” to download a Newick file containing the current tree with names and branch lengths (if present).
 
 ### svg (Export tree as SVG)
 - **Function:** Download a **vector (SVG)** figure of the current tree for publications or slides.
 - **Requirement:** A tree must be loaded and **ladderized** (same as the Newick export).
-- **Usage:** Click **svg** in the phylogeny toolbar. A dialog lets you choose **Linear** or **Circular** layout, then **Export** to save `tree.svg`. **Cancel** closes the dialog without downloading.
+- **Usage:** Click **svg** in the phylogeny toolbar. A dialog offers **Geometry** and **Scale**, then **Export** to save `tree.svg`. **Cancel** closes without downloading.
 
-#### Layout and drawing
-- **Linear** matches the on-screen rectangular cladogram: horizontal branches to children, a vertical “backbone” at each internal node, small circles at internal nodes, **diamond** markers at tips (cluster colors where clustering applies), and **dashed** connector lines from each tip to its sequence label. Connectors use the same **group / label** coloring as the name column (e.g. group hues, magenta for reference / subtype / founder / PDB as in the app).
-- **Circular** lays leaves **evenly by angle** around the origin (depth is still radial). Branches are drawn **orthogonally in polar coordinates**: an **arc** along the circle at the parent’s depth (the circumferential segment), then a **radial** segment to each child—so paths do not cross as straight chords. The root is drawn as radials from the center when depth is zero. Tip **diamonds** are rotated so a vertex points outward; **labels** follow the radius with start-aligned text so they sit outside the diamonds. Short **dotted** lines run from the outer tip of each diamond to the start of its label, using the same label/group color.
+#### Geometry
+- **Linear:** Rectangular cladogram (horizontal branches, vertical backbone at internal nodes, diamond tips, dashed connectors to labels).
+- **Circular:** Radial layout with **orthogonal** branches (circumferential arc + radial segment), outward-pointing tip diamonds, and dotted connectors to radial labels.
 
-#### Legend and page size
-- The SVG includes a **Color Legend** panel on the **right**, matching the floating legend in the app: **Groups** (alphabetically by group name) and **Clusters** (cluster IDs plus **Noise** when used), with the same colors as in aliViz. If there are no groups or clusters, the legend states that explicitly.
-- The figure width is split **7/8** for the tree plot and **1/8** for the legend. The **circular** plot’s height (and total SVG height) grows as needed so long radial labels stay inside the canvas.
+#### Scale
+- **Auto (default):** Scales the tree to fit the plot area (linear branch span ≈ 520 px; circular outer branch radius ≈ 260 px, with branch lengths in circular mode drawn at **half** the linear scale per unit).
+- **Fixed:** Uses a chosen **branch length per 1 cm** of plot (dropdown: 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001; default **0.001**) so trees from different datasets are comparable. The tree is **not** shrunk to fit; shallow trees use only part of the space. If the tree would extend beyond the fixed plot width, export **aborts** with a message suggesting a **larger** value in the dropdown (more compact drawing) or **Auto** scale.
+
+#### Titles, scale bar, and legend (SVG only)
+- **Title (two lines):** Full alignment **filename** (no truncation); second line includes **inference method** (or load method), **max tree depth** (3 significant figures), and **last clustering method** (or “No clustering”). Linear layout: titles are **left-aligned** with the scale bar; circular: titles are **centred**.
+- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value).
+- **Legend panel:** Header **Legend** (not “Color Legend”). **Groups** and **Clusters** as in the app; cluster rows show the **number only** (e.g. `1`, not `Cluster 1`). Page width split **7/8** tree, **1/8** legend.
+
+#### Layout details (unchanged behaviour, for reference)
+- Tip markers use **cluster** colors where clustering is active; label and connector colors use **group** / special-sequence rules (magenta for REF, subtype, founder, PDB as in the app).
+- Circular plot height grows as needed for long radial labels.
 
 ### Clear Tree
 - **Function:** Remove the current tree. Clustering state is cleared. Histogram, Cluster, and related buttons are disabled.
@@ -97,10 +128,14 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 ## 4. Clustering (Cluster button)
 
 Clicking **Cluster** opens a method selector, then the corresponding clustering interface.
-Each method allows the user to cluster sequences. Special sequences such as Reference, Subtype or any PDB chains are excluded from the clustering.
-- **Methods (selector):** **Hierarchical (tree-clade clustering)** (default), **Hierarchical (tree-cut clustering)**, **UMAP**, **MDS**.
+Each method clusters sample sequences; **Reference**, **Subtype** (if present), and **PDB chains** are excluded from clustering assignments.
+- **Methods (selector):** **None** (default), **Hierarchical (tree-clade clustering)**, **Hierarchical (tree-cut clustering)**, **UMAP**, **MDS**.
 
-### Auto button behavior (optimizes selected index)
+### None
+- **Function:** Remove active clustering.
+- **Effect:** Clears cluster state, strips `_cl-*` suffixes from sequence and tree node names, and updates the legend. **Group** colors and group membership are preserved.
+
+### Auto button behaviour (optimizes selected index)
 - **Radio buttons (Calinski vs Ball-Hall-Adapted):** choose which index the dialog’s **Auto** button maximizes while it searches slider values. This does not change the clustering method itself; it only changes the scoring metric used by Auto (the radio choice is read when you press **Auto**). Default is **Calinski–Harabasz**; switch to **Ball-Hall-Adapted** to optimize that index instead.
 - **Tree-clade Auto:** searches the branch-length threshold (step to max) to maximize the **selected index** for the current **min leaves per cluster**, then sets the slider to the best threshold.
 - **Tree-cut Auto:** performs a full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from the slider range) and sets the sliders to the triple that maximizes the **selected index**.
@@ -111,7 +146,7 @@ Each method allows the user to cluster sequences. Special sequences such as Refe
 - **Parameters:**
   - **Branch length threshold:** Minimum branch length that starts a new clade (slider from step to max). Leaves are assigned to the clade that contains them.
   - **Min leaves per cluster:** Clusters with fewer than this many leaves are relabelled as noise (`_cl-na`).
-- **Algorithm:** DFS from root. When traversing an edge longer than the threshold, increment cluster ID. Assign each leaf to the current cluster. Then apply min-leaves filter, mark small clusters as noise, and renumber clusters 1, 2, 3, …
+- **Algorithm:** DFS from root. When traversing an edge longer than the threshold, increment cluster ID. Assign each leaf to the current cluster. Subtype (if present) is cluster 0; without subtype, numbering starts at **1**. Then apply min-leaves filter, mark small clusters as noise, and renumber clusters 1, 2, 3, …
 - **Auto:** Searches the threshold (from step to max) to **maximize the Calinski–Harabasz index** (see §4.6) for the current min-leaves. Sets the slider to the best value.
 - **Accept:** Applies the clustering: adds `_cl-<id>` or `_cl-na` to sequence and tree node names, updates the legend and tree colors.
 - **Cancel:** Removes all clustering: clears `state.leafClusters`, strips `_cl-*` from names and tree nodes, updates legend and redraws. **Group colors** on sequence names are preserved (group mapping is rekeyed to the stripped names).
@@ -153,7 +188,6 @@ Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use
   **CH** = [ (B/(k−1)) / (W/(n−k)) ] × 1/(2<sup>k</sup>)  
   (for k = 1 the numerator is B and denominator W/(n−1); then the same 1/2<sup>k</sup> factor). The 2<sup>k</sup> term biases against large k.
 
-- **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Cluster 0 (subtype) and noise (−1) are included in the tree-based computation where applicable.
 - **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Noise (−1) is excluded from clustering; remaining cluster IDs are used in the CH computation.
 
 ### 4.7. Ball–Hall-Adapted index (tree-based)
@@ -232,18 +266,19 @@ If BH(k) = 0, the adapted index is returned as ∞.
 - **Function:** Download the **current view** (NT or AA) as FASTA. Filename includes mode, e.g. `alignment_AA.fasta`.
 
 ### Clear Alignment
-- **Function:** Remove all sequences and reset state (groups, clusters, tree, etc.). Returns to initial empty state.
+- **Function:** Remove all sequences and reset state (groups, clusters, tree, founder designation, etc.). Returns to initial empty state.
 
 ### Help (?)
-- **Function:** Toggle the help overlay with short descriptions of each control.
+- **Function:** Toggle the help overlay with short descriptions of each control. For full documentation, open the published **aliViz user guide** (link in the help overlay).
 
 ---
 
 ## 8. Color legend
 
 - **Groups:** Lists group labels and colors for sequence **names** (from Group).
-- **Clusters:** Lists cluster IDs for cluster tags and colors for tree tips (from any clustering method).  
-Cluster colors are removed when clustering is cleared (e.g. Cancel). Group colors are preserved after Cancel by rekeying group membership to the stripped (no `_cl-*`) names.
+- **Clusters:** Lists cluster IDs (numeric labels) and colors for tree tips (from any clustering method). Noise appears when applicable.
+- **Note:** The floating legend does **not** include an alignment-length or phylogenetic scale bar; phylogenetic scale bars appear only on **exported SVG** tree figures (see §3).
+- Cluster colors are removed when clustering is cleared (e.g. **None** or **Cancel**). Group colors are preserved after Cancel by rekeying group membership to the stripped (no `_cl-*`) names.
 
 ---
 
@@ -251,17 +286,23 @@ Cluster colors are removed when clustering is cleared (e.g. Cancel). Group color
 
 | Feature        | Algorithm / formula |
 |----------------|---------------------|
+| Load sanitize  | A–Z, `-`, `*` kept; other chars → `X`; alert user. |
+| Has subtype    | If off, no subtype index; toggling clears group/tree/cluster state. |
 | Group          | Split name by delimiter; group = field value; unique IDs. |
-| Sort           | REF, SubType fixed; others by group ID then name. |
+| Sort           | REF, SubType (if any) fixed; others by group ID then name. |
 | Prune          | Remove sequences in selected groups; renumber group IDs. |
-| Founder        | Consensus (e.g. majority) per column over selected group. |
+| Founder consensus | Majority per column over selected group; `consensus_of_*` name. |
+| Founder medoid | Minimize sum of padded Hamming distances to other group sequences; keep original name; `[Founder]` label. |
 | NJ tree        | PhyloTools from alignment (pairwise distances → NJ). |
 | FastTree       | bioWASM FastTree on alignment. |
-| Reroot         | Find target leaf; reroot on edge to that leaf. |
+| Load Newick    | Parse Newick; validate leaf names vs alignment; no auto-reroot on subtype. |
+| Reroot         | Find founder leaf; reroot on edge to that leaf. |
 | Ladderize      | By weight: sort children by leaf count. By depth: sort by max root-to-leaf depth in subtree. |
 | Histogram      | Root-to-leaf distance = sum of branch lengths; bin and plot. |
+| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
+| Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |
 | MDS            | B = −0.5·H·D²·H; eigendecomposition; coords = eigenvectors × √(eigenvalues). |
 | UMAP           | External UMAP on distances → 2D. |
 | DBSCAN         | eps-neighborhood; minPts; density-connected components; subtype isolated. |
