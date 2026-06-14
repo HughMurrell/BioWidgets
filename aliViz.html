@@ -768,7 +768,7 @@
 <div id="dual-load-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
     <div class="help-box" style="width: 480px;">
         <h2>Load Alignment and Reference</h2>
-        <p style="font-size: 13px; color: #374151; margin: 0 0 16px 0;">The reference is not in the alignment file. Choose both files, then Load. The reference will be profile-aligned and inserted as sequence 1.</p>
+        <p style="font-size: 13px; color: #374151; margin: 0 0 16px 0;">The reference is not in the alignment file. Choose an alignment file, then Load. If you loaded a reference earlier in this session, it is reused automatically; choose a new reference file only when you want to replace it.</p>
         <div class="help-row" style="flex-direction: column; align-items: stretch; gap: 6px; margin-bottom: 12px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;">Alignment file</label>
             <div style="display: flex; gap: 8px; align-items: center;">
@@ -1086,10 +1086,12 @@ const state = {
     sequenceCollapseCounts: null, // Map from sequence name to integer collapse count (when active)
     collapseDelimiter: null, // Delimiter used for collapse field parsing
     collapseFieldNum: null, // 1-based field number; null = no collapse
+    persistentCollapseFieldNum: null, // Last chosen collapse field number (survives load/clear)
     groupNames: null, // Map from group ID to group value (for legend)
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     originalSubtype: null, // Store original subtype sequence for reverting
     currentFileName: null, // Store the current alignment file name
+    rememberedExternalReference: null, // { text, fileName } — last reference FASTA for dual-load (no ref in alignment)
     pdbFileContent: null, // Raw PDB/CIF text for 3D viewer (set when Load PDB/CIF or fetch by ID)
     pdbFileName: null,    // PDB/CIF file name for 3D overlay title
     pdbFormat: 'pdb',   // 'pdb' or 'cif' for 3Dmol addModel
@@ -2316,22 +2318,40 @@ function closeDualLoadModal() {
     if (overlay) overlay.style.display = 'none';
 }
 
+function hasRememberedExternalReference() {
+    const ref = state.rememberedExternalReference;
+    return !!(ref && ref.text && ref.fileName);
+}
+
+function rememberExternalReference(text, fileName) {
+    if (!text) return;
+    state.rememberedExternalReference = {
+        text: text,
+        fileName: fileName || 'Reference'
+    };
+}
+
 function updateDualLoadModalUI() {
     const alignName = document.getElementById('dual-load-alignment-name');
     const refName = document.getElementById('dual-load-reference-name');
     const applyBtn = document.getElementById('btn-dual-load-apply');
+    const hasRef = !!(dualLoadPending.refFile || hasRememberedExternalReference());
     if (alignName) {
         alignName.textContent = dualLoadPending.alignmentFile
             ? dualLoadPending.alignmentFile.name
             : 'No file chosen';
     }
     if (refName) {
-        refName.textContent = dualLoadPending.refFile
-            ? dualLoadPending.refFile.name
-            : 'No file chosen';
+        if (dualLoadPending.refFile) {
+            refName.textContent = dualLoadPending.refFile.name;
+        } else if (hasRememberedExternalReference()) {
+            refName.textContent = state.rememberedExternalReference.fileName + ' (previous)';
+        } else {
+            refName.textContent = 'No file chosen';
+        }
     }
     if (applyBtn) {
-        applyBtn.disabled = !(dualLoadPending.alignmentFile && dualLoadPending.refFile);
+        applyBtn.disabled = !(dualLoadPending.alignmentFile && hasRef);
     }
 }
 
@@ -2345,19 +2365,26 @@ function readFileAsText(file) {
 }
 
 function applyDualLoad() {
-    if (!dualLoadPending.alignmentFile || !dualLoadPending.refFile) return;
+    if (!dualLoadPending.alignmentFile) return;
     const alignFile = dualLoadPending.alignmentFile;
     const refFile = dualLoadPending.refFile;
+    const remembered = state.rememberedExternalReference;
+    if (!refFile && !hasRememberedExternalReference()) return;
     const alignName = alignFile.name.toLowerCase();
     const isFastq = alignName.endsWith('.fastq') || alignName.endsWith('.fq');
     closeDualLoadModal();
     showOverlay(true);
     dom.overlayMsg.textContent = 'Profile-aligning reference...';
     dom.overlaySub.textContent = 'Mapping reference onto alignment columns';
-    Promise.all([readFileAsText(alignFile), readFileAsText(refFile)])
+    const alignPromise = readFileAsText(alignFile);
+    const refPromise = refFile
+        ? readFileAsText(refFile)
+        : Promise.resolve(remembered.text);
+    const refFileName = refFile ? refFile.name : remembered.fileName;
+    Promise.all([alignPromise, refPromise])
         .then(function (texts) {
             state.currentFileName = alignFile.name;
-            loadAlignmentWithExternalReference(texts[0], texts[1], isFastq, refFile.name);
+            loadAlignmentWithExternalReference(texts[0], texts[1], isFastq, refFileName);
         })
         .catch(function (err) {
             console.error(err);
@@ -2462,6 +2489,7 @@ function loadAlignmentWithExternalReference(alignmentText, refText, isFastq, ref
             name: refEntry.name || refFileName || 'Reference',
             seq: alignedRefSeq
         };
+        rememberExternalReference(refText, refFileName || refEntry.name || 'Reference');
         finalizeLoad([profiledRef, ...alignmentSeqs]);
     } catch (err) {
         console.error(err);
@@ -2708,6 +2736,12 @@ function clearCollapseState() {
     state.collapseFieldNum = null;
 }
 
+function getCollapseFieldInputDefault() {
+    if (state.collapseFieldNum != null) return String(state.collapseFieldNum);
+    if (state.persistentCollapseFieldNum != null) return String(state.persistentCollapseFieldNum);
+    return '';
+}
+
 function showCollapseModal() {
     if (state.rawSequences.length === 0) {
         alert('No sequences loaded.');
@@ -2719,7 +2753,7 @@ function showCollapseModal() {
         delimInput.value = state.collapseDelimiter != null ? state.collapseDelimiter : '_';
     }
     if (fieldInput) {
-        fieldInput.value = state.collapseFieldNum != null ? String(state.collapseFieldNum) : '';
+        fieldInput.value = getCollapseFieldInputDefault();
     }
     document.getElementById('collapse-overlay').style.display = 'flex';
 }
@@ -2793,6 +2827,7 @@ function runCollapseTask() {
     state.sequenceCollapseCounts = nameToCount;
     state.collapseDelimiter = delimiter;
     state.collapseFieldNum = fieldNumOneBased;
+    state.persistentCollapseFieldNum = fieldNumOneBased;
     calculateNamesWidth();
     recalc();
 }
