@@ -530,7 +530,7 @@
                         </label>
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
                             <span class="tree-svg-dsi-hint">Mutations/day:</span>
-                            <input type="number" id="tree-svg-dsi-mpd" value="0.0005" min="0" step="0.0001" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
+                            <input type="number" id="tree-svg-dsi-mpd" value="0.001" min="0" step="0.0001" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
                         </label>
                     </div>
                 </div>
@@ -1717,9 +1717,9 @@ async function init() {
                 const daysEl = document.getElementById('tree-svg-dsi-days');
                 const mpdEl = document.getElementById('tree-svg-dsi-mpd');
                 let days = daysEl ? parseFloat(daysEl.value) : 14;
-                let mpd = mpdEl ? parseFloat(mpdEl.value) : 0.0005;
+                let mpd = mpdEl ? parseFloat(mpdEl.value) : 0.001;
                 if (!isFinite(days) || days <= 0) days = 14;
-                if (!isFinite(mpd) || mpd <= 0) mpd = 0.0005;
+                if (!isFinite(mpd) || mpd <= 0) mpd = 0.001;
                 dsiParams = { days, mpd };
             }
             const ok = exportTreeAsSvg(
@@ -3403,7 +3403,7 @@ function getDsiPxPerBranchUnit(days, mutationsPerDay) {
     const d = parseFloat(days);
     const m = parseFloat(mutationsPerDay);
     const expected = d * m;
-    if (!isFinite(expected) || expected <= 0) return DSI_SVG_HALF_WIDTH_PX / (14 * 0.0005);
+    if (!isFinite(expected) || expected <= 0) return DSI_SVG_HALF_WIDTH_PX / (14 * 0.001);
     return DSI_SVG_HALF_WIDTH_PX / expected;
 }
 
