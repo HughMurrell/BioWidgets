@@ -108,12 +108,20 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 - **Circular:** Radial layout with **orthogonal** branches (circumferential arc + radial segment), outward-pointing tip diamonds, and dotted connectors to radial labels.
 
 #### Scale
+The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) available for branch lengths; its half-way mark is at **260 px**.
+
 - **Auto (default):** Scales the tree to fit the plot area (linear branch span ≈ 520 px; circular outer branch radius ≈ 260 px, with branch lengths in circular mode drawn at **half** the linear scale per unit).
 - **Fixed:** Uses a chosen **branch length per 1 cm** of plot (dropdown: 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001; default **0.001**) so trees from different datasets are comparable. The tree is **not** shrunk to fit; shallow trees use only part of the space. If the tree would extend beyond the fixed plot width, export **aborts** with a message suggesting a **larger** value in the dropdown (more compact drawing) or **Auto** scale.
+- **DSI (days since infection):** Scales so an **expected** branch length lands at the **half-way mark (260 px)** of the branch region. You supply two parameters:
+  - **DSI (days):** number of days since infection (default **14**).
+  - **Mutations/day (MPD):** expected substitution rate per day (default **0.0005**).
+  - The expected branch length is **DSI × MPD** (e.g. 14 × 0.0005 = 0.007), and the scale is set so this value maps to 260 px (i.e. `px per unit = 260 / (DSI × MPD)`). In circular mode the same value maps to a **130 px** radius (half, matching the Fixed circular convention).
+  - **No overflow abort:** unlike Fixed scale, DSI **never** aborts. Branches longer than the plot are **clipped at the right border** (so they cannot run into the sequence-name column); nothing is clipped on the left. In circular mode over-long branches are clamped to the outer radius.
+  - **Expected-depth marker:** a **gray vertical dotted line** is drawn across the plot at the expected depth (the end of the scale bar, 260 px). Tips to the **right** are mutating **faster** than expected; tips to the **left** are mutating **slower** than expected.
 
 #### Titles, scale bar, and legend (SVG only)
 - **Title (two lines):** Full alignment **filename** (no truncation); second line includes **inference method** (or load method), **max tree depth** (3 significant figures), and **last clustering method** (or “No clustering”). Linear layout: titles are **left-aligned** with the scale bar; circular: titles are **centred**.
-- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value).
+- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value). In **DSI** mode the bar is **260 px** long (linear; 130 px circular) and is annotated with the parameters and expected depth, e.g. **`(14 days @ 0.0005 = 0.007)`**, updating to match whatever DSI and MPD you enter.
 - **Legend panel:** Header **Legend** (not “Color Legend”). **Groups** and **Clusters** as in the app; cluster rows show the **number only** (e.g. `1`, not `Cluster 1`). Page width split **7/8** tree, **1/8** legend.
 
 #### Layout details (unchanged behaviour, for reference)
@@ -299,7 +307,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Reroot         | Find founder leaf; reroot on edge to that leaf. |
 | Ladderize      | By weight: sort children by leaf count. By depth: sort by max root-to-leaf depth in subtree. |
 | Histogram      | Root-to-leaf distance = sum of branch lengths; bin and plot. |
-| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. |
+| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DSI: expected depth (DSI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (clip right border); dotted expected-depth line. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
 | Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |
