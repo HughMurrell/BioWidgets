@@ -9,8 +9,14 @@ aliViz is a bioinformatics alignment and phylogeny viewer. It supports loading a
 ### Choose file
 - **Function:** Load an alignment from a **FASTA** or **FASTQ** file.
 - **Usage:** Click **Choose file**, select your alignment. The loaded filename appears in the text box beside the button (replacing the initial “No file chosen” placeholder).
-- **Reference:** The **first** sequence is always treated as **Reference (REF)**.
-- **Subtype:** If **Has subtype** is checked (see below), the **second** sequence is treated as **SubType**. If unchecked, no sequence is designated as subtype unless you add one later by other means.
+- **Reference:** If **Has reference** is checked (see below), the **first** sequence is treated as **Reference (REF)**. If unchecked, you load the alignment and reference separately (dual-load dialog).
+- **Subtype:** If **Has subtype** is checked (see below), the **second** sequence is treated as **SubType** when a reference is present (otherwise sequence 1). If unchecked, no sequence is designated as subtype unless you add one later by other means.
+
+### Has reference
+- **Function:** Tell aliViz whether the alignment file already includes the reference as its **first** sequence.
+- **Default:** **Unchecked** (many workflows load the reference from a separate FASTA).
+- **When checked:** Choose file loads the alignment directly; sequence 1 is **Reference (REF)**.
+- **When unchecked:** Choose file opens a **dual-load** dialog: pick the alignment, then optionally pick a reference FASTA (or reuse a reference loaded earlier in the session). The reference is prepended to the alignment for display and analysis.
 
 ### Has subtype
 - **Function:** Tell aliViz whether the alignment includes a dedicated subtype sequence in position 2 (after reference).
@@ -116,7 +122,8 @@ The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) availab
   - **DSI (days):** number of days since infection (default **14**).
   - **Mutations/day (MPD):** expected substitution rate per day (default **0.001**).
   - The expected branch length is **DSI × MPD** (e.g. 14 × 0.001 = 0.014), and the scale is set so this value maps to 260 px (i.e. `px per unit = 260 / (DSI × MPD)`). In circular mode the same value maps to a **130 px** radius (half, matching the Fixed circular convention).
-  - **No overflow abort:** unlike Fixed scale, DSI **never** aborts. Branches longer than the plot are **clipped at the right border** (so they cannot run into the sequence-name column); nothing is clipped on the left. In circular mode over-long branches are clamped to the outer radius.
+  - **No overflow abort:** unlike Fixed scale, DSI **never** aborts. Branches longer than the plot width are truncated at the **right border** (so they cannot run into the sequence-name column); nothing is clipped on the left. In circular mode over-long branches are clamped to the outer radius.
+  - **Clipped-branch marker (red dot):** on **linear** SVG exports, any horizontal branch that would extend past the right border is drawn only up to that boundary. A **red dot** is placed on the boundary at that row to show the branch was clipped there (the tip diamond is omitted). The dashed connector to the sequence name still starts from the boundary. This makes it clear the lineage continues beyond the plot but was cut off, rather than appearing to end at an internal node.
   - **Expected-depth marker:** a **gray vertical dotted line** is drawn across the plot at the expected depth (the end of the scale bar, 260 px). Tips to the **right** are mutating **faster** than expected; tips to the **left** are mutating **slower** than expected.
 
 #### Titles, scale bar, and legend (SVG only)
@@ -307,7 +314,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Reroot         | Find founder leaf; reroot on edge to that leaf. |
 | Ladderize      | By weight: sort children by leaf count. By depth: sort by max root-to-leaf depth in subtree. |
 | Histogram      | Root-to-leaf distance = sum of branch lengths; bin and plot. |
-| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DSI: expected depth (DSI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (clip right border); dotted expected-depth line. |
+| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DSI: expected depth (DSI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (truncate at right border, red dot on clipped tips); dotted expected-depth line. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
 | Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |

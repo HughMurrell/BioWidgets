@@ -237,7 +237,7 @@
                 <input type="text" id="inp-file-name" value="No file chosen" readonly style="min-width: 180px; max-width: 260px; padding: 4px 6px; font-size: 12px; color: #374151; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 4px;">
                 <input type="file" id="inp-ref-file" accept=".fasta,.fa,.txt" style="display:none;">
                 <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:#374151; white-space:nowrap;">
-                    <input type="checkbox" id="chk-has-reference" checked>
+                    <input type="checkbox" id="chk-has-reference">
                     Has reference
                 </label>
                 <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:#374151; white-space:nowrap;">
@@ -1080,7 +1080,7 @@ const state = {
     namesWidth: 200,
     refIndex: 0, 
     subtypeIndex: 1, // Sequence index used as subtype; may be out-of-range when subtype is not present
-    alignmentHasReference: true, // Whether the alignment file already includes the reference as its first sequence
+    alignmentHasReference: false, // Whether the alignment file already includes the reference as its first sequence
     alignmentHasSubtype: false, // Whether loaded alignments include a dedicated subtype sequence
     refMap: [], 
     epitopes: [], // Array of {name: string, regions: [{start: number, end: number}]}
@@ -4539,10 +4539,20 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
     parts.push(`<?xml version="1.0" encoding="UTF-8"?>\n`);
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">\n`);
     parts.push(`<rect width="${totalW}" height="${totalH}" fill="white"/>\n`);
-    // Clip only the right border (at leftPad + branchW) so branches can't run into the seq-name column;
-    // left/top/bottom are left unbounded so nothing is clipped on those sides.
     const clipRightEdge = leftPad + branchW;
-    parts.push(`<defs><clipPath id="clipTreeLinearSvg"><rect x="-100000" y="-100000" width="${100000 + clipRightEdge}" height="200000"/></clipPath></defs>\n`);
+    const clippedBoundaryDots = [];
+    function markClippedAtBoundary(y) {
+        clippedBoundaryDots.push({ x: clipRightEdge, y });
+    }
+    /** Draw horizontal branch segment; truncate at right boundary and mark clip with a red dot. */
+    function drawHorizBranch(x1, y, x2) {
+        if (x2 <= clipRightEdge) {
+            parts.push(`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>\n`);
+        } else if (x1 < clipRightEdge) {
+            parts.push(`<line x1="${x1}" y1="${y}" x2="${clipRightEdge}" y2="${y}"/>\n`);
+            markClippedAtBoundary(y);
+        }
+    }
     const titleLines = getSvgTreeTitleLines();
     const titleLineX = padding + 5;
     parts.push(`<g font-family="sans-serif" fill="#111827" text-anchor="start">\n`);
@@ -4551,7 +4561,6 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
     parts.push(`</g>\n`);
     // Main plot group shifted down to leave room for the title.
     parts.push(`<g transform="translate(${padding},${padding + titleSpace})" stroke="#374151" stroke-width="1" fill="none">\n`);
-    parts.push(`<g clip-path="url(#clipTreeLinearSvg)">\n`);
 
     function nx(node) {
         return leftPad + node.xDepth * xScale;
@@ -4575,11 +4584,11 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
                 drawNode(c);
                 const cx = nx(c);
                 const cy = ny(c);
-                parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}"/>\n`);
+                drawHorizBranch(x, cy, cx);
                 if (cy < minY) minY = cy;
                 if (cy > maxY) maxY = cy;
             });
-            if (minY !== Infinity) {
+            if (minY !== Infinity && x <= clipRightEdge) {
                 parts.push(`<line x1="${x}" y1="${minY}" x2="${x}" y2="${maxY}"/>\n`);
             }
             markerInternalNodes.push(node);
@@ -4602,38 +4611,53 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
         parts.push(`<g stroke-width="1.5" stroke-dasharray="">\n`);
         if (depth1 > 0) {
             const x1 = nx({ xDepth: depth1 });
-            parts.push(`<line x1="${x1}" y1="0" x2="${x1}" y2="${totalH}" stroke="#ef4444"/>\n`);
+            if (x1 <= clipRightEdge) {
+                parts.push(`<line x1="${x1}" y1="0" x2="${x1}" y2="${totalH}" stroke="#ef4444"/>\n`);
+            }
         }
         if (depth2 > depth1) {
             const x2 = nx({ xDepth: depth2 });
-            parts.push(`<line x1="${x2}" y1="0" x2="${x2}" y2="${totalH}" stroke="#f59e0b"/>\n`);
+            if (x2 <= clipRightEdge) {
+                parts.push(`<line x1="${x2}" y1="0" x2="${x2}" y2="${totalH}" stroke="#f59e0b"/>\n`);
+            }
         }
         if (depth3 > depth2) {
             const x3 = nx({ xDepth: depth3 });
-            parts.push(`<line x1="${x3}" y1="0" x2="${x3}" y2="${totalH}" stroke="#10b981"/>\n`);
+            if (x3 <= clipRightEdge) {
+                parts.push(`<line x1="${x3}" y1="0" x2="${x3}" y2="${totalH}" stroke="#10b981"/>\n`);
+            }
         }
         parts.push('</g>\n');
     }
 
-    parts.push('</g>\n');
-
-    // In DSI mode branches can extend past the plot width; clip the tip/internal markers to the branch region.
-    const markerClipAttr = isDsiScale ? ' clip-path="url(#clipTreeLinearSvg)"' : '';
-    parts.push(`<g stroke="#374151" fill="none"${markerClipAttr}>\n`);
+    parts.push(`<g stroke="#374151" fill="none">\n`);
     markerInternalNodes.forEach(node => {
         const x = nx(node);
         const y = ny(node);
+        if (x > clipRightEdge) return;
         parts.push(`<circle cx="${x}" cy="${y}" r="3" fill="#374151" stroke="none"/>\n`);
     });
     markerLeafNodes.forEach(node => {
         const x = nx(node);
         const y = ny(node);
+        if (x > clipRightEdge) {
+            markClippedAtBoundary(y);
+            return;
+        }
         const tipFill = getSvgLeafTipFill(node.name);
         const d = 10;
         const pts = `${x},${y - d} ${x + d},${y} ${x},${y + d} ${x - d},${y}`;
         parts.push(`<polygon points="${pts}" fill="${tipFill}" stroke="#374151" stroke-width="0.5"/>\n`);
     });
     parts.push('</g>\n');
+
+    if (clippedBoundaryDots.length > 0) {
+        parts.push('<g fill="#ef4444" stroke="none">\n');
+        clippedBoundaryDots.forEach(({ x, y }) => {
+            parts.push(`<circle cx="${x}" cy="${y}" r="4"/>\n`);
+        });
+        parts.push('</g>\n');
+    }
 
     parts.push(`<g fill="none" stroke="#374151" stroke-width="1">\n`);
     const leavesLin = [];
