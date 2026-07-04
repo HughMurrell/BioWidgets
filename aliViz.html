@@ -2324,16 +2324,22 @@ function isFunctionalAASequence(aaSeq) {
 }
 
 /** Set seq.functional on each loaded sequence (AA row directly; NT row via translation). */
+function computeSequenceFunctional(seqArr, isAA) {
+    if (!seqArr) return false;
+    const frameOffset = (state.frame || 1) - 1;
+    const aa = isAA ? seqArr : translateDnaRowToAA(seqArr, frameOffset);
+    return isFunctionalAASequence(aa);
+}
+
 function annotateSequencesFunctionality(seqs, isAA) {
     if (!seqs || !seqs.length) return;
-    const frameOffset = (state.frame || 1) - 1;
     seqs.forEach(seq => {
         if (!seq || !seq.seq) {
             seq.functional = false;
             return;
         }
-        const aa = isAA ? seq.seq : translateDnaRowToAA(seq.seq, frameOffset);
-        seq.functional = isFunctionalAASequence(aa);
+        if (seq._functionalFromSource) return;
+        seq.functional = computeSequenceFunctional(seq.seq, isAA);
     });
 }
 
@@ -2348,6 +2354,21 @@ function getSequenceFunctionalityStats() {
         });
     }
     return { n, f, nf };
+}
+
+/** s/f/nf for visible tree leaves only (excludes reference, subtype, PDB, and other non-tree sequences). */
+function getTreeLeafFunctionalityStats() {
+    if (!state.tree || !state.tree.root) return { n: 0, f: 0, nf: 0 };
+    const leaves = [];
+    collectVisibleLeaves(state.tree.root, leaves);
+    let f = 0;
+    let nf = 0;
+    leaves.forEach(node => {
+        const seq = findRawSequenceForTreeNode(node.name);
+        if (seq && seq.functional === true) f++;
+        else nf++;
+    });
+    return { n: leaves.length, f, nf };
 }
 
 function updateLoadedFileStatsDisplay() {
@@ -2593,9 +2614,13 @@ function loadAlignmentWithExternalReference(alignmentText, refText, isFastq, ref
         const refEntry = refParsed.seqs[0];
         const template = alignmentSeqs[0];
         const alignedRefSeq = profileAlignReferenceRow(refEntry.seq, template.seq);
+        const alignmentIsAA = detectSequenceType(alignmentSeqs) === 'AA';
         const profiledRef = {
             name: refEntry.name || refFileName || 'Reference',
-            seq: alignedRefSeq
+            seq: alignedRefSeq,
+            // Profile alignment maps ref onto the MSA template row; test the original FASTA, not the gapped row.
+            functional: computeSequenceFunctional(refEntry.seq, alignmentIsAA),
+            _functionalFromSource: true
         };
         rememberExternalReference(refText, refFileName || refEntry.name || 'Reference');
         finalizeLoad([profiledRef, ...alignmentSeqs]);
@@ -4060,38 +4085,29 @@ function isTreeLeafNonFunctional(nodeName) {
     return !!(seq && seq.functional === false);
 }
 
-/** Red cross overlay for non-functional tip diamonds (canvas). */
+/** Red oval overlay around non-functional tip diamonds (canvas). */
 function drawNonFunctionalLeafMark(ctx, x, y, size) {
     ctx.save();
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 2;
-    const cs = size * 0.55;
     ctx.beginPath();
-    ctx.moveTo(x - cs, y - cs);
-    ctx.lineTo(x + cs, y + cs);
-    ctx.moveTo(x + cs, y - cs);
-    ctx.lineTo(x - cs, y + cs);
+    ctx.ellipse(x, y, size, size, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
 }
 
-/** SVG: red cross for non-functional leaves (no diamond border). */
+/** SVG: red oval around non-functional leaf diamonds. */
 function appendSvgNonFunctionalLeafMark(parts, cx, cy, d) {
-    const cs = d * 0.55;
     parts.push(`<g stroke="#dc2626" stroke-width="2" fill="none">\n`);
-    parts.push(`<line x1="${cx - cs}" y1="${cy - cs}" x2="${cx + cs}" y2="${cy + cs}"/>\n`);
-    parts.push(`<line x1="${cx + cs}" y1="${cy - cs}" x2="${cx - cs}" y2="${cy + cs}"/>\n`);
+    parts.push(`<ellipse cx="${cx}" cy="${cy}" rx="${d}" ry="${d}"/>\n`);
     parts.push('</g>\n');
 }
 
-/** SVG: red cross for non-functional clipped (right-half) tip diamonds. */
+/** SVG: red oval around non-functional clipped (right-half) tip diamonds. */
 function appendSvgNonFunctionalClippedLeafMark(parts, boundaryX, y, d) {
     const cx = boundaryX - d;
-    const cs = d * 0.45;
-    const markCx = cx + d * 0.45;
     parts.push(`<g stroke="#dc2626" stroke-width="2" fill="none">\n`);
-    parts.push(`<line x1="${markCx - cs}" y1="${y - cs}" x2="${markCx + cs}" y2="${y + cs}"/>\n`);
-    parts.push(`<line x1="${markCx + cs}" y1="${y - cs}" x2="${markCx - cs}" y2="${y + cs}"/>\n`);
+    parts.push(`<ellipse cx="${cx}" cy="${y}" rx="${d}" ry="${d}"/>\n`);
     parts.push('</g>\n');
 }
 
@@ -4176,7 +4192,7 @@ function getSvgTreeTitleLines() {
         maxDepthStr = formatThreeSignificantFigures(state.tree.maxDepth);
     }
 
-    const { n, f, nf } = getSequenceFunctionalityStats();
+    const { n, f, nf } = getTreeLeafFunctionalityStats();
 
     return [
         escapeXml(fastaName),
