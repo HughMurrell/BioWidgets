@@ -40,11 +40,11 @@ On every alignment load, aliViz tests each sequence for **functionality** and st
 - **Nucleotide (NT) alignment:** Each row is translated using **reading frame 1** (same default as at load), then tested with the AA rules above.
 - **Non-functional:** Any sequence that fails one or more of these rules.
 
-**Load summary (`s`, `f`, `nf`):** Above the alignment filename you will see a compact report, e.g. **`s=56, f=25, nf=31`**, meaning 56 sequences total, 25 functional, 31 non-functional. This updates when you **Prune** sequences or when NT rows are converted to AA (e.g. after loading epitopes). It resets to **`s=0, f=0, nf=0`** when the alignment is cleared.
+**Load summary (`s`, `f`, `nf`, `dpi`):** Above the alignment filename you will see a compact report, e.g. **`s=56, f=25, nf=31, dpi=79`**, meaning 56 sequences total, 25 functional, 31 non-functional, and **79** days post infection (DPI). The DPI value is the same one used as the default in the tree SVG **DPI** scale dialog (see §3). It is set from the alignment **filename** when the file loads: aliViz looks for tokens like `dpi+79` or `dpi-79` (case-insensitive); if several tokens are present, the **largest** day count is used; if none are found, DPI defaults to **14**. This updates when you **Prune** sequences or when NT rows are converted to AA (e.g. after loading epitopes), and when you change the DPI (days) field in the SVG export dialog. It resets to **`s=0, f=0, nf=0, dpi=14`** when the alignment is cleared.
 
 **Tree indicators (interactive panel and SVG export):** Whenever a tree is drawn— in the **tree panel** beside the alignment, or in an exported **SVG** figure— leaf tips are shown as **diamonds** coloured by **cluster** (when clustering is active). **Non-functional** leaves are marked with a **red oval** (`#dc2626`) drawn around the diamond. The oval appears on:
 - Full tip diamonds (normal tips),
-- **Right-half diamonds** on linear SVG exports when a tip is **clipped** at the plot boundary (DSI scale overflow).
+- **Right-half diamonds** on linear SVG exports when a tip is **clipped** at the plot boundary (DPI scale overflow).
 
 Functional leaves show only the cluster-coloured diamond with no oval. **Red is reserved** for this non-functional marker: the shared group/cluster colour palette does **not** use red or pink (palette indices 5 and 10 are sky and slate instead), so the oval remains visually distinct from cluster colours.
 
@@ -138,17 +138,17 @@ The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) availab
 
 - **Auto (default):** Scales the tree to fit the plot area (linear branch span ≈ 520 px; circular outer branch radius ≈ 260 px, with branch lengths in circular mode drawn at **half** the linear scale per unit).
 - **Fixed:** Uses a chosen **branch length per 1 cm** of plot (dropdown: 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001; default **0.001**) so trees from different datasets are comparable. The tree is **not** shrunk to fit; shallow trees use only part of the space. If the tree would extend beyond the fixed plot width, export **aborts** with a message suggesting a **larger** value in the dropdown (more compact drawing) or **Auto** scale.
-- **DSI (days since infection):** Scales so an **expected** branch length lands at the **half-way mark (260 px)** of the branch region. You supply two parameters:
-  - **DSI (days):** number of days since infection (default **14**).
+- **DPI (days post infection):** Scales so an **expected** branch length lands at the **half-way mark (260 px)** of the branch region. You supply two parameters:
+  - **DPI (days):** number of days post infection. The default is taken from the loaded alignment **filename**: tokens matching `dpi+N` or `dpi-N` (case-insensitive) are parsed, and if several are present the **largest** `N` is used; if the filename has no such token, the default is **14**. The load summary’s `dpi=` value and this dialog field stay in sync. You can still edit the field before export.
   - **Mutations/day (MPD):** expected substitution rate per day (default **0.001**).
-  - The expected branch length is **DSI × MPD** (e.g. 14 × 0.001 = 0.014), and the scale is set so this value maps to 260 px (i.e. `px per unit = 260 / (DSI × MPD)`). In circular mode the same value maps to a **130 px** radius (half, matching the Fixed circular convention).
-  - **No overflow abort:** unlike Fixed scale, DSI **never** aborts. Branches longer than the plot width are truncated at the **right border** (so they cannot run into the sequence-name column); nothing is clipped on the left. In circular mode over-long branches are clamped to the outer radius.
+  - The expected branch length is **DPI × MPD** (e.g. 14 × 0.001 = 0.014), and the scale is set so this value maps to 260 px (i.e. `px per unit = 260 / (DPI × MPD)`). In circular mode the same value maps to a **130 px** radius (half, matching the Fixed circular convention).
+  - **No overflow abort:** unlike Fixed scale, DPI **never** aborts. Branches longer than the plot width are truncated at the **right border** (so they cannot run into the sequence-name column); nothing is clipped on the left. In circular mode over-long branches are clamped to the outer radius.
   - **Clipped-branch marker (half diamond):** on **linear** SVG exports, any horizontal branch that would extend past the right border is drawn only up to that boundary. If the tip falls past the boundary, the full diamond is replaced by the **right half** of the diamond (apex on the boundary, pointing right), filled with the same **cluster** color as an unclipped tip. **Non-functional** clipped tips also receive the **red oval** around the half diamond. The dashed connector to the sequence name still starts from the boundary.
   - **Expected-depth marker:** a **gray vertical dotted line** is drawn across the plot at the expected depth (the end of the scale bar, 260 px). Tips to the **right** are mutating **faster** than expected; tips to the **left** are mutating **slower** than expected.
 
 #### Titles, scale bar, and legend (SVG only)
 - **Title (two lines):** Full alignment **filename** (no truncation); second line includes **inference method**, **`s=…, f=…, nf=…`** (functionality counts for **tree leaves only**—reference, subtype, and PDB chains excluded), **max tree depth** (3 significant figures), and **last clustering method** (or “No clustering”). Linear layout: titles are **left-aligned** with the scale bar; circular: titles are **centred**.
-- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value). In **DSI** mode the bar is **260 px** long (linear; 130 px circular) and is annotated with the parameters and expected depth, e.g. **`(14 days @ 0.001 = 0.014)`**, updating to match whatever DSI and MPD you enter.
+- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value). In **DPI** mode the bar is **260 px** long (linear; 130 px circular) and is annotated with the parameters and expected depth, e.g. **`(14 DPI @ 0.001 = 0.014)`**, updating to match whatever DPI and MPD you enter.
 - **Legend panel:** Header **Legend** (not “Color Legend”). **Groups** and **Clusters** as in the app; cluster rows show the **number only** (e.g. `1`, not `Cluster 1`). Page width split **7/8** tree, **1/8** legend.
 
 #### Layout details (unchanged behaviour, for reference)
@@ -322,7 +322,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Feature        | Algorithm / formula |
 |----------------|---------------------|
 | Load sanitize  | A–Z, `-`, `*` kept; other chars → `X`; alert user. |
-| Functionality  | AA: ungapped M start, `*` end, no internal `*`; NT: translate frame 1 then same test; tag `functional`; report `s,f,nf` above filename (all seqs) and in SVG title (tree leaves only); red oval around non-functional tree tips. |
+| Functionality  | AA: ungapped M start, `*` end, no internal `*`; NT: translate frame 1 then same test; tag `functional`; report `s,f,nf,dpi` above filename (all seqs; DPI from filename `dpi±N` or 14) and `s,f,nf` in SVG title (tree leaves only); red oval around non-functional tree tips. |
 | Has subtype    | If off, no subtype index; toggling clears group/tree/cluster state. |
 | Group          | Split name by delimiter; group = field value; unique IDs. |
 | Sort           | REF, SubType (if any) fixed; others by group ID then name. |
@@ -335,7 +335,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Reroot         | Find founder leaf; reroot on edge to that leaf. |
 | Ladderize      | By weight: sort children by leaf count. By depth: sort by max root-to-leaf depth in subtree. |
 | Histogram      | Root-to-leaf distance = sum of branch lengths; bin and plot. |
-| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DSI: expected depth (DSI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (truncate at right border, half diamond + red oval if non-functional on clipped tips); dotted expected-depth line. |
+| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DPI: days default from filename (`dpi±N`, max if several) else 14; expected depth (DPI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (truncate at right border, half diamond + red oval if non-functional on clipped tips); dotted expected-depth line. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
 | Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |

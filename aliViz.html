@@ -235,7 +235,7 @@
                 <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt" style="display:none;">
                 <button id="btn-choose-file" type="button">Choose file</button>
                 <div style="display:flex; flex-direction:column; gap:1px;">
-                    <span id="inp-file-stats" style="font-size:11px; color:#6b7280; white-space:nowrap;">s=0, f=0, nf=0</span>
+                    <span id="inp-file-stats" style="font-size:11px; color:#6b7280; white-space:nowrap;">s=0, f=0, nf=0, dpi=14</span>
                     <input type="text" id="inp-file-name" value="No file chosen" readonly style="min-width: 180px; max-width: 260px; padding: 4px 6px; font-size: 12px; color: #374151; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 4px;">
                 </div>
                 <input type="file" id="inp-ref-file" accept=".fasta,.fa,.txt" style="display:none;">
@@ -524,16 +524,16 @@
                     </div>
                     <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                            <input type="radio" name="tree-svg-scale" id="tree-svg-scale-dsi" value="dsi">
-                            DSI (days since infection)
+                            <input type="radio" name="tree-svg-scale" id="tree-svg-scale-dpi" value="dpi">
+                            DPI (days post infection)
                         </label>
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
-                            <span class="tree-svg-dsi-hint">DSI (days):</span>
-                            <input type="number" id="tree-svg-dsi-days" value="14" min="0" step="1" disabled style="font-size: 12px; padding: 2px 6px; width: 5em;">
+                            <span class="tree-svg-dpi-hint">DPI (days):</span>
+                            <input type="number" id="tree-svg-dpi-days" value="14" min="0" step="1" disabled style="font-size: 12px; padding: 2px 6px; width: 5em;">
                         </label>
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
-                            <span class="tree-svg-dsi-hint">Mutations/day:</span>
-                            <input type="number" id="tree-svg-dsi-mpd" value="0.001" min="0" step="0.0001" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
+                            <span class="tree-svg-dpi-hint">Mutations/day:</span>
+                            <input type="number" id="tree-svg-dpi-mpd" value="0.001" min="0" step="0.0001" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
                         </label>
                     </div>
                 </div>
@@ -851,7 +851,7 @@
         <div class="help-row"><span class="help-key">Cluster</span> <span>Show 2D projection and clustering of pairwise leaf distances</span></div>
         <div class="help-row"><span class="help-key">fasta</span> <span>Download current view (NT or AA) as FASTA</span></div>
         <div class="help-row"><span class="help-key">tree</span> <span>Export current tree as Newick format</span></div>
-        <div class="help-row"><span class="help-key">svg</span> <span>Export current tree as SVG (linear or circular; Auto, Fixed, or DSI scale)</span></div>
+        <div class="help-row"><span class="help-key">svg</span> <span>Export current tree as SVG (linear or circular; Auto, Fixed, or DPI scale)</span></div>
         <div class="help-row"><span class="help-key">Clear Alignment</span> <span>Remove all sequences</span></div>
         <div class="help-row"><span class="help-key">Clear Tree</span> <span>Remove current tree</span></div>
         <div class="help-row"><span class="help-key">View Mode</span> <span>Switch between Nucleotide (NT) and Amino Acid (AA) view</span></div>
@@ -1679,14 +1679,14 @@ async function init() {
         const on = !!(fixed && fixed.checked);
         if (sel) sel.disabled = !on;
         if (hint) hint.style.opacity = on ? '1' : '0.5';
-        const dsi = document.getElementById('tree-svg-scale-dsi');
-        const dsiDays = document.getElementById('tree-svg-dsi-days');
-        const dsiMpd = document.getElementById('tree-svg-dsi-mpd');
-        const dsiOn = !!(dsi && dsi.checked);
-        if (dsiDays) dsiDays.disabled = !dsiOn;
-        if (dsiMpd) dsiMpd.disabled = !dsiOn;
-        document.querySelectorAll('.tree-svg-dsi-hint').forEach(h => {
-            h.style.opacity = dsiOn ? '1' : '0.5';
+        const dpi = document.getElementById('tree-svg-scale-dpi');
+        const dpiDays = document.getElementById('tree-svg-dpi-days');
+        const dpiMpd = document.getElementById('tree-svg-dpi-mpd');
+        const dpiOn = !!(dpi && dpi.checked);
+        if (dpiDays) dpiDays.disabled = !dpiOn;
+        if (dpiMpd) dpiMpd.disabled = !dpiOn;
+        document.querySelectorAll('.tree-svg-dpi-hint').forEach(h => {
+            h.style.opacity = dpiOn ? '1' : '0.5';
         });
     }
     if (dom.btnExportTreeSvg) {
@@ -1706,30 +1706,35 @@ async function init() {
     document.querySelectorAll('input[name="tree-svg-scale"]').forEach(el => {
         el.addEventListener('change', syncTreeSvgFixedScaleControls);
     });
+    const treeSvgDpiDaysInput = document.getElementById('tree-svg-dpi-days');
+    if (treeSvgDpiDaysInput) {
+        treeSvgDpiDaysInput.addEventListener('input', () => updateLoadedFileStatsDisplay());
+        treeSvgDpiDaysInput.addEventListener('change', () => updateLoadedFileStatsDisplay());
+    }
     if (btnTreeSvgExport && treeSvgOverlay) {
         btnTreeSvgExport.addEventListener('click', () => {
             const circular = document.getElementById('tree-svg-circular') && document.getElementById('tree-svg-circular').checked;
             const scaleFixed = document.getElementById('tree-svg-scale-fixed') && document.getElementById('tree-svg-scale-fixed').checked;
-            const scaleDsi = document.getElementById('tree-svg-scale-dsi') && document.getElementById('tree-svg-scale-dsi').checked;
-            const scaleMode = scaleDsi ? 'dsi' : (scaleFixed ? 'fixed' : 'auto');
+            const scaleDpi = document.getElementById('tree-svg-scale-dpi') && document.getElementById('tree-svg-scale-dpi').checked;
+            const scaleMode = scaleDpi ? 'dpi' : (scaleFixed ? 'fixed' : 'auto');
             const sel = document.getElementById('tree-svg-fixed-scale-select');
             let fixedBranchPerCm = sel ? parseFloat(sel.value, 10) : 0.001;
             if (!isFinite(fixedBranchPerCm) || fixedBranchPerCm <= 0) fixedBranchPerCm = 0.001;
-            let dsiParams = null;
-            if (scaleDsi) {
-                const daysEl = document.getElementById('tree-svg-dsi-days');
-                const mpdEl = document.getElementById('tree-svg-dsi-mpd');
+            let dpiParams = null;
+            if (scaleDpi) {
+                const daysEl = document.getElementById('tree-svg-dpi-days');
+                const mpdEl = document.getElementById('tree-svg-dpi-mpd');
                 let days = daysEl ? parseFloat(daysEl.value) : 14;
                 let mpd = mpdEl ? parseFloat(mpdEl.value) : 0.001;
                 if (!isFinite(days) || days <= 0) days = 14;
                 if (!isFinite(mpd) || mpd <= 0) mpd = 0.001;
-                dsiParams = { days, mpd };
+                dpiParams = { days, mpd };
             }
             const ok = exportTreeAsSvg(
                 circular ? 'circular' : 'linear',
                 scaleMode,
                 scaleFixed ? fixedBranchPerCm : null,
-                dsiParams
+                dpiParams
             );
             if (ok) treeSvgOverlay.style.display = 'none';
         });
@@ -2323,6 +2328,40 @@ function isFunctionalAASequence(aaSeq) {
     return true;
 }
 
+/** True if the sequence ends with a stop codon (AA: *; NT: last in-frame codon translates to *). */
+function sequenceEndsWithStopCodon(seqArr, isAA) {
+    if (!seqArr || !seqArr.length) return false;
+    if (isAA) {
+        const s = sequenceToUngappedUpper(seqArr);
+        return s.length > 0 && s[s.length - 1] === '*';
+    }
+    const aa = translateDnaRowToAA(seqArr, 0);
+    const s = sequenceToUngappedUpper(aa);
+    return s.length > 0 && s[s.length - 1] === '*';
+}
+
+/** Append terminal stop to every row (one * for AA; TAA for NT). */
+function appendTerminalStopToAlignment(seqs, isAA) {
+    seqs.forEach(seq => {
+        if (!seq || !seq.seq) return;
+        if (isAA) {
+            seq.seq.push('*');
+        } else {
+            seq.seq.push('T', 'A', 'A');
+        }
+    });
+}
+
+/** If every sequence lacks a terminal stop, append one to all rows (same alignment width). */
+function maybeAppendTerminalStopCodons(seqs) {
+    if (!seqs || seqs.length === 0) return;
+    const isAA = detectSequenceType(seqs) === 'AA';
+    const allMissing = seqs.every(seq => seq && seq.seq && seq.seq.length > 0 && !sequenceEndsWithStopCodon(seq.seq, isAA));
+    if (allMissing) {
+        appendTerminalStopToAlignment(seqs, isAA);
+    }
+}
+
 /** Set seq.functional on each loaded sequence (AA row directly; NT row via translation). */
 function computeSequenceFunctional(seqArr, isAA) {
     if (!seqArr) return false;
@@ -2371,11 +2410,19 @@ function getTreeLeafFunctionalityStats() {
     return { n: leaves.length, f, nf };
 }
 
+function getCurrentDpiDaysForDisplay() {
+    const daysEl = document.getElementById('tree-svg-dpi-days');
+    const raw = daysEl ? parseInt(daysEl.value, 10) : NaN;
+    if (Number.isFinite(raw) && raw >= 0) return raw;
+    return DEFAULT_TREE_SVG_DPI_DAYS;
+}
+
 function updateLoadedFileStatsDisplay() {
     if (!dom.fileStatsDisplay) return;
     const { n, f, nf } = getSequenceFunctionalityStats();
-    dom.fileStatsDisplay.textContent = `s=${n}, f=${f}, nf=${nf}`;
-    dom.fileStatsDisplay.title = `${n} sequences, ${f} functional, ${nf} non-functional`;
+    const dpi = getCurrentDpiDaysForDisplay();
+    dom.fileStatsDisplay.textContent = `s=${n}, f=${f}, nf=${nf}, dpi=${dpi}`;
+    dom.fileStatsDisplay.title = `${n} sequences, ${f} functional, ${nf} non-functional, dpi=${dpi}`;
 }
 
 function applySubtypeToggleReset(hasSubtype) {
@@ -3487,17 +3534,43 @@ function getSvgPxPerBranchUnit(branchLengthPerCm) {
     return SVG_PX_PER_CM / s;
 }
 
-/** Half of the 520 px branch region; the expected branch length (DSI x MPD) is scaled to land here. */
-const DSI_SVG_HALF_WIDTH_PX = 260;
+/** Half of the 520 px branch region; the expected branch length (DPI x MPD) is scaled to land here. */
+const DPI_SVG_HALF_WIDTH_PX = 260;
 
-/** Pixels per tree branch-length unit for DSI scale: expected branch length (days x mutationsPerDay)
- *  maps to DSI_SVG_HALF_WIDTH_PX (260 px, the half-way mark of the 520 px branch region). */
-function getDsiPxPerBranchUnit(days, mutationsPerDay) {
+/** Default days-post-infection for tree SVG export (matches #tree-svg-dpi-days initial value). */
+const DEFAULT_TREE_SVG_DPI_DAYS = 14;
+
+/** Parse days-post-infection from alignment filename tokens like dpi+79 or dpi-79.
+ *  If several are present, returns the largest. Returns null if none. */
+function parseDpiDaysFromFileName(fileName) {
+    if (!fileName) return null;
+    const matches = String(fileName).matchAll(/dpi[+-](\d+)/gi);
+    let maxDays = null;
+    for (const m of matches) {
+        const days = parseInt(m[1], 10);
+        if (Number.isFinite(days) && days >= 0 && (maxDays == null || days > maxDays)) {
+            maxDays = days;
+        }
+    }
+    return maxDays;
+}
+
+/** Set tree SVG DPI-days input from alignment filename, or revert to default when absent. */
+function applyDpiDaysFromAlignmentFileName(fileName) {
+    const daysEl = document.getElementById('tree-svg-dpi-days');
+    if (!daysEl) return;
+    const parsed = parseDpiDaysFromFileName(fileName);
+    daysEl.value = String(parsed != null ? parsed : DEFAULT_TREE_SVG_DPI_DAYS);
+}
+
+/** Pixels per tree branch-length unit for DPI scale: expected branch length (days x mutationsPerDay)
+ *  maps to DPI_SVG_HALF_WIDTH_PX (260 px, the half-way mark of the 520 px branch region). */
+function getDpiPxPerBranchUnit(days, mutationsPerDay) {
     const d = parseFloat(days);
     const m = parseFloat(mutationsPerDay);
     const expected = d * m;
-    if (!isFinite(expected) || expected <= 0) return DSI_SVG_HALF_WIDTH_PX / (14 * 0.001);
-    return DSI_SVG_HALF_WIDTH_PX / expected;
+    if (!isFinite(expected) || expected <= 0) return DPI_SVG_HALF_WIDTH_PX / (14 * 0.001);
+    return DPI_SVG_HALF_WIDTH_PX / expected;
 }
 
 /** Branch-length scale bar on exported tree SVG (same px/length mapping as tree drawing).
@@ -4345,12 +4418,12 @@ function buildTreeSvgFileName() {
     return `${baseName}_gr-${numGroups}_cl-${numClusters}.svg`;
 }
 
-function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm, dsiParams) {
+function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm, dpiParams) {
     if (!state.tree || !state.tree.root) {
         alert('No tree to export.');
         return false;
     }
-    if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dsi') scaleMode = 'auto';
+    if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dpi') scaleMode = 'auto';
     if (scaleMode === 'fixed') {
         const overflowMsg = checkFixedScaleSvgOverflow(fixedBranchPerCm);
         if (overflowMsg) {
@@ -4358,12 +4431,12 @@ function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm, dsiParams) {
             return false;
         }
     }
-    // DSI scale never aborts on overflow: over-long branches are clipped to the plot width instead.
+    // DPI scale never aborts on overflow: over-long branches are clipped to the plot width instead.
     let svgStr;
     try {
         svgStr = layout === 'circular'
-            ? buildTreeSvgCircular(scaleMode, fixedBranchPerCm, dsiParams)
-            : buildTreeSvgLinear(scaleMode, fixedBranchPerCm, dsiParams);
+            ? buildTreeSvgCircular(scaleMode, fixedBranchPerCm, dpiParams)
+            : buildTreeSvgLinear(scaleMode, fixedBranchPerCm, dpiParams);
     } catch (e) {
         console.error(e);
         alert('Failed to build SVG: ' + (e && e.message ? e.message : e));
@@ -4415,22 +4488,22 @@ function assignRadialInternalAngles(node) {
     node._svgAngle = count ? sum / count : 0;
 }
 
-/** @param {'auto'|'fixed'|'dsi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dsi' scales so days x mutationsPerDay lands at the plot half-way mark.
+/** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so days x mutationsPerDay lands at the plot half-way mark.
  *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm).
- *  @param {{days:number, mpd:number}|null|undefined} dsiParams When scaleMode is 'dsi', the days-since-infection and mutations-per-day. */
-function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
-    if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dsi') scaleMode = 'auto';
+ *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day. */
+function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
+    if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dpi') scaleMode = 'auto';
     const root = state.tree.root;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
     const R = 260;
-    const isDsiScale = scaleMode === 'dsi' && dsiParams != null;
-    // Branch-length value to force onto the scale bar (fixed: per-cm value; DSI: days x mpd). null = auto.
+    const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
+    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days x mpd). null = auto.
     let scaleBarVal = null;
     let explicitPxPerUnit = null;
-    if (isDsiScale) {
+    if (isDpiScale) {
         // Halve to match the fixed-scale circular convention (radius R vs linear width 2R).
-        explicitPxPerUnit = getDsiPxPerBranchUnit(dsiParams.days, dsiParams.mpd) * 0.5;
-        scaleBarVal = dsiParams.days * dsiParams.mpd;
+        explicitPxPerUnit = getDpiPxPerBranchUnit(dpiParams.days, dpiParams.mpd) * 0.5;
+        scaleBarVal = dpiParams.days * dpiParams.mpd;
     } else if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
         explicitPxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm) * 0.5;
         scaleBarVal = fixedBranchPerCm;
@@ -4438,8 +4511,8 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
     const circularPxPerUnit = explicitPxPerUnit != null ? explicitPxPerUnit : (R / maxD);
     function radialR(node) {
         const r = node.xDepth * circularPxPerUnit;
-        // DSI: never aborts on overflow; clamp radius to the plot edge so long branches are clipped.
-        return isDsiScale ? Math.min(r, R) : r;
+        // DPI: never aborts on overflow; clamp radius to the plot edge so long branches are clipped.
+        return isDpiScale ? Math.min(r, R) : r;
     }
     /** Gap along the radius from the tip diamond to the inner edge of the label (first glyph) (px). */
     const labelGapPastDiamond = 48;
@@ -4645,26 +4718,26 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
     return parts.join('');
 }
 
-/** @param {'auto'|'fixed'|'dsi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dsi' scales so days x mutationsPerDay lands at 260 px (half the 520 px branch width).
+/** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so days x mutationsPerDay lands at 260 px (half the 520 px branch width).
  *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm).
- *  @param {{days:number, mpd:number}|null|undefined} dsiParams When scaleMode is 'dsi', the days-since-infection and mutations-per-day. */
-function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
-    if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dsi') scaleMode = 'auto';
+ *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day. */
+function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
+    if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dpi') scaleMode = 'auto';
     const padding = 15;
     const branchW = 520;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
     const isFixedScale =
         scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10));
-    const isDsiScale = scaleMode === 'dsi' && dsiParams != null;
-    // Branch-length value to force onto the scale bar (fixed: per-cm value; DSI: days x mpd). null = auto.
+    const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
+    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days x mpd). null = auto.
     let scaleBarVal = null;
-    // Custom scale-bar annotation (DSI mode), null = default numeric label.
+    // Custom scale-bar annotation (DPI mode), null = default numeric label.
     let scaleBarLabel = null;
     let xScale;
-    if (isDsiScale) {
-        xScale = getDsiPxPerBranchUnit(dsiParams.days, dsiParams.mpd);
-        scaleBarVal = dsiParams.days * dsiParams.mpd;
-        scaleBarLabel = `(${dsiParams.days} days @ ${dsiParams.mpd} = ${formatPhyloBranchLength(scaleBarVal)})`;
+    if (isDpiScale) {
+        xScale = getDpiPxPerBranchUnit(dpiParams.days, dpiParams.mpd);
+        scaleBarVal = dpiParams.days * dpiParams.mpd;
+        scaleBarLabel = `(${dpiParams.days} DPI @ ${dpiParams.mpd} = ${formatPhyloBranchLength(scaleBarVal)})`;
     } else if (isFixedScale) {
         xScale = getSvgPxPerBranchUnit(fixedBranchPerCm);
         scaleBarVal = fixedBranchPerCm;
@@ -4743,9 +4816,9 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dsiParams) {
     }
     drawNode(state.tree.root);
 
-    // DSI: vertical dotted line marking the expected tree depth (end of the scale bar, at DSI x MPD).
+    // DPI: vertical dotted line marking the expected tree depth (end of the scale bar, at DPI x MPD).
     // Tips to the right mutate faster than expected; tips to the left mutate slower.
-    if (isDsiScale) {
+    if (isDpiScale) {
         const expectedX = leftPad + scaleBarVal * xScale;
         parts.push(`<line x1="${expectedX}" y1="0" x2="${expectedX}" y2="${svgH}" stroke="#6b7280" stroke-width="1" stroke-dasharray="3 3"/>\n`);
     }
@@ -5037,6 +5110,7 @@ function detectSequenceType(seqs) {
 }
 
 function finalizeLoad(seqs) {
+    maybeAppendTerminalStopCodons(seqs);
     state.rawSequences = seqs;
     state.selection = null;
     state.history = [];
@@ -5078,6 +5152,7 @@ function finalizeLoad(seqs) {
     }
 
     annotateSequencesFunctionality(state.rawSequences, state.isAASequence);
+    applyDpiDaysFromAlignmentFileName(state.currentFileName);
     updateLoadedFileStatsDisplay();
     updateLoadedFileNameDisplay(state.currentFileName);
     
