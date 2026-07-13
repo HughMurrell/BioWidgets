@@ -6209,15 +6209,15 @@ function showProjectionPlot(selectedMethod) {
     // Use the larger of the two ranges so radius is on the scale of the data (handles degenerate y=0 case)
     const effectiveRange = (rangeX > 0 || rangeY > 0) ? Math.max(rangeX, rangeY) : 1;
     
-    // UMAP: max = half of max dimension range; initial = half of that; step = 1/10 of initial. MDS: max = effectiveRange/2, step = max/10. Min = step to avoid CH infinity.
+    // UMAP: max = half of max dimension range; initial = half of that; step = max/50. MDS: max = effectiveRange/2, step = max/50. Min = step to avoid CH infinity.
     let epsMax, epsStep, epsDefault;
     if (selectedMethod === 'umap') {
         epsMax = effectiveRange / 2;
         epsDefault = epsMax / 2;  // half of max
-        epsStep = epsDefault / 10;  // 1/10 of initial
+        epsStep = epsMax > 0 ? epsMax / 50 : 0.1;
     } else {
         epsMax = effectiveRange / 2;
-        epsStep = epsMax > 0 ? epsMax / 10 : 0.1;
+        epsStep = epsMax > 0 ? epsMax / 50 : 0.1;
         epsDefault = epsMax / 2;  // MDS: start at half the maximum
     }
     const epsMin = epsStep;
@@ -6266,7 +6266,7 @@ function showProjectionPlot(selectedMethod) {
             minDist = minDistSlider ? parseFloat(minDistSlider.value) : 0.1;
             projectionCoords = performProjection(selectedMethod, distanceMatrix, nNeighbors, spread, minDist);
             
-            // UMAP: max = half of max dimension range; initial = half of max; step = 1/10 of initial; min = step to avoid CH infinity
+            // UMAP: max = half of max dimension range; initial = half of max; step = max/50; min = step to avoid CH infinity
             const xs = projectionCoords.map(c => c.x);
             const ys = projectionCoords.map(c => c.y);
             const rangeX = Math.max(...xs) - Math.min(...xs);
@@ -6274,12 +6274,17 @@ function showProjectionPlot(selectedMethod) {
             const effectiveRange = (rangeX > 0 || rangeY > 0) ? Math.max(rangeX, rangeY) : 1;
             const epsMax = effectiveRange / 2;
             const epsDefault = epsMax / 2;
-            const epsStep = epsDefault / 10;
+            const epsStep = epsMax > 0 ? epsMax / 50 : 0.1;
             const epsMin = epsStep;
             
             epsSlider.min = epsMin.toString();
             epsSlider.max = epsMax.toString();
             epsSlider.step = epsStep.toString();
+            if (epsMax > 0 && epsMax < 1 && isFinite(epsMax)) {
+                decimalPlaces = Math.min(100, Math.max(2, Math.ceil(-Math.log10(epsMax)) + 2));
+            } else if (epsStep > 0 && isFinite(epsStep) && epsStep < 1) {
+                decimalPlaces = Math.min(100, Math.max(2, Math.ceil(-Math.log10(epsStep)) + 2));
+            }
             const currentVal = parseFloat(epsSlider.value);
             if (currentVal > epsMax || currentVal < epsMin) {
                 epsSlider.value = Math.max(epsMin, Math.min(epsDefault, epsMax)).toString();
@@ -6354,13 +6359,14 @@ function showProjectionPlot(selectedMethod) {
     epsSlider.addEventListener('input', updatePlot);
     minPtsSlider.addEventListener('input', updatePlot);
     
-    // Auto buttons: optimize eps or minPts to maximize Calinski–Harabasz (using current projection coords)
+    // Auto: maximize selected index over the slider's discrete eps ticks (same values the user can pick).
     const buildNameToCluster = (clusters, leavesArr) => {
         const delimiter = state.groupDelimiter || '_';
         const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
         const nameToCluster = new Map();
         for (let i = 0; i < leavesArr.length; i++) {
             const cid = clusters[i];
+            if (cid === -1) continue;
             const orig = (leavesArr[i].name || '').toString().replace(clusterPattern, '');
             if (orig) nameToCluster.set(orig, cid);
         }
@@ -6383,11 +6389,14 @@ function showProjectionPlot(selectedMethod) {
         const epsMin = parseFloat(epsSlider.min);
         const epsMax = parseFloat(epsSlider.max);
         const epsStep = parseFloat(epsSlider.step) || (epsMax - epsMin) / 50;
-        const nSteps = Math.min(80, Math.max(15, Math.ceil((epsMax - epsMin) / epsStep)));
         let bestEps = parseFloat(epsSlider.value);
         let bestMetric = -Infinity;
-        for (let i = 0; i <= nSteps; i++) {
-            const eps = i < nSteps ? epsMin + (i / nSteps) * (epsMax - epsMin) : epsMax;
+        // Walk every slider tick so the chosen eps cannot snap to an unevaluated value.
+        const nTicks = (epsStep > 0 && epsMax >= epsMin)
+            ? Math.max(1, Math.round((epsMax - epsMin) / epsStep))
+            : 1;
+        for (let i = 0; i <= nTicks; i++) {
+            const eps = i === nTicks ? epsMax : epsMin + i * epsStep;
             const leafWeights = getCollapseWeightsForLeaves(data.leaves);
             let clusters = performDBSCAN(data.coords, eps, minPts, subtypeIdx, null, leafWeights);
             clusters = renumberClustersByDistanceFromSubtype(clusters, data.coords, subtypeIdx, data.leaves, data.subtypeName);
@@ -6802,11 +6811,15 @@ function showHierarchicalModal() {
     const value2 = document.getElementById('hier-value-2');
     const value3 = document.getElementById('hier-value-3');
     
-    // Max = max root-to-leaf rounded up (e.g. 0.005746 → 0.006, 0.0345 → 0.04); step = 0.001
+    // Max = max root-to-leaf rounded up (e.g. 0.005746 → 0.006, 0.0345 → 0.04); step = max/50
     const sliderMax = maxDepth < 0.01
         ? Math.ceil(maxDepth * 1000) / 1000
         : Math.ceil(maxDepth * 100) / 100;
-    const step = 0.001;
+    const step = sliderMax > 0 ? sliderMax / 50 : 0.001;
+    const hierDecimals = (step > 0 && step < 1 && isFinite(step))
+        ? Math.min(100, Math.max(3, Math.ceil(-Math.log10(step)) + 1))
+        : 3;
+    const formatHierDepth = (v) => Number(v).toFixed(hierDecimals);
     slider1.max = sliderMax.toString();
     slider2.max = sliderMax.toString();
     slider3.max = sliderMax.toString();
@@ -6814,18 +6827,21 @@ function showHierarchicalModal() {
     slider2.step = step.toString();
     slider3.step = step.toString();
     
-    // Start the three sliders at 0.001, 0.002, 0.003
-    slider1.value = 0.001;
-    slider2.value = 0.002;
-    slider3.value = 0.003;
-    value1.textContent = (0.001).toFixed(3);
-    value2.textContent = (0.002).toFixed(3);
-    value3.textContent = (0.003).toFixed(3);
-    state.hierarchicalDepths = [0.001, 0.002, 0.003];
+    // Start the three sliders on the first three discrete ticks
+    const init1 = step;
+    const init2 = Math.min(2 * step, sliderMax);
+    const init3 = Math.min(3 * step, sliderMax);
+    slider1.value = init1.toString();
+    slider2.value = init2.toString();
+    slider3.value = init3.toString();
+    value1.textContent = formatHierDepth(init1);
+    value2.textContent = formatHierDepth(init2);
+    value3.textContent = formatHierDepth(init3);
+    state.hierarchicalDepths = [init1, init2, init3];
     const minLeavesSlider = document.getElementById('hier-min-leaves-slider');
     const minLeavesValue = document.getElementById('hier-min-leaves-value');
     minLeavesValue.textContent = minLeavesSlider.value;
-    applyHierarchicalClustering(0.001, 0.002, 0.003, parseInt(minLeavesSlider.value, 10));
+    applyHierarchicalClustering(init1, init2, init3, parseInt(minLeavesSlider.value, 10));
     
     // Function to update clustering
     function updateHierarchicalClustering() {
@@ -6843,18 +6859,18 @@ function showHierarchicalModal() {
     // Slider event handlers with constraints
     slider1.addEventListener('input', () => {
         const val = parseFloat(slider1.value);
-        value1.textContent = val.toFixed(3);
+        value1.textContent = formatHierDepth(val);
         
         // Constrain slider2 >= slider1
         if (parseFloat(slider2.value) < val) {
-            slider2.value = val;
-            value2.textContent = val.toFixed(3);
+            slider2.value = val.toString();
+            value2.textContent = formatHierDepth(val);
         }
         
         // Constrain slider3 >= slider2
         if (parseFloat(slider3.value) < parseFloat(slider2.value)) {
             slider3.value = slider2.value;
-            value3.textContent = parseFloat(slider2.value).toFixed(3);
+            value3.textContent = formatHierDepth(parseFloat(slider2.value));
         }
         
         updateHierarchicalClustering();
@@ -6866,17 +6882,17 @@ function showHierarchicalModal() {
         
         // Constrain slider2 >= slider1
         if (val < val1) {
-            slider2.value = val1;
-            value2.textContent = val1.toFixed(3);
+            slider2.value = val1.toString();
+            value2.textContent = formatHierDepth(val1);
             return;
         }
         
-        value2.textContent = val.toFixed(3);
+        value2.textContent = formatHierDepth(val);
         
         // Constrain slider3 >= slider2
         if (parseFloat(slider3.value) < val) {
-            slider3.value = val;
-            value3.textContent = val.toFixed(3);
+            slider3.value = val.toString();
+            value3.textContent = formatHierDepth(val);
         }
         
         updateHierarchicalClustering();
@@ -6888,12 +6904,12 @@ function showHierarchicalModal() {
         
         // Constrain slider3 >= slider2
         if (val < val2) {
-            slider3.value = val2;
-            value3.textContent = val2.toFixed(3);
+            slider3.value = val2.toString();
+            value3.textContent = formatHierDepth(val2);
             return;
         }
         
-        value3.textContent = val.toFixed(3);
+        value3.textContent = formatHierDepth(val);
         updateHierarchicalClustering();
     });
     
@@ -6909,8 +6925,8 @@ function showHierarchicalModal() {
         let v1 = parseFloat(slider1.value);
         let v2 = parseFloat(slider2.value);
         let v3 = parseFloat(slider3.value);
-        if (v2 < v1) { v2 = v1; slider2.value = v2.toFixed(3); value2.textContent = slider2.value; }
-        if (v3 < v2) { v3 = v2; slider3.value = v3.toFixed(3); value3.textContent = slider3.value; }
+        if (v2 < v1) { v2 = v1; slider2.value = v2.toString(); value2.textContent = formatHierDepth(v2); }
+        if (v3 < v2) { v3 = v2; slider3.value = v3.toString(); value3.textContent = formatHierDepth(v3); }
     }
     document.getElementById('btn-hier-auto').onclick = function () {
         const minLeaves = parseInt(minLeavesSlider.value, 10);
@@ -6918,21 +6934,24 @@ function showHierarchicalModal() {
             const bhRadio = document.getElementById('hier-opt-bh');
             return bhRadio ? bhRadio.checked : false;
         })();
-        // Full grid search: sample n+1 values from [slider1Min, sliderMaxNum], try every (d1,d2,d3) with d1 <= d2 <= d3
-        const n = 20;
+        // Full grid search over discrete slider ticks: every (d1,d2,d3) with d1 <= d2 <= d3
+        const stepVal = parseFloat(slider1.step) || (sliderMaxNum - slider1Min) / 50;
+        const nTicks = (stepVal > 0 && sliderMaxNum >= slider1Min)
+            ? Math.max(1, Math.round((sliderMaxNum - slider1Min) / stepVal))
+            : 1;
         const vals = [];
-        for (let i = 0; i <= n; i++) {
-            vals.push(slider1Min + (i / n) * (sliderMaxNum - slider1Min));
+        for (let i = 0; i <= nTicks; i++) {
+            vals.push(i === nTicks ? sliderMaxNum : slider1Min + i * stepVal);
         }
-        let bestD1 = slider1Min;
-        let bestD2 = slider1Min;
-        let bestD3 = slider1Min;
+        let bestD1 = vals[0];
+        let bestD2 = vals[0];
+        let bestD3 = vals[0];
         let bestMetric = -Infinity;
-        for (let i = 0; i <= n; i++) {
+        for (let i = 0; i < vals.length; i++) {
             const d1 = vals[i];
-            for (let j = i; j <= n; j++) {
+            for (let j = i; j < vals.length; j++) {
                 const d2 = vals[j];
-                for (let k = j; k <= n; k++) {
+                for (let k = j; k < vals.length; k++) {
                     const d3 = vals[k];
                     const map = computeHierarchicalClusterMap(d1, d2, d3, minLeaves);
                     if (!map) continue;
@@ -6949,12 +6968,12 @@ function showHierarchicalModal() {
                 }
             }
         }
-        slider1.value = bestD1.toFixed(3);
-        value1.textContent = slider1.value;
-        slider2.value = bestD2.toFixed(3);
-        value2.textContent = slider2.value;
-        slider3.value = bestD3.toFixed(3);
-        value3.textContent = slider3.value;
+        slider1.value = bestD1.toString();
+        value1.textContent = formatHierDepth(bestD1);
+        slider2.value = bestD2.toString();
+        value2.textContent = formatHierDepth(bestD2);
+        slider3.value = bestD3.toString();
+        value3.textContent = formatHierDepth(bestD3);
         state.hierarchicalDepths = [bestD1, bestD2, bestD3];
         updateHierarchicalClustering();
     };
@@ -7147,19 +7166,23 @@ function showHierarchicalCladeModal() {
     const sliderMax = Math.max(0.01, maxBranch < 0.01 ? Math.ceil(maxBranch * 1000) / 1000 : Math.ceil(maxBranch * 100) / 100);
     const slider = document.getElementById('clade-threshold-slider');
     const valueSpan = document.getElementById('clade-threshold-value');
-    const stepVal = 0.0001;
+    const stepVal = sliderMax > 0 ? sliderMax / 50 : 0.0001;
+    const cladeDecimals = (stepVal > 0 && stepVal < 1 && isFinite(stepVal))
+        ? Math.min(100, Math.max(4, Math.ceil(-Math.log10(stepVal)) + 1))
+        : 4;
+    const formatCladeThreshold = (v) => Number(v).toFixed(cladeDecimals);
     slider.min = stepVal.toString();
     slider.max = sliderMax.toString();
     slider.step = stepVal.toString();
-    slider.value = Math.max(stepVal, Math.min(0.001, sliderMax)).toString();
-    valueSpan.textContent = parseFloat(slider.value).toFixed(4);
+    slider.value = Math.max(stepVal, Math.min(stepVal * 10, sliderMax)).toString();
+    valueSpan.textContent = formatCladeThreshold(parseFloat(slider.value));
     const cladeMinLeavesSlider = document.getElementById('clade-min-leaves-slider');
     const cladeMinLeavesValue = document.getElementById('clade-min-leaves-value');
     cladeMinLeavesValue.textContent = cladeMinLeavesSlider.value;
     function updateCladeClustering() {
         const threshold = parseFloat(slider.value);
         const minLeaves = parseInt(cladeMinLeavesSlider.value, 10);
-        valueSpan.textContent = threshold.toFixed(4);
+        valueSpan.textContent = formatCladeThreshold(threshold);
         cladeMinLeavesValue.textContent = cladeMinLeavesSlider.value;
         applyCladeClustering(threshold, minLeaves);
     }
@@ -7175,12 +7198,15 @@ function showHierarchicalCladeModal() {
             })();
             const minVal = parseFloat(slider.min);
             const maxVal = parseFloat(slider.max);
-            const step = parseFloat(slider.step) || (maxVal - minVal) / 100;
-            const nSteps = Math.min(100, Math.max(20, Math.ceil((maxVal - minVal) / step)));
+            const step = parseFloat(slider.step) || (maxVal - minVal) / 50;
             let bestThreshold = parseFloat(slider.value);
             let bestMetric = -Infinity;
-            for (let i = 0; i <= nSteps; i++) {
-                const t = i < nSteps ? minVal + (i / nSteps) * (maxVal - minVal) : maxVal;
+            // Walk every slider tick so the chosen threshold cannot snap to an unevaluated value.
+            const nTicks = (step > 0 && maxVal >= minVal)
+                ? Math.max(1, Math.round((maxVal - minVal) / step))
+                : 1;
+            for (let i = 0; i <= nTicks; i++) {
+                const t = i === nTicks ? maxVal : minVal + i * step;
                 const map = computeCladeClusterMap(t, minLeaves);
                 if (!map) continue;
                 const metricVal = useBallHallAdapted
@@ -7193,7 +7219,7 @@ function showHierarchicalCladeModal() {
                 }
             }
             slider.value = bestThreshold.toString();
-            valueSpan.textContent = bestThreshold.toFixed(4);
+            valueSpan.textContent = formatCladeThreshold(bestThreshold);
             updateCladeClustering();
         };
     }

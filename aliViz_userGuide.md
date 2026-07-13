@@ -172,39 +172,39 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
 
 ### Auto button behaviour (optimizes selected index)
 - **Radio buttons (Calinski vs Ball-Hall-Adapted):** choose which index the dialog’s **Auto** button maximizes while it searches slider values. This does not change the clustering method itself; it only changes the scoring metric used by Auto (the radio choice is read when you press **Auto**). Default is **Calinski–Harabasz**; switch to **Ball-Hall-Adapted** to optimize that index instead.
-- **Tree-clade Auto:** searches the branch-length threshold (step to max) to maximize the **selected index** for the current **min leaves per cluster**, then sets the slider to the best threshold.
-- **Tree-cut Auto:** performs a full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from the slider range) and sets the sliders to the triple that maximizes the **selected index**.
-- **MDS/UMAP eps Auto:** varies the **radius (eps)** from the slider minimum (step) to max and selects the eps that maximizes the **selected index** for the current **min neighbors**.
+- **Tree-clade Auto:** searches every discrete branch-length threshold slider tick (step = max/50) to maximize the **selected index** for the current **min leaves per cluster**, then sets the slider to the best threshold.
+- **Tree-cut Auto:** full grid search over depth triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 on the discrete depth slider ticks (step = max/50), and sets the sliders to the triple that maximizes the **selected index**.
+- **MDS/UMAP eps Auto:** evaluates every discrete **radius (eps)** slider tick from min to max and selects the eps that maximizes the **selected index** for the current **min neighbors**. For MDS and UMAP, the slider step is **max/50** (about 50 ticks across the range).
 
 ### 4.1 Hierarchical (tree-clade clustering)
 - **Function:** Define clusters by **clades** on the tree: a new clade (and thus a new cluster) starts when the **incoming branch length** to a node exceeds a threshold.
 - **Parameters:**
-  - **Branch length threshold:** Minimum branch length that starts a new clade (slider from step to max). Leaves are assigned to the clade that contains them.
+  - **Branch length threshold:** Minimum branch length that starts a new clade (slider from step to max; step = max/50). Leaves are assigned to the clade that contains them.
   - **Min leaves per cluster:** Clusters with fewer than this many leaves are relabelled as noise (`_cl-na`).
 - **Algorithm:** DFS from root. When traversing an edge longer than the threshold, increment cluster ID. Assign each leaf to the current cluster. Subtype (if present) is cluster 0; without subtype, numbering starts at **1**. Then apply min-leaves filter, mark small clusters as noise, and renumber clusters 1, 2, 3, …
-- **Auto:** Searches the threshold (from step to max) to **maximize the Calinski–Harabasz index** (see §4.6) for the current min-leaves. Sets the slider to the best value.
+- **Auto:** Searches every discrete threshold tick (step to max) to **maximize the selected index** (see §4.6) for the current min-leaves. Sets the slider to the best value.
 - **Accept:** Applies the clustering: adds `_cl-<id>` or `_cl-na` to sequence and tree node names, updates the legend and tree colors.
 - **Cancel:** Removes all clustering: clears `state.leafClusters`, strips `_cl-*` from names and tree nodes, updates legend and redraws. **Group colors** on sequence names are preserved (group mapping is rekeyed to the stripped names).
 
 ### 4.2 Hierarchical (tree-cut clustering)
 - **Function:** Cut the tree with **three depth lines** (root-to-node distance). Each region between/above lines defines clusters.
 - **Parameters:**
-  - **Level 1, 2, 3 Depth:** Sliders (0 to max root-to-leaf distance). Order is enforced: Level 1 ≤ Level 2 ≤ Level 3.
+  - **Level 1, 2, 3 Depth:** Sliders (0 to max root-to-leaf distance; step = max/50). Order is enforced: Level 1 ≤ Level 2 ≤ Level 3.
   - **Min leaves per cluster:** As in tree-clade; clusters below this size become noise.
 - **Algorithm:** Leaves with depth &lt; Level 1 = cluster 1. BFS from root: when a node’s depth crosses Level 1 (or 2 or 3), all leaves in its subtree with depth ≥ that level are assigned the next cluster ID. Then min-leaves → noise, renumber clusters.
-- **Auto:** **Full grid search** over all triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 (sampled from slider range). For each triple, computes the cluster map and the Calinski–Harabasz index; chooses the triple that maximizes it and sets the three sliders.
+- **Auto:** **Full grid search** over all triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 on the discrete depth slider ticks. For each triple, computes the cluster map and the selected index; chooses the triple that maximizes it and sets the three sliders.
 - **Accept / Cancel:** Same idea as tree-clade: Accept writes cluster tags and updates legend/tree; Cancel clears clustering and strips `_cl-*` while keeping group colors.
 
 ### 4.3 UMAP
 - **Function:** Reduce pairwise leaf distances to 2D with **UMAP**, then cluster in 2D with DBSCAN (same as MDS after projection).
 - **Algorithm:** UMAP (via `umap-js`) is run on the distance matrix (or a derived affinity matrix). Resulting 2D coordinates are then passed to the same DBSCAN + renumbering + Calinski–Harabasz pipeline as MDS.
-- **Parameters:** **nNeighbors**, **Spread**, **Min Distance** (UMAP), plus **Radius (eps)** and **Min Neighbors** (DBSCAN). Eps min = step to avoid CH infinity; **Auto** on eps optimizes CH over the eps range.
+- **Parameters:** **nNeighbors**, **Spread**, **Min Distance** (UMAP), plus **Radius (eps)** and **Min Neighbors** (DBSCAN). Eps max = half the larger projection axis range; step = max/50; min = step to avoid CH infinity; **Auto** on eps evaluates every slider tick and maximizes the selected index.
 
 ### 4.4 MDS (Classical Multidimensional Scaling)
 - **Function:** Reduce **pairwise leaf distances** (from the tree) to 2D, then cluster points in 2D with **DBSCAN**.
 - **Projection:** Pairwise distances are taken from the tree (path length between leaves). **Classical MDS:** D² is double-centered to form **B** = −0.5 · H · D² · H, where **H** = I − (1/n)·1·1ᵀ (identity minus n⁻¹ times the matrix of ones). Top two eigenvalues and eigenvectors of B are computed; coordinates are the eigenvectors scaled by √λᵢ.
 - **Clustering:** DBSCAN on the 2D points (see §4.5). The subtype point is excluded from DBSCAN expansion and effectively not part of the density-based clustering (it is treated as an always-isolated reference). Clusters are renumbered by distance from the subtype reference (and, if a founder exists, may be used for ordering). Calinski–Harabasz is computed from the **tree** using the same cluster assignment (so all methods are comparable).
-- **Parameters:** **Radius (eps)** and **Min Neighbors** for DBSCAN. Eps slider range is step to max (no 0) to avoid degenerate CH. **Auto** on eps: varies eps from step to max, maximizes CH, updates slider and plot.
+- **Parameters:** **Radius (eps)** and **Min Neighbors** for DBSCAN. Eps max = half the larger MDS axis range; step = max/50; min = step (avoids degenerate CH). **Auto** on eps: evaluates every slider tick, maximizes the selected index, updates slider and plot.
 - **Apply:** Applies the clustering to the tree (writes cluster tags to names and tree, updates legend). **Close:** Dismisses the overlay without applying.
 
 ### 4.5 DBSCAN (used in MDS/UMAP)
