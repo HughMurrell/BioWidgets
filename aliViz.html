@@ -713,6 +713,10 @@
             <label style="text-transform: none; font-size: 13px; color: #374151;">Field Number (1-indexed, after splitting by delimiter)</label>
             <input type="number" id="inp-group-field" value="3" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Daily substitution rate (dsr) for group DPI estimates</label>
+            <input type="number" id="inp-group-dsr" value="0.00005" min="0" step="0.00001" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
             <button id="btn-run-group" class="active">Group</button>
@@ -1105,6 +1109,8 @@ const state = {
     collapseFieldNum: null, // 1-based field number; null = no collapse
     persistentCollapseFieldNum: null, // Last chosen collapse field number (survives load/clear)
     groupNames: null, // Map from group ID to group value (for legend)
+    groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from avg pairwise distance
+    groupDpiDailySubstitutionRate: null, // Persistent dsr for group DPI; null until init from default/localStorage
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     originalSubtype: null, // Store original subtype sequence for reverting
     currentFileName: null, // Store the current alignment file name
@@ -1298,6 +1304,7 @@ async function init() {
     
     // Disable buttons that require a file to be loaded
     disableButtonsOnStartup();
+    initGroupDpiDailySubstitutionRate();
 
     if (dom.chkHasReference) {
         state.alignmentHasReference = !!dom.chkHasReference.checked;
@@ -2177,6 +2184,7 @@ function clearAlignment() {
     state.groupDelimiter = null;
     state.groupFieldNum = null;
     state.groupNames = null;
+    state.groupDpiEstimates = null;
     state.sequenceCollapseCounts = null;
     state.collapseDelimiter = null;
     state.collapseFieldNum = null;
@@ -2444,6 +2452,7 @@ function applySubtypeToggleReset(hasSubtype) {
     // Toggling subtype semantics invalidates grouping, tree inference, and clustering outputs.
     state.sequenceGroups = null;
     state.groupNames = null;
+    state.groupDpiEstimates = null;
     state.groupDelimiter = null;
     state.groupFieldNum = null;
     state.leafClusters = null;
@@ -3013,17 +3022,135 @@ function runCollapseTask() {
 }
 
 // --- Group Sequences by Name Field ---
+
+/** Default daily substitution rate for group DPI estimates. */
+const DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE = 0.00005;
+const GROUP_DPI_DSR_STORAGE_KEY = 'aliViz.groupDpiDailySubstitutionRate';
+
+/** Load persisted dsr (or default) into state and the group dialog input. */
+function initGroupDpiDailySubstitutionRate() {
+    let rate = DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE;
+    try {
+        const raw = localStorage.getItem(GROUP_DPI_DSR_STORAGE_KEY);
+        if (raw != null && raw !== '') {
+            const parsed = parseFloat(raw);
+            if (Number.isFinite(parsed) && parsed > 0) rate = parsed;
+        }
+    } catch (e) { /* ignore storage errors */ }
+    state.groupDpiDailySubstitutionRate = rate;
+    const inp = document.getElementById('inp-group-dsr');
+    if (inp) inp.value = String(rate);
+}
+
+function getGroupDpiDailySubstitutionRate() {
+    const r = state.groupDpiDailySubstitutionRate;
+    if (r != null && Number.isFinite(r) && r > 0) return r;
+    return DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE;
+}
+
+/** Persist and apply a positive dsr; returns the stored rate or null if invalid. */
+function setGroupDpiDailySubstitutionRate(rate) {
+    const parsed = typeof rate === 'number' ? rate : parseFloat(rate);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    state.groupDpiDailySubstitutionRate = parsed;
+    try {
+        localStorage.setItem(GROUP_DPI_DSR_STORAGE_KEY, String(parsed));
+    } catch (e) { /* ignore storage errors */ }
+    const inp = document.getElementById('inp-group-dsr');
+    if (inp) inp.value = String(parsed);
+    return parsed;
+}
+
+/** Pairwise p-distance: differing non-gap sites / compared non-gap sites. */
+function pairwisePDistance(seqA, seqB) {
+    const a = seqA || [];
+    const b = seqB || [];
+    const len = Math.max(a.length, b.length);
+    let diffs = 0;
+    let compared = 0;
+    for (let i = 0; i < len; i++) {
+        const ca = i < a.length ? a[i] : '-';
+        const cb = i < b.length ? b[i] : '-';
+        if (ca === '-' || cb === '-' || ca === '.' || cb === '.') continue;
+        compared++;
+        if (ca !== cb) diffs++;
+    }
+    return compared > 0 ? diffs / compared : 0;
+}
+
+/** Average pairwise p-distance over all unique pairs in a list of sequence char arrays. */
+function averagePairwisePDistance(seqArrays) {
+    const n = seqArrays ? seqArrays.length : 0;
+    if (n < 2) return null;
+    let sum = 0;
+    let pairs = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            sum += pairwisePDistance(seqArrays[i], seqArrays[j]);
+            pairs++;
+        }
+    }
+    return pairs > 0 ? sum / pairs : null;
+}
+
+/**
+ * Estimate days post infection from average pairwise distance:
+ * dpi = api / (2 * dsr). Returns nearest whole day, or null if undefined.
+ */
+function estimateDpiDaysFromApi(api, dsr = getGroupDpiDailySubstitutionRate()) {
+    if (api == null || !Number.isFinite(api) || !(dsr > 0)) return null;
+    const dpi = api / (2 * dsr);
+    if (!Number.isFinite(dpi) || dpi < 0) return null;
+    return Math.round(dpi);
+}
+
+/** Build Map(groupId → estimated DPI days) for current grouping. */
+function computeGroupDpiEstimates() {
+    const estimates = new Map();
+    if (!state.sequenceGroups || !state.groupNames || !state.rawSequences) return estimates;
+    const dsr = getGroupDpiDailySubstitutionRate();
+    const byGroup = new Map();
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) continue;
+        const seq = state.rawSequences[i];
+        if (!seq || !seq.name) continue;
+        const gid = state.sequenceGroups.get(seq.name);
+        if (gid === undefined) continue;
+        if (!byGroup.has(gid)) byGroup.set(gid, []);
+        byGroup.get(gid).push(seq.seq || []);
+    }
+    byGroup.forEach((seqs, gid) => {
+        const api = averagePairwisePDistance(seqs);
+        const dpi = estimateDpiDaysFromApi(api, dsr);
+        if (dpi != null) estimates.set(gid, dpi);
+    });
+    return estimates;
+}
+
+/** Legend label for a group, e.g. "2000 (56)" when a DPI estimate exists. */
+function formatGroupLegendLabel(groupId, groupValue) {
+    const base = groupValue || `Group ${groupId}`;
+    const dpi = state.groupDpiEstimates ? state.groupDpiEstimates.get(groupId) : undefined;
+    if (dpi != null && Number.isFinite(dpi)) return `${base} (${dpi})`;
+    return base;
+}
+
 function showGroupModal() {
     if (state.rawSequences.length === 0) {
         alert("No sequences to group.");
         return;
     }
+    const inp = document.getElementById('inp-group-dsr');
+    if (inp) inp.value = String(getGroupDpiDailySubstitutionRate());
     document.getElementById('group-overlay').style.display = 'flex';
 }
 
 function runGroupTask() {
     const delimiter = document.getElementById('inp-group-delimiter').value || '_';
     const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 3;
+    const dsrRaw = document.getElementById('inp-group-dsr')
+        ? document.getElementById('inp-group-dsr').value
+        : getGroupDpiDailySubstitutionRate();
     
     if (delimiter.length === 0) {
         alert("Please specify a delimiter character.");
@@ -3032,6 +3159,12 @@ function runGroupTask() {
     
     if (fieldNumOneBased < 1) {
         alert("Field number must be at least 1.");
+        return;
+    }
+
+    const dsr = setGroupDpiDailySubstitutionRate(dsrRaw);
+    if (dsr == null) {
+        alert("Daily substitution rate must be a positive number.");
         return;
     }
     
@@ -3104,6 +3237,7 @@ function runGroupTask() {
     state.groupDelimiter = delimiter;
     state.groupFieldNum = fieldNumOneBased; // Store 1-based field number
     state.groupNames = groupIdToValue; // Store group ID to value mapping for legend
+    state.groupDpiEstimates = computeGroupDpiEstimates();
     
     // Enable Add Founder and Sort buttons after successful grouping
     enableButtonsAfterGrouping();
@@ -3196,6 +3330,7 @@ function applyPrune() {
     });
     state.sequenceGroups = renumberedSequenceGroups;
     state.groupNames = renumberedGroupNames;
+    state.groupDpiEstimates = computeGroupDpiEstimates();
     state.refIndex = 0;
     state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     state.tree = null;
@@ -3672,7 +3807,7 @@ function updateColorLegend() {
             colorBox.style.borderRadius = '3px';
             
             const label = document.createElement('span');
-            label.textContent = groupValue || `Group ${groupId}`;
+            label.textContent = formatGroupLegendLabel(groupId, groupValue);
             label.style.color = '#374151';
             
             item.appendChild(colorBox);
@@ -4336,7 +4471,7 @@ function appendTreeSvgColorLegend(parts, legendX, legendY, legendW, legendH) {
         });
         groupEntries.forEach(([groupId, groupValue]) => {
             const color = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
-            const lab = escapeXml(groupValue || `Group ${groupId}`);
+            const lab = escapeXml(formatGroupLegendLabel(groupId, groupValue));
             leg.push(`<rect x="${x0}" y="${y - sw / 2 + 1}" width="${sw}" height="${sw}" fill="${color}" stroke="#d1d5db" stroke-width="1" rx="2"/>\n`);
             leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">${lab}</text>\n`);
             y += rowH;
@@ -5122,6 +5257,7 @@ function finalizeLoad(seqs) {
     // Clear previous grouping and clustering so color legend does not show stale data
     state.sequenceGroups = null;
     state.groupNames = null;
+    state.groupDpiEstimates = null;
     state.groupDelimiter = null;
     state.groupFieldNum = null;
     state.sequenceCollapseCounts = null;

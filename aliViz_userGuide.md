@@ -71,7 +71,8 @@ Functional leaves show only the cluster-coloured diamond with no oval. **Red is 
 ### Group
 - **Function:** Assign sequences to groups using a delimiter and a field in the sequence name.
 - **Algorithm:** You specify a **delimiter** (e.g. `_`) and a **field number** (1-based). Each sequence name is split by the delimiter; the value at that field becomes the group label. REF, SubType (if present), and PDB chain sequences are excluded from grouping. Groups are assigned unique IDs and used for coloring and legend.
-- **Result:** `state.sequenceGroups` (name → group ID) and `state.groupNames` (group ID → label) are set; sequence names are colored by group in the name panel.
+- **DPI estimate (per group):** After grouping, aliViz estimates **days post infection** for each group as **dpi = api / (2 × dsr)**, where **api** is the average pairwise **p-distance** (fraction of differing non-gap sites) among all sequence pairs in that group, and **dsr** is the **daily substitution rate** from the Group dialog (default **0.00005**). The rate is remembered across sessions (browser `localStorage`) and survives load/clear. The result is rounded to the nearest day and shown in the color legend beside the group label, e.g. **`2000 (56)`**. Groups with fewer than two sequences have no estimate. Estimates are recomputed after **Prune**.
+- **Result:** `state.sequenceGroups` (name → group ID), `state.groupNames` (group ID → label), and `state.groupDpiEstimates` (group ID → dpi days) are set; sequence names are colored by group in the name panel.
 
 ### Sort
 - **Function:** Reorder sequences by current grouping (or by name if no grouping), keeping REF first and SubType second (when a subtype exists).
@@ -310,7 +311,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 
 ## 8. Color legend
 
-- **Groups:** Lists group labels and colors for sequence **names** (from Group).
+- **Groups:** Lists group labels and colors for sequence **names** (from Group). When DPI estimates are available, labels include the rounded estimate in parentheses, e.g. **`2000 (56)`**.
 - **Clusters:** Lists cluster IDs (numeric labels) and colors for tree tips (from any clustering method). Noise appears when applicable. **Red is not used** in the cluster palette (reserved for the non-functional leaf oval on trees).
 - **Note:** The floating legend does **not** include an alignment-length or phylogenetic scale bar; phylogenetic scale bars appear only on **exported SVG** tree figures (see §3).
 - Cluster colors are removed when clustering is cleared (e.g. **None** or **Cancel**). Group colors are preserved after Cancel by rekeying group membership to the stripped (no `_cl-*`) names.
@@ -324,7 +325,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Load sanitize  | A–Z, `-`, `*` kept; other chars → `X`; alert user. |
 | Functionality  | AA: ungapped M start, `*` end, no internal `*`; NT: translate frame 1 then same test; tag `functional`; report `s,f,nf,dpi` above filename (all seqs; DPI from filename `dpi±N` or 14) and `s,f,nf` in SVG title (tree leaves only); red oval around non-functional tree tips. |
 | Has subtype    | If off, no subtype index; toggling clears group/tree/cluster state. |
-| Group          | Split name by delimiter; group = field value; unique IDs. |
+| Group          | Split name by delimiter; group = field value; unique IDs; dpi = api/(2×dsr) per group (dsr from Group dialog, default 5e-5, persisted); legend `label (dpi)`. |
 | Sort           | REF, SubType (if any) fixed; others by group ID then name. |
 | Prune          | Remove sequences in selected groups; renumber group IDs. |
 | Founder consensus | Majority per column over selected group; `consensus_of_*` name. |
