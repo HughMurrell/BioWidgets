@@ -632,7 +632,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Start at k=1. <strong>+</strong> splits the leaf with the largest mean DPI; <strong>−</strong> undoes the last split. Leaves smaller than min size are <strong>noise</strong>. <strong>Auto</strong> splits until every non-noise cluster has DPI ≤ target. Bubble tree: radius ∝ log(n).</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Start at k=1. DPI uses <strong>max</strong> pairwise p-distance (JC69). <strong>+</strong> splits the leaf with the largest DPI; <strong>−</strong> undoes the last split. Leaves smaller than min size are <strong>noise</strong>. <strong>Auto</strong> splits until every non-noise cluster has DPI ≤ target. Bubble tree: radius ∝ log(n).</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -1157,10 +1157,10 @@ const state = {
     collapseFieldNum: null, // 1-based field number; null = no collapse
     persistentCollapseFieldNum: null, // Last chosen collapse field number (survives load/clear)
     groupNames: null, // Map from group ID to group value (for legend)
-    groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from avg pairwise distance
+    groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from max pairwise p-distance
     groupMemberCounts: null, // Map from group ID to sequence count (set with DPI estimates; stable across cluster renames)
     groupDpiDailySubstitutionRate: null, // Persistent dsr for group DPI; null until init from default/localStorage
-    clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), set on Accept/Apply
+    clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), from max pairwise p-distance
     clusterMemberCounts: null, // Map from cluster ID to sequence count (set with cluster DPI estimates)
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     originalSubtype: null, // Store original subtype sequence for reverting
@@ -3163,6 +3163,22 @@ function averagePairwisePDistance(seqArrays) {
     return pairs > 0 ? sum / pairs : null;
 }
 
+/** Maximum pairwise p-distance over all unique pairs in a list of sequence char arrays. */
+function maxPairwisePDistance(seqArrays) {
+    const n = seqArrays ? seqArrays.length : 0;
+    if (n < 2) return null;
+    let maxP = 0;
+    let pairs = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const p = pairwisePDistance(seqArrays[i], seqArrays[j]);
+            if (p > maxP) maxP = p;
+            pairs++;
+        }
+    }
+    return pairs > 0 ? maxP : null;
+}
+
 /**
  * Jukes–Cantor (JC69) correction of observed p-distance for multiple hits
  * under a Poisson substitution model: d = −(3/4) ln(1 − 4p/3).
@@ -3177,12 +3193,13 @@ function jukesCantorCorrectedDistance(p) {
 }
 
 /**
- * Estimate days post infection from average pairwise p-distance (api).
- * Under a Poisson substitution model, observed api underestimates true divergence
+ * Estimate days post infection from an observed pairwise p-distance (api).
+ * Under a Poisson substitution model, observed p underestimates true divergence
  * when multiple hits occur. Apply Jukes–Cantor correction, then convert with the clock:
  *   d = −(3/4) ln(1 − 4·api/3)
  *   dpi = d / (2 × dsr)
  * (The linear rule dpi = api/(2×dsr) is the infinite-sites limit of the same model.)
+ * Callers typically pass the **maximum** pairwise p-distance within a group/cluster.
  * Returns nearest whole day, or null if undefined.
  */
 function estimateDpiDaysFromApi(api, dsr = getGroupDpiDailySubstitutionRate()) {
@@ -3215,7 +3232,7 @@ function computeGroupDpiEstimates() {
     }
     byGroup.forEach((seqs, gid) => {
         counts.set(gid, seqs.length);
-        const api = averagePairwisePDistance(seqs);
+        const api = maxPairwisePDistance(seqs);
         const dpi = estimateDpiDaysFromApi(api, dsr);
         if (dpi != null) estimates.set(gid, dpi);
     });
@@ -3365,7 +3382,7 @@ function computeClusterDpiEstimatesFromAssignment(nameToCluster) {
     });
     byCluster.forEach((seqs, cid) => {
         counts.set(cid, seqs.length);
-        const api = averagePairwisePDistance(seqs);
+        const api = maxPairwisePDistance(seqs);
         const dpi = estimateDpiDaysFromApi(api, dsr);
         if (dpi != null) estimates.set(cid, dpi);
     });
@@ -3426,7 +3443,7 @@ function showClusterDpiEstimatesWindow(leaves, clusters) {
     }
     const sortedIds = Array.from(ids).sort((a, b) => a - b);
     if (meta) {
-        meta.textContent = `JC69: d = −(3/4) ln(1 − 4·api/3); dpi = d / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day.`;
+        meta.textContent = `api = max pairwise p-distance; JC69: d = −(3/4) ln(1 − 4·api/3); dpi = d / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day.`;
     }
     if (sortedIds.length === 0) {
         content.innerHTML = '<p style="margin:0;color:#6b7280;">No non-noise clusters available for DPI estimation.</p>';
@@ -7247,37 +7264,98 @@ function performUMAP(distanceMatrix, nNeighbors = 15, spread = 1.0, minDist = 0.
 
 // --- k-DPIs: divisive clustering by mean DPI ---
 
-/** DPI for a list of {seq} entries; null if fewer than 2 sequences. */
+/** Session cache: full pairwise p-distance matrix for sample sequences (built once per modal). */
+let kDpisDistCache = null;
+
+function clearKDpisDistCache() {
+    kDpisDistCache = null;
+}
+
+/** Build / replace the k-DPIs pairwise p-distance cache for the given entries. */
+function buildKDpisDistCache(entries) {
+    const n = entries.length;
+    const indexByName = new Map();
+    const P = new Array(n);
+    for (let i = 0; i < n; i++) {
+        indexByName.set(entries[i].name, i);
+        P[i] = new Float64Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const p = pairwisePDistance(entries[i].seq, entries[j].seq);
+            P[i][j] = p;
+            P[j][i] = p;
+        }
+    }
+    kDpisDistCache = { indexByName, P, n };
+    return kDpisDistCache;
+}
+
+/** Maximum pairwise p-distance among global cache indices (null if < 2). */
+function maxApiFromCacheIndices(indices) {
+    if (!kDpisDistCache || !indices || indices.length < 2) return null;
+    const P = kDpisDistCache.P;
+    const m = indices.length;
+    let maxP = 0;
+    let pairs = 0;
+    for (let a = 0; a < m; a++) {
+        const ia = indices[a];
+        for (let b = a + 1; b < m; b++) {
+            const p = P[ia][indices[b]];
+            if (p > maxP) maxP = p;
+            pairs++;
+        }
+    }
+    return pairs > 0 ? maxP : null;
+}
+
+/** Map entry list → global cache indices (null if cache missing / incomplete). */
+function kDpisEntriesToCacheIndices(entries) {
+    if (!kDpisDistCache || !entries) return null;
+    const out = new Array(entries.length);
+    for (let i = 0; i < entries.length; i++) {
+        const ix = kDpisDistCache.indexByName.get(entries[i].name);
+        if (ix === undefined) return null;
+        out[i] = ix;
+    }
+    return out;
+}
+
+/**
+ * DPI for a list of {name,seq} entries used by k-DPIs splitting.
+ * Uses **maximum** pairwise p-distance (then JC69 + dsr), not the mean.
+ * Returns null if fewer than 2 sequences.
+ */
 function dpiForKDpisEntries(entries) {
     if (!entries || entries.length < 2) return null;
-    const api = averagePairwisePDistance(entries.map(e => e.seq));
+    const indices = kDpisEntriesToCacheIndices(entries);
+    const api = indices
+        ? maxApiFromCacheIndices(indices)
+        : maxPairwisePDistance(entries.map(e => e.seq));
     return estimateDpiDaysFromApi(api);
 }
 
 /**
- * Score a bipartition: lower is better.
- * Returns { tier, score } where:
- *   tier 0 = both sides ≥ minSize
- *   tier 1 = exactly one side ≥ minSize
- *   tier 2 = both sides < minSize (only when allowNoiseOnly)
- * Invalid empty side → null.
+ * Score a bipartition over local labels using the global distance cache.
+ * indices[i] = global cache index for local position i; labels[i] ∈ {0,1}.
+ * Child DPIs use max pairwise p-distance. Returns { tier, score } or null.
  */
-function scoreKDpisBipartition(entries, labels, minSize, allowNoiseOnly) {
+function scoreKDpisBipartitionCached(indices, labels, minSize, allowNoiseOnly) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
     const g0 = [];
     const g1 = [];
-    for (let i = 0; i < entries.length; i++) {
-        (labels[i] === 0 ? g0 : g1).push(entries[i]);
+    for (let i = 0; i < indices.length; i++) {
+        (labels[i] === 0 ? g0 : g1).push(indices[i]);
     }
     if (g0.length === 0 || g1.length === 0) return null;
     const ok0 = g0.length >= minSize;
     const ok1 = g1.length >= minSize;
     if (!ok0 && !ok1 && !allowNoiseOnly) return null;
-    const d0 = dpiForKDpisEntries(g0);
-    const d1 = dpiForKDpisEntries(g1);
+    const d0 = estimateDpiDaysFromApi(maxApiFromCacheIndices(g0));
+    const d1 = estimateDpiDaysFromApi(maxApiFromCacheIndices(g1));
     const v0 = d0 == null ? 0 : d0;
     const v1 = d1 == null ? 0 : d1;
-    const score = (g0.length * v0 + g1.length * v1) / entries.length;
+    const score = (g0.length * v0 + g1.length * v1) / indices.length;
     const tier = (ok0 && ok1) ? 0 : ((ok0 || ok1) ? 1 : 2);
     return { tier, score };
 }
@@ -7292,33 +7370,42 @@ function isBetterKDpisBipScore(cand, best) {
 
 /**
  * Find a bipartition of entries that minimises size-weighted mean DPI.
+ * Uses the session distance cache (no per-score sequence rescans).
  * Prefers both sides ≥ minSize when possible.
- * @param {{allowNoiseOnly?: boolean}} opts if allowNoiseOnly, bipartitions with both sides < minSize are allowed (become noise).
+ * @param {{allowNoiseOnly?: boolean}} opts
  */
 function bestKDpisBipartition(entries, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
     const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
     const n = entries.length;
     if (n < 2) return null;
-    const P = Array.from({ length: n }, () => new Array(n).fill(0));
-    for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-            const p = pairwisePDistance(entries[i].seq, entries[j].seq);
-            P[i][j] = P[j][i] = p;
-        }
+
+    let indices = kDpisEntriesToCacheIndices(entries);
+    if (!indices) {
+        buildKDpisDistCache(entries);
+        indices = kDpisEntriesToCacheIndices(entries);
     }
+    if (!indices) return null;
+    const P = kDpisDistCache.P;
+
+    function dist(i, j) {
+        return P[indices[i]][indices[j]];
+    }
+
     const seeds = [];
     if (n <= 30) {
         for (let i = 0; i < n; i++) seeds.push(i);
     } else {
+        // Cap seed count for large n (farthest-point sample)
+        const seedCap = n >= 200 ? 12 : 20;
         seeds.push(0);
-        while (seeds.length < 20) {
+        while (seeds.length < seedCap) {
             let best = -1;
             let bestMin = -1;
             for (let i = 0; i < n; i++) {
                 if (seeds.indexOf(i) >= 0) continue;
                 let minD = Infinity;
-                for (let s = 0; s < seeds.length; s++) minD = Math.min(minD, P[i][seeds[s]]);
+                for (let s = 0; s < seeds.length; s++) minD = Math.min(minD, dist(i, seeds[s]));
                 if (minD > bestMin) {
                     bestMin = minD;
                     best = i;
@@ -7328,6 +7415,7 @@ function bestKDpisBipartition(entries, minSize, opts) {
             seeds.push(best);
         }
     }
+
     let bestMeta = null;
     let bestLabels = null;
     for (let ai = 0; ai < seeds.length; ai++) {
@@ -7335,11 +7423,11 @@ function bestKDpisBipartition(entries, minSize, opts) {
             const a = seeds[ai];
             const b = seeds[bi];
             const labels = new Array(n);
-            for (let i = 0; i < n; i++) labels[i] = P[i][a] <= P[i][b] ? 0 : 1;
+            for (let i = 0; i < n; i++) labels[i] = dist(i, a) <= dist(i, b) ? 0 : 1;
             let n0 = 0;
             for (let i = 0; i < n; i++) if (labels[i] === 0) n0++;
             if (n0 === 0 || n0 === n) continue;
-            const meta = scoreKDpisBipartition(entries, labels, minSize, allowNoiseOnly);
+            const meta = scoreKDpisBipartitionCached(indices, labels, minSize, allowNoiseOnly);
             if (isBetterKDpisBipScore(meta, bestMeta)) {
                 bestMeta = meta;
                 bestLabels = labels.slice();
@@ -7347,16 +7435,21 @@ function bestKDpisBipartition(entries, minSize, opts) {
         }
     }
     if (!bestLabels) return null;
+
+    // Local 1-point moves: cap passes for large clusters (full multi-restart is O(passes·n³))
+    const maxPasses = n >= 200 ? 1 : (n >= 80 ? 2 : 50);
+    let passes = 0;
     let improved = true;
-    while (improved) {
+    while (improved && passes < maxPasses) {
         improved = false;
+        passes++;
         for (let i = 0; i < n; i++) {
             const trial = bestLabels.slice();
             trial[i] = 1 - trial[i];
             let n0 = 0;
             for (let j = 0; j < n; j++) if (trial[j] === 0) n0++;
             if (n0 === 0 || n0 === n) continue;
-            const meta = scoreKDpisBipartition(entries, trial, minSize, allowNoiseOnly);
+            const meta = scoreKDpisBipartitionCached(indices, trial, minSize, allowNoiseOnly);
             if (isBetterKDpisBipScore(meta, bestMeta)) {
                 bestMeta = meta;
                 bestLabels = trial;
@@ -7364,6 +7457,7 @@ function bestKDpisBipartition(entries, minSize, opts) {
             }
         }
     }
+
     const left = [];
     const right = [];
     for (let i = 0; i < n; i++) (bestLabels[i] === 0 ? left : right).push(entries[i]);
@@ -7399,7 +7493,7 @@ function collectKDpisLeaves(root, out) {
 }
 
 /**
- * Choose the current leaf to split: largest mean DPI, then largest size.
+ * Choose the current leaf to split: largest DPI (from max pairwise), then largest size.
  * @param {number} minSize minimum non-noise cluster size
  * @param {{requireDpiAbove?: number|null, allowNoiseOnly?: boolean}} opts
  *   requireDpiAbove: only leaves with dpi > that value (Auto)
@@ -7707,7 +7801,8 @@ function showKDpisModal() {
     const overlay = document.getElementById('kdpis-overlay');
     if (!overlay || !btnMinus || !btnPlus) return;
 
-    const root = makeKDpisNode(entries);
+    clearKDpisDistCache();
+    let root = null; // set after distance cache is built
     const splitHistory = []; // stack of nodes that were split (for undo / join)
     const K_MAX = 10;
     let currentNameToCluster = new Map();
@@ -7738,7 +7833,7 @@ function showKDpisModal() {
         [btnMinus, btnPlus, btnAuto, btnCancel, btnAccept, minSizeEl, targetDpiEl].forEach(el => {
             if (el) el.disabled = !!on;
         });
-        if (!on) {
+        if (!on && root) {
             // Re-enable +/- based on current state after busy ends
             const minSize = readMinSize();
             const { k } = kDpisNameToClusterFromRoot(root, minSize);
@@ -7751,6 +7846,7 @@ function showKDpisModal() {
     if (targetDpiEl) targetDpiEl.value = String(2 * getCurrentDpiDaysForDisplay());
 
     function refresh(opts) {
+        if (!root) return;
         const skipPreview = opts && opts.skipPreview;
         const minSize = readMinSize();
         const { nameToCluster, k, noiseCount } = kDpisNameToClusterFromRoot(root, minSize);
@@ -7837,6 +7933,7 @@ function showKDpisModal() {
 
     document.getElementById('btn-kdpis-cancel').onclick = () => {
         if (busy) return;
+        clearKDpisDistCache();
         overlay.style.display = 'none';
         const clusterPattern = getClusterSuffixPattern();
         if (state.rawSequences) {
@@ -7869,12 +7966,25 @@ function showKDpisModal() {
     document.getElementById('btn-kdpis-accept').onclick = () => {
         if (busy) return;
         acceptKDpisClustering(currentNameToCluster);
+        clearKDpisDistCache();
         overlay.style.display = 'none';
     };
 
-    if (busyEl) busyEl.style.display = 'none';
     overlay.style.display = 'flex';
-    refresh();
+    // Precompute all pairwise p-distances once (dominates cost for large n), then show k=1
+    (async () => {
+        setKDpisBusy(true, entries.length >= 100
+            ? `Precomputing distances (${entries.length} sequences)...`
+            : 'Working...');
+        await yieldToUi();
+        try {
+            buildKDpisDistCache(entries);
+            root = makeKDpisNode(entries);
+            refresh();
+        } finally {
+            setKDpisBusy(false);
+        }
+    })();
 }
 
 function showHierarchicalModal() {

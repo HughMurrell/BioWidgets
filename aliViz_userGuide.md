@@ -71,7 +71,7 @@ Functional leaves show only the cluster-coloured diamond with no oval. **Red is 
 ### Group
 - **Function:** Assign sequences to groups using a delimiter and a field in the sequence name.
 - **Algorithm:** You specify a **delimiter** (e.g. `_`) and a **field number** (1-based). Each sequence name is split by the delimiter; the value at that field becomes the group label. REF, SubType (if present), and PDB chain sequences are excluded from grouping. Groups are assigned unique IDs and used for coloring and legend.
-- **DPI estimate (per group):** After grouping, aliViz estimates **days post infection** for each group from the average pairwise **p-distance** (**api**: fraction of differing non-gap sites among all pairs in the group) and the **daily substitution rate** **dsr** from the Group dialog (default **0.00005**; remembered in `localStorage`). Under a Poisson substitution process, the linear rule `dpi = api / (2 × dsr)` is correct only in the **infinite-sites** limit (no multiple hits). When sites can change more than once, observed `api` saturates and underestimates divergence. aliViz therefore applies a **Jukes–Cantor (JC69)** multiple-hit correction, then converts corrected divergence to time with the same clock:
+- **DPI estimate (per group):** After grouping, aliViz estimates **days post infection** for each group from the **maximum** pairwise **p-distance** (**api**: largest fraction of differing non-gap sites among all pairs in the group) and the **daily substitution rate** **dsr** from the Group dialog (default **0.00005**; remembered in `localStorage`). Under a Poisson substitution process, the linear rule `dpi = api / (2 × dsr)` is correct only in the **infinite-sites** limit (no multiple hits). When sites can change more than once, observed `api` saturates and underestimates divergence. aliViz therefore applies a **Jukes–Cantor (JC69)** multiple-hit correction, then converts corrected divergence to time with the same clock:
   - **d** = −(3/4) ln(1 − 4·api/3) (undefined when api ≥ 0.75)
   - **dpi** = d / (2 × dsr), rounded to the nearest day
   - Shown in the legend as **`label (n, dpi)`**, e.g. **`2000 (12, 56)`** (n = sequence count). Groups with fewer than two sequences have no DPI estimate. Estimates are recomputed after **Prune**.
@@ -200,16 +200,18 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
 - **Accept / Cancel:** Same idea as tree-clade: Accept writes cluster tags, computes cluster DPI estimates, and updates legend/tree; Cancel clears clustering and strips `_cl-*` while keeping group colors.
 
 ### 4.3 k-DPIs (divisive DPI clustering)
-- **Function:** Partition sample sequences by repeatedly splitting the most diverse cluster according to **mean DPI** (same JC69 + **dsr** estimator as Group).
+- **Function:** Partition sample sequences by repeatedly splitting the most diverse cluster according to **DPI from maximum pairwise p-distance** (then the same JC69 + **dsr** conversion as Group).
 - **Parameters:**
-  - **k** starts at **1**. Use **+** / **−** to increase or decrease k (**max 10** for manual +). Each **+** splits the current leaf with the largest mean DPI; each **−** undoes the last split (joins that pair back). Split history is remembered so decreases restore the prior partition.
+  - **k** starts at **1**. Use **+** / **−** to increase or decrease k (**max 10** for manual +). Each **+** splits the current leaf with the largest DPI; each **−** undoes the last split (joins that pair back). Split history is remembered so decreases restore the prior partition.
   - **Min cluster size** (default **2**): any leaf with fewer than this many sequences is **noise** (−1 / `_cl-na`) and is excluded from the reported k.
   - **Target DPI** (default **2 ×** the DPI parsed when the alignment was loaded) and **Auto**: keep splitting the largest-DPI leaf that is still above target until every non-noise cluster has DPI ≤ target. Undersized children become **noise**. Auto may split pairs into noise-only leaves when needed. Auto is not limited to k = 10.
 - **Algorithm:**
-  1. Start with one cluster (all sample sequences; REF / SubType / PDB excluded).
-  2. On **+**: select a leaf eligible to split (size ≥ min size + 1) with the **largest mean DPI**, and replace it with the bipartition that **minimises size-weighted mean DPI** of the two children, preferring both children ≥ min size when possible (seed-pair search on pairwise p-distances, then local moves). On **Auto**: same, but any leaf with n ≥ 2 and DPI > target may be split, and children smaller than min size become noise (including both sides).
-  3. On **−**: reverse the most recent split.
-  4. Non-noise leaves are numbered 1…k in left-to-right order; undersized leaves are noise.
+  1. On open: precompute a **full pairwise p-distance matrix** once for all sample sequences (cached for the session).
+  2. Start with one cluster (all sample sequences; REF / SubType / PDB excluded). Leaf DPI = JC69(**max** pairwise p-distance) / (2 × dsr).
+  3. On **+**: select a leaf eligible to split (size ≥ min size + 1) with the **largest DPI**. On **Auto**: any leaf with n ≥ 2 and DPI > target.
+  4. **Bipartition search** for that leaf: seed pairs (all pairs if n≤30; else farthest-point sample of 12–20 seeds) → Voronoi labels by nearer seed → score = size-weighted mean child DPI (each child DPI from **max** pairwise; prefer both sides ≥ min size). Then a short local search of single-sequence moves (1–2 passes when n is large).
+  5. On **−**: reverse the most recent split.
+  6. Non-noise leaves are numbered 1…k in left-to-right order; undersized leaves are noise.
 - **Display:** Bubble **tree** of the split hierarchy: edges show parent→child splits; **leaf** bubbles use cluster colours (noise grey); internal nodes are grey. Radius ∝ **log(n)**; label **`n, dpi`**.
 - **Accept:** Writes `_cl-<id>` (or `_cl-na` for noise), stores cluster DPI / counts for the legend as **`id (n, dpi)`**. **Cancel:** Clears preview clustering without keeping tags.
 
@@ -223,8 +225,8 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
 - **Projection:** Pairwise distances are taken from the tree (path length between leaves). **Classical MDS:** D² is double-centered to form **B** = −0.5 · H · D² · H, where **H** = I − (1/n)·1·1ᵀ (identity minus n⁻¹ times the matrix of ones). Top two eigenvalues and eigenvectors of B are computed; coordinates are the eigenvectors scaled by √λᵢ.
 - **Clustering:** DBSCAN on the 2D points (see §4.5). The subtype point is excluded from DBSCAN expansion and effectively not part of the density-based clustering (it is treated as an always-isolated reference). Clusters are renumbered by distance from the subtype reference (and, if a founder exists, may be used for ordering). Calinski–Harabasz is computed from the **tree** using the same cluster assignment (so all methods are comparable).
 - **Parameters:** **Radius (eps)** and **Min Neighbors** for DBSCAN. Eps max = half the larger MDS axis range; step = max/50; min = step (avoids degenerate CH). **Auto** on eps: evaluates every slider tick, maximizes the selected index, updates slider and plot.
-- **Estimate DPI:** Computes days-post-infection for each current (non-noise) cluster using the same **JC69** correction and **dsr** as Group: **d = −(3/4) ln(1 − 4·api/3)**, **dpi = d / (2 × dsr)**. Shows results as **`clusterId (n, dpi)`** (singletons show `(n, —)`).
-- **Apply:** Applies the clustering to the tree (writes cluster tags to names and tree), computes cluster DPI estimates with the current **dsr** (JC69-corrected), and updates the legend as **`clusterId (n, dpi)`**. **Close:** Dismisses the overlay without applying.
+- **Estimate DPI:** Computes days-post-infection for each current (non-noise) cluster using the **maximum** pairwise p-distance, then the same **JC69** correction and **dsr** as Group: **d = −(3/4) ln(1 − 4·api/3)**, **dpi = d / (2 × dsr)**. Shows results as **`clusterId (n, dpi)`** (singletons show `(n, —)`).
+- **Apply:** Applies the clustering to the tree (writes cluster tags to names and tree), computes cluster DPI estimates with the current **dsr** (max pairwise + JC69), and updates the legend as **`clusterId (n, dpi)`**. **Close:** Dismisses the overlay without applying.
 
 ### 4.6 DBSCAN (used in MDS/UMAP)
 - **Algorithm:** Standard DBSCAN. Points within **eps** (Euclidean in 2D) are neighbors. If a point has ≥ **minPts** neighbors, it and all density-reachable points form a cluster. Otherwise it is noise (-1).
@@ -343,7 +345,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Load sanitize  | A–Z, `-`, `*` kept; other chars → `X`; alert user. |
 | Functionality  | AA: ungapped M start, `*` end, no internal `*`; NT: translate frame 1 then same test; tag `functional`; report `s,f,nf,dpi` above filename (all seqs; DPI from filename `dpi±N` or 14) and `s,f,nf` in SVG title (tree leaves only); red oval around non-functional tree tips. |
 | Has subtype    | If off, no subtype index; toggling clears group/tree/cluster state. |
-| Group          | Split name by delimiter; group = field value; unique IDs; dpi via JC69: d=−(3/4)ln(1−4·api/3), dpi=d/(2×dsr) (dsr from Group dialog, default 5e-5, persisted); legend `label (n, dpi)`. |
+| Group          | Split name by delimiter; group = field value; unique IDs; dpi via max pairwise p-distance + JC69: d=−(3/4)ln(1−4·api/3), dpi=d/(2×dsr) (dsr from Group dialog, default 5e-5, persisted); legend `label (n, dpi)`. |
 | Sort           | REF, SubType (if any) fixed; others by group ID then name. |
 | Prune          | Remove sequences in selected groups; renumber group IDs. |
 | Founder consensus | Majority per column over selected group; `consensus_of_*` name. |
