@@ -677,8 +677,20 @@
             <canvas id="mds-canvas" width="660" height="500" style="width: 100%; max-width: 660px; height: auto; border: 1px solid #e5e7eb; background: white;"></canvas>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button type="button" id="mds-estimate-dpi-btn">Estimate DPI</button>
             <button id="mds-apply-btn" class="active">Apply</button>
             <button onclick="document.getElementById('mds-overlay').style.display='none'">Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="mds-cluster-dpi-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10050; pointer-events: none;">
+    <div class="help-box" style="width: 420px; max-width: 90vw; max-height: 80vh; overflow: auto; pointer-events: auto;">
+        <h2 style="margin-top: 0;">Cluster DPI estimates</h2>
+        <p id="mds-cluster-dpi-meta" style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;"></p>
+        <div id="mds-cluster-dpi-content" style="font-size: 13px; color: #374151;"></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button type="button" id="mds-cluster-dpi-close" class="active">Dismiss</button>
         </div>
     </div>
 </div>
@@ -1110,7 +1122,10 @@ const state = {
     persistentCollapseFieldNum: null, // Last chosen collapse field number (survives load/clear)
     groupNames: null, // Map from group ID to group value (for legend)
     groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from avg pairwise distance
+    groupMemberCounts: null, // Map from group ID to sequence count (set with DPI estimates; stable across cluster renames)
     groupDpiDailySubstitutionRate: null, // Persistent dsr for group DPI; null until init from default/localStorage
+    clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), set on Accept/Apply
+    clusterMemberCounts: null, // Map from cluster ID to sequence count (set with cluster DPI estimates)
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     originalSubtype: null, // Store original subtype sequence for reverting
     currentFileName: null, // Store the current alignment file name
@@ -1305,6 +1320,13 @@ async function init() {
     // Disable buttons that require a file to be loaded
     disableButtonsOnStartup();
     initGroupDpiDailySubstitutionRate();
+    const mdsClusterDpiClose = document.getElementById('mds-cluster-dpi-close');
+    const mdsClusterDpiOverlay = document.getElementById('mds-cluster-dpi-overlay');
+    if (mdsClusterDpiClose && mdsClusterDpiOverlay) {
+        mdsClusterDpiClose.addEventListener('click', () => {
+            mdsClusterDpiOverlay.style.display = 'none';
+        });
+    }
 
     if (dom.chkHasReference) {
         state.alignmentHasReference = !!dom.chkHasReference.checked;
@@ -1797,6 +1819,8 @@ async function init() {
                 }
 
                 state.leafClusters = null;
+                state.clusterDpiEstimates = null;
+                state.clusterMemberCounts = null;
                 state.hierarchicalActive = false;
                 state.hierarchicalDepths = [0, 0, 0];
                 state.lastAcceptedClusterMethod = null;
@@ -2185,10 +2209,13 @@ function clearAlignment() {
     state.groupFieldNum = null;
     state.groupNames = null;
     state.groupDpiEstimates = null;
+    state.groupMemberCounts = null;
     state.sequenceCollapseCounts = null;
     state.collapseDelimiter = null;
     state.collapseFieldNum = null;
     state.leafClusters = null;
+    state.clusterDpiEstimates = null;
+    state.clusterMemberCounts = null;
     state.pdbFileContent = null;
     state.pdbFileName = null;
     state.pdbFormat = 'pdb';
@@ -2207,6 +2234,8 @@ function clearAlignment() {
 function clearTreeOnly() {
     state.tree = null;
     state.leafClusters = null; // Clear clusters when tree is cleared
+    state.clusterDpiEstimates = null;
+    state.clusterMemberCounts = null;
     setTreeWidth(0);
     if (dom.btnHistogram) {
         dom.btnHistogram.disabled = true;
@@ -2453,9 +2482,12 @@ function applySubtypeToggleReset(hasSubtype) {
     state.sequenceGroups = null;
     state.groupNames = null;
     state.groupDpiEstimates = null;
+    state.groupMemberCounts = null;
     state.groupDelimiter = null;
     state.groupFieldNum = null;
     state.leafClusters = null;
+    state.clusterDpiEstimates = null;
+    state.clusterMemberCounts = null;
     state.hierarchicalActive = false;
     state.hierarchicalDepths = [0, 0, 0];
     state.lastAcceptedClusterMethod = null;
@@ -3094,45 +3126,301 @@ function averagePairwisePDistance(seqArrays) {
 }
 
 /**
- * Estimate days post infection from average pairwise distance:
- * dpi = api / (2 * dsr). Returns nearest whole day, or null if undefined.
+ * Jukes–Cantor (JC69) correction of observed p-distance for multiple hits
+ * under a Poisson substitution model: d = −(3/4) ln(1 − 4p/3).
+ * Returns null if p is undefined or at/above the JC asymptote (p ≥ 0.75).
+ */
+function jukesCantorCorrectedDistance(p) {
+    if (p == null || !Number.isFinite(p) || p < 0) return null;
+    if (p === 0) return 0;
+    if (p >= 0.75) return null; // saturation: correction undefined
+    const d = -0.75 * Math.log(1 - (4 * p) / 3);
+    return Number.isFinite(d) && d >= 0 ? d : null;
+}
+
+/**
+ * Estimate days post infection from average pairwise p-distance (api).
+ * Under a Poisson substitution model, observed api underestimates true divergence
+ * when multiple hits occur. Apply Jukes–Cantor correction, then convert with the clock:
+ *   d = −(3/4) ln(1 − 4·api/3)
+ *   dpi = d / (2 × dsr)
+ * (The linear rule dpi = api/(2×dsr) is the infinite-sites limit of the same model.)
+ * Returns nearest whole day, or null if undefined.
  */
 function estimateDpiDaysFromApi(api, dsr = getGroupDpiDailySubstitutionRate()) {
     if (api == null || !Number.isFinite(api) || !(dsr > 0)) return null;
-    const dpi = api / (2 * dsr);
+    const d = jukesCantorCorrectedDistance(api);
+    if (d == null) return null;
+    const dpi = d / (2 * dsr);
     if (!Number.isFinite(dpi) || dpi < 0) return null;
     return Math.round(dpi);
 }
 
-/** Build Map(groupId → estimated DPI days) for current grouping. */
+/** Build Map(groupId → estimated DPI days) for current grouping; also stores groupMemberCounts. */
 function computeGroupDpiEstimates() {
     const estimates = new Map();
-    if (!state.sequenceGroups || !state.groupNames || !state.rawSequences) return estimates;
+    const counts = new Map();
+    if (!state.sequenceGroups || !state.groupNames || !state.rawSequences) {
+        state.groupMemberCounts = counts;
+        return estimates;
+    }
     const dsr = getGroupDpiDailySubstitutionRate();
     const byGroup = new Map();
     for (let i = 0; i < state.rawSequences.length; i++) {
         if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) continue;
         const seq = state.rawSequences[i];
         if (!seq || !seq.name) continue;
-        const gid = state.sequenceGroups.get(seq.name);
+        const gid = getSequenceGroupId(seq.name);
         if (gid === undefined) continue;
         if (!byGroup.has(gid)) byGroup.set(gid, []);
         byGroup.get(gid).push(seq.seq || []);
     }
     byGroup.forEach((seqs, gid) => {
+        counts.set(gid, seqs.length);
         const api = averagePairwisePDistance(seqs);
         const dpi = estimateDpiDaysFromApi(api, dsr);
         if (dpi != null) estimates.set(gid, dpi);
     });
+    state.groupMemberCounts = counts;
     return estimates;
 }
 
-/** Legend label for a group, e.g. "2000 (56)" when a DPI estimate exists. */
+/** Resolve group ID for a sequence name, tolerating cluster-suffix key mismatches. */
+function getSequenceGroupId(seqName) {
+    if (!state.sequenceGroups || !seqName) return undefined;
+    if (state.sequenceGroups.has(seqName)) return state.sequenceGroups.get(seqName);
+    const stripped = normalizeSequenceName(seqName);
+    if (stripped && state.sequenceGroups.has(stripped)) return state.sequenceGroups.get(stripped);
+    for (const [name, gid] of state.sequenceGroups.entries()) {
+        if (normalizeSequenceName(name) === stripped) return gid;
+    }
+    return undefined;
+}
+
+/**
+ * Re-key sequenceGroups to current rawSequences names after cluster suffix renames.
+ * Looks up by current name, stripped name, or any prior key with the same stripped form.
+ */
+function rekeySequenceGroupsToCurrentNames() {
+    if (!state.sequenceGroups || state.sequenceGroups.size === 0 || !state.rawSequences) return;
+    const oldMap = state.sequenceGroups;
+    const updated = new Map();
+    state.rawSequences.forEach(seq => {
+        if (!seq || !seq.name) return;
+        let gid = oldMap.get(seq.name);
+        if (gid === undefined) {
+            const stripped = normalizeSequenceName(seq.name);
+            if (stripped) gid = oldMap.get(stripped);
+            if (gid === undefined && stripped) {
+                for (const [name, id] of oldMap.entries()) {
+                    if (normalizeSequenceName(name) === stripped) {
+                        gid = id;
+                        break;
+                    }
+                }
+            }
+        }
+        if (gid !== undefined) updated.set(seq.name, gid);
+    });
+    state.sequenceGroups = updated;
+}
+
+/** Prefer stored counts; if missing, rebuild from sequenceGroups and/or name field parsing. */
+function ensureGroupMemberCounts() {
+    if (state.groupMemberCounts && state.groupMemberCounts.size > 0) return;
+    if (!state.groupNames || !state.rawSequences) return;
+    const counts = new Map();
+    state.groupNames.forEach((_, gid) => counts.set(gid, 0));
+    const delim = state.groupDelimiter;
+    const fieldOneBased = state.groupFieldNum;
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) continue;
+        const seq = state.rawSequences[i];
+        if (!seq || !seq.name) continue;
+        let gid = getSequenceGroupId(seq.name);
+        if (gid === undefined && delim && fieldOneBased != null && fieldOneBased >= 1) {
+            const fields = normalizeSequenceName(seq.name).split(delim);
+            if (fields.length >= fieldOneBased) {
+                const label = fields[fieldOneBased - 1];
+                for (const [id, val] of state.groupNames.entries()) {
+                    if (val === label) { gid = id; break; }
+                }
+            }
+        }
+        if (gid !== undefined) counts.set(gid, (counts.get(gid) || 0) + 1);
+    }
+    state.groupMemberCounts = counts;
+}
+
+/** Count sequences assigned to a group ID (prefers stored counts; falls back to live scan). */
+function countSequencesInGroup(groupId) {
+    ensureGroupMemberCounts();
+    if (state.groupMemberCounts && state.groupMemberCounts.has(groupId)) {
+        return state.groupMemberCounts.get(groupId);
+    }
+    // Number-key fallback (Map keys are numbers; tolerate stringified IDs)
+    if (state.groupMemberCounts) {
+        const asNum = Number(groupId);
+        if (Number.isFinite(asNum) && state.groupMemberCounts.has(asNum)) {
+            return state.groupMemberCounts.get(asNum);
+        }
+    }
+    if (!state.rawSequences) return 0;
+    let n = 0;
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) continue;
+        const seq = state.rawSequences[i];
+        if (!seq || !seq.name) continue;
+        const gid = getSequenceGroupId(seq.name);
+        if (gid === undefined) continue;
+        if (gid === groupId || Number(gid) === Number(groupId)) n++;
+    }
+    return n;
+}
+
+/** Count leaves/sequences assigned to a cluster ID (prefers stored counts). */
+function countSequencesInCluster(clusterId) {
+    if (state.clusterMemberCounts && state.clusterMemberCounts.has(clusterId)) {
+        return state.clusterMemberCounts.get(clusterId);
+    }
+    if (state.clusterMemberCounts) {
+        const asNum = Number(clusterId);
+        if (Number.isFinite(asNum) && state.clusterMemberCounts.has(asNum)) {
+            return state.clusterMemberCounts.get(asNum);
+        }
+    }
+    if (!state.leafClusters) return 0;
+    let n = 0;
+    state.leafClusters.forEach(cid => {
+        if (cid === clusterId || Number(cid) === Number(clusterId)) n++;
+    });
+    return n;
+}
+
+/** Legend label for a group, e.g. "2000 (12, 56)" = n sequences, dpi days. */
 function formatGroupLegendLabel(groupId, groupValue) {
     const base = groupValue || `Group ${groupId}`;
     const dpi = state.groupDpiEstimates ? state.groupDpiEstimates.get(groupId) : undefined;
-    if (dpi != null && Number.isFinite(dpi)) return `${base} (${dpi})`;
+    if (dpi != null && Number.isFinite(dpi)) {
+        const n = countSequencesInGroup(groupId);
+        return `${base} (${n}, ${dpi})`;
+    }
     return base;
+}
+
+/** Build Map(clusterId → estimated DPI days) from a name→clusterId assignment map. */
+function computeClusterDpiEstimatesFromAssignment(nameToCluster) {
+    const estimates = new Map();
+    const counts = new Map();
+    if (!nameToCluster || nameToCluster.size === 0) {
+        state.clusterMemberCounts = counts;
+        return estimates;
+    }
+    const dsr = getGroupDpiDailySubstitutionRate();
+    const byCluster = new Map();
+    nameToCluster.forEach((cid, name) => {
+        if (cid == null || cid === -1) return;
+        const seq = findRawSequenceForTreeNode(name);
+        if (!seq || !seq.seq) return;
+        if (!byCluster.has(cid)) byCluster.set(cid, []);
+        byCluster.get(cid).push(seq.seq);
+    });
+    byCluster.forEach((seqs, cid) => {
+        counts.set(cid, seqs.length);
+        const api = averagePairwisePDistance(seqs);
+        const dpi = estimateDpiDaysFromApi(api, dsr);
+        if (dpi != null) estimates.set(cid, dpi);
+    });
+    state.clusterMemberCounts = counts;
+    return estimates;
+}
+
+/** Build Map(clusterId → estimated DPI days) from leaf nodes and parallel cluster ID array. */
+function computeClusterDpiEstimatesFromLeaves(leaves, clusters) {
+    const nameToCluster = new Map();
+    if (!leaves || !clusters || leaves.length !== clusters.length) return new Map();
+    for (let i = 0; i < leaves.length; i++) {
+        const name = leaves[i] && leaves[i].name;
+        if (!name) continue;
+        nameToCluster.set(name, clusters[i]);
+    }
+    return computeClusterDpiEstimatesFromAssignment(nameToCluster);
+}
+
+/** Recompute and store cluster DPI estimates from the current accepted leafClusters map. */
+function refreshClusterDpiEstimates() {
+    if (!state.leafClusters || state.leafClusters.size === 0) {
+        state.clusterDpiEstimates = null;
+        state.clusterMemberCounts = null;
+        return;
+    }
+    state.clusterDpiEstimates = computeClusterDpiEstimatesFromAssignment(state.leafClusters);
+}
+
+/** Legend label for a cluster, e.g. "1 (8, 56)" = n sequences, dpi days. */
+function formatClusterLegendLabel(clusterId) {
+    const base = String(clusterId);
+    const dpi = state.clusterDpiEstimates ? state.clusterDpiEstimates.get(clusterId) : undefined;
+    if (dpi != null && Number.isFinite(dpi)) {
+        const n = countSequencesInCluster(clusterId);
+        return `${base} (${n}, ${dpi})`;
+    }
+    return base;
+}
+
+/** Show dismissable window with cluster DPI estimates for the current MDS/UMAP clustering. */
+function showClusterDpiEstimatesWindow(leaves, clusters) {
+    const overlay = document.getElementById('mds-cluster-dpi-overlay');
+    const content = document.getElementById('mds-cluster-dpi-content');
+    const meta = document.getElementById('mds-cluster-dpi-meta');
+    if (!overlay || !content) return;
+    if (!leaves || !clusters || clusters.length === 0) {
+        alert('No current clustering to estimate. Adjust DBSCAN parameters first.');
+        return;
+    }
+    const dsr = getGroupDpiDailySubstitutionRate();
+    const estimates = computeClusterDpiEstimatesFromLeaves(leaves, clusters);
+    // Also include cluster IDs present in the assignment that lack an estimate (singletons).
+    const ids = new Set(estimates.keys());
+    for (let i = 0; i < clusters.length; i++) {
+        const cid = clusters[i];
+        if (cid != null && cid !== -1) ids.add(cid);
+    }
+    const sortedIds = Array.from(ids).sort((a, b) => a - b);
+    if (meta) {
+        meta.textContent = `JC69: d = −(3/4) ln(1 − 4·api/3); dpi = d / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day.`;
+    }
+    if (sortedIds.length === 0) {
+        content.innerHTML = '<p style="margin:0;color:#6b7280;">No non-noise clusters available for DPI estimation.</p>';
+    } else {
+        const counts = new Map();
+        for (let i = 0; i < clusters.length; i++) {
+            const cid = clusters[i];
+            if (cid == null || cid === -1) continue;
+            counts.set(cid, (counts.get(cid) || 0) + 1);
+        }
+        const rows = sortedIds.map(cid => {
+            const n = counts.get(cid) || 0;
+            const dpi = estimates.get(cid);
+            const label = dpi != null && Number.isFinite(dpi)
+                ? `${cid} (${n}, ${dpi})`
+                : `${cid} (${n}, —)`;
+            const color = getClusterColor(cid);
+            return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <div style="width:14px;height:14px;background:${color};border:1px solid #d1d5db;border-radius:3px;flex-shrink:0;"></div>
+                <span>${label}</span>
+            </div>`;
+        });
+        const noiseCount = clusters.filter(c => c === -1).length;
+        let html = rows.join('');
+        if (noiseCount > 0) {
+            html += `<p style="margin:12px 0 0 0;font-size:12px;color:#6b7280;">Format is (n, dpi). Noise excluded (${noiseCount}). Singletons show (n, —).</p>`;
+        } else {
+            html += `<p style="margin:12px 0 0 0;font-size:12px;color:#6b7280;">Format is (n, dpi). Singletons show (n, —).</p>`;
+        }
+        content.innerHTML = html;
+    }
+    overlay.style.display = 'flex';
 }
 
 function showGroupModal() {
@@ -3550,6 +3838,8 @@ function applySubtypeFounder() {
             dom.btnMds.disabled = true;
         }
         state.leafClusters = null; // Clear clusters
+        state.clusterDpiEstimates = null;
+        state.clusterMemberCounts = null;
         updateColorLegend();
     }
     
@@ -3845,7 +4135,7 @@ function updateColorLegend() {
                 colorBox.style.borderRadius = '3px';
                 
                 const label = document.createElement('span');
-                label.textContent = String(clusterId);
+                label.textContent = formatClusterLegendLabel(clusterId);
                 label.style.color = '#374151';
                 
                 item.appendChild(colorBox);
@@ -4015,6 +4305,8 @@ function runInferTask() {
         
         // Clear clustering state
         state.leafClusters = null;
+        state.clusterDpiEstimates = null;
+        state.clusterMemberCounts = null;
         state.hierarchicalActive = false;
         state.hierarchicalDepths = [0, 0, 0];
         
@@ -4485,7 +4777,7 @@ function appendTreeSvgColorLegend(parts, legendX, legendY, legendW, legendH) {
         clusterIds.forEach(clusterId => {
             const color = getClusterColor(clusterId);
             leg.push(`<rect x="${x0}" y="${y - sw / 2 + 1}" width="${sw}" height="${sw}" fill="${color}" stroke="#d1d5db" stroke-width="1" rx="2"/>\n`);
-            leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">${escapeXml(String(clusterId))}</text>\n`);
+            leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">${escapeXml(formatClusterLegendLabel(clusterId))}</text>\n`);
             y += rowH;
         });
         if (hasNoise) {
@@ -5258,12 +5550,15 @@ function finalizeLoad(seqs) {
     state.sequenceGroups = null;
     state.groupNames = null;
     state.groupDpiEstimates = null;
+    state.groupMemberCounts = null;
     state.groupDelimiter = null;
     state.groupFieldNum = null;
     state.sequenceCollapseCounts = null;
     state.collapseDelimiter = null;
     state.collapseFieldNum = null;
     state.leafClusters = null;
+    state.clusterDpiEstimates = null;
+    state.clusterMemberCounts = null;
     state.hierarchicalActive = false;
     state.hierarchicalDepths = [0, 0, 0];
     
@@ -6588,6 +6883,16 @@ function showProjectionPlot(selectedMethod) {
     
     // Apply button - apply clustering to tree
     const applyBtn = document.getElementById('mds-apply-btn');
+    const estimateDpiBtn = document.getElementById('mds-estimate-dpi-btn');
+    if (estimateDpiBtn) {
+        estimateDpiBtn.onclick = () => {
+            if (currentClusters === null) {
+                alert('No current clustering to estimate. Adjust DBSCAN parameters first.');
+                return;
+            }
+            showClusterDpiEstimatesWindow(leaves, currentClusters);
+        };
+    }
     applyBtn.addEventListener('click', () => {
         if (currentClusters === null) {
             // Perform initial clustering if not done yet
@@ -6723,21 +7028,9 @@ function showProjectionPlot(selectedMethod) {
         }
         
         // Update state.sequenceGroups to use new names (with cluster suffix)
-        // Rebuild from original sequenceGroups using updated sequence names
-        if (state.sequenceGroups && state.sequenceGroups.size > 0) {
-            const updatedSequenceGroups = new Map();
-            state.rawSequences.forEach(seq => {
-                if (seq.name) {
-                    const originalName = seq.name.replace(clusterPattern, '');
-                    const groupId = state.sequenceGroups.get(originalName);
-                    if (groupId !== undefined) {
-                        updatedSequenceGroups.set(seq.name, groupId);
-                    }
-                }
-            });
-            state.sequenceGroups = updatedSequenceGroups;
-        }
+        rekeySequenceGroupsToCurrentNames();
         
+        refreshClusterDpiEstimates();
         // Update legend
         updateColorLegend();
         
@@ -7155,6 +7448,8 @@ function showHierarchicalModal() {
                 removeClusterSuffixesFromTree(state.tree.root);
             }
             state.leafClusters = null;
+            state.clusterDpiEstimates = null;
+            state.clusterMemberCounts = null;
             state.hierarchicalActive = false;
             state.hierarchicalDepths = [0, 0, 0];
             updateColorLegend();
@@ -7242,21 +7537,10 @@ function showHierarchicalModal() {
         }
         
         // Update state.sequenceGroups to use new names (with cluster suffix)
-        // Rebuild from original sequenceGroups using updated sequence names
-        if (state.sequenceGroups && state.sequenceGroups.size > 0) {
-            const updatedSequenceGroups = new Map();
-            state.rawSequences.forEach(seq => {
-                if (seq.name) {
-                    const originalName = seq.name.replace(clusterPattern, '');
-                    const groupId = state.sequenceGroups.get(originalName);
-                    if (groupId !== undefined) {
-                        updatedSequenceGroups.set(seq.name, groupId);
-                    }
-                }
-            });
-            state.sequenceGroups = updatedSequenceGroups;
-        }
+        rekeySequenceGroupsToCurrentNames();
         
+        refreshClusterDpiEstimates();
+        updateColorLegend();
         document.getElementById('hierarchical-overlay').style.display = 'none';
         state.hierarchicalActive = false;
         
@@ -7399,6 +7683,8 @@ function showHierarchicalCladeModal() {
                 removeClusterSuffixesFromTree(state.tree.root);
             }
             state.leafClusters = null;
+            state.clusterDpiEstimates = null;
+            state.clusterMemberCounts = null;
             updateColorLegend();
         }
         recalc();
@@ -7453,17 +7739,9 @@ function showHierarchicalCladeModal() {
             });
             state.leafClusters = updatedLeafClusters;
         }
-        if (state.sequenceGroups && state.sequenceGroups.size > 0) {
-            const updatedSequenceGroups = new Map();
-            state.rawSequences.forEach(seq => {
-                if (seq.name) {
-                    const originalName = seq.name.replace(clusterPattern, '');
-                    const groupId = state.sequenceGroups.get(originalName);
-                    if (groupId !== undefined) updatedSequenceGroups.set(seq.name, groupId);
-                }
-            });
-            state.sequenceGroups = updatedSequenceGroups;
-        }
+        rekeySequenceGroupsToCurrentNames();
+        refreshClusterDpiEstimates();
+        updateColorLegend();
         document.getElementById('hierarchical-clade-overlay').style.display = 'none';
         recalc();
     };
