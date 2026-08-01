@@ -168,7 +168,7 @@ The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) availab
 
 Clicking **Cluster** opens a method selector, then the corresponding clustering interface.
 Each method clusters sample sequences; **Reference**, **Subtype** (if present), and **PDB chains** are excluded from clustering assignments.
-- **Methods (selector):** **None** (default), **Hierarchical (tree-clade clustering)**, **Hierarchical (tree-cut clustering)**, **UMAP**, **MDS**.
+- **Methods (selector):** **None** (default), **Hierarchical (tree-clade clustering)**, **Hierarchical (tree-cut clustering)**, **k-DPIs (divisive DPI clustering)**, **UMAP**, **MDS**.
 
 ### None
 - **Function:** Remove active clustering.
@@ -199,12 +199,26 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
 - **Auto:** **Full grid search** over all triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 on the discrete depth slider ticks. For each triple, computes the cluster map and the selected index; chooses the triple that maximizes it and sets the three sliders.
 - **Accept / Cancel:** Same idea as tree-clade: Accept writes cluster tags, computes cluster DPI estimates, and updates legend/tree; Cancel clears clustering and strips `_cl-*` while keeping group colors.
 
-### 4.3 UMAP
+### 4.3 k-DPIs (divisive DPI clustering)
+- **Function:** Partition sample sequences by repeatedly splitting the most diverse cluster according to **mean DPI** (same JC69 + **dsr** estimator as Group).
+- **Parameters:**
+  - **k** starts at **1**. Use **+** / **−** to increase or decrease k (**max 10** for manual +). Each **+** splits the current leaf with the largest mean DPI; each **−** undoes the last split (joins that pair back). Split history is remembered so decreases restore the prior partition.
+  - **Min cluster size** (default **2**): any leaf with fewer than this many sequences is **noise** (−1 / `_cl-na`) and is excluded from the reported k.
+  - **Target DPI** (default **2 ×** the DPI parsed when the alignment was loaded) and **Auto**: keep splitting the largest-DPI leaf that is still above target until every non-noise cluster has DPI ≤ target. Undersized children become **noise**. Auto may split pairs into noise-only leaves when needed. Auto is not limited to k = 10.
+- **Algorithm:**
+  1. Start with one cluster (all sample sequences; REF / SubType / PDB excluded).
+  2. On **+**: select a leaf eligible to split (size ≥ min size + 1) with the **largest mean DPI**, and replace it with the bipartition that **minimises size-weighted mean DPI** of the two children, preferring both children ≥ min size when possible (seed-pair search on pairwise p-distances, then local moves). On **Auto**: same, but any leaf with n ≥ 2 and DPI > target may be split, and children smaller than min size become noise (including both sides).
+  3. On **−**: reverse the most recent split.
+  4. Non-noise leaves are numbered 1…k in left-to-right order; undersized leaves are noise.
+- **Display:** Bubble **tree** of the split hierarchy: edges show parent→child splits; **leaf** bubbles use cluster colours (noise grey); internal nodes are grey. Radius ∝ **log(n)**; label **`n, dpi`**.
+- **Accept:** Writes `_cl-<id>` (or `_cl-na` for noise), stores cluster DPI / counts for the legend as **`id (n, dpi)`**. **Cancel:** Clears preview clustering without keeping tags.
+
+### 4.4 UMAP
 - **Function:** Reduce pairwise leaf distances to 2D with **UMAP**, then cluster in 2D with DBSCAN (same as MDS after projection).
 - **Algorithm:** UMAP (via `umap-js`) is run on the distance matrix (or a derived affinity matrix). Resulting 2D coordinates are then passed to the same DBSCAN + renumbering + Calinski–Harabasz pipeline as MDS.
 - **Parameters:** **nNeighbors**, **Spread**, **Min Distance** (UMAP), plus **Radius (eps)** and **Min Neighbors** (DBSCAN). Eps max = half the larger projection axis range; step = max/50; min = step to avoid CH infinity; **Auto** on eps evaluates every slider tick and maximizes the selected index. **Estimate DPI** is available in the same dialog (see MDS).
 
-### 4.4 MDS (Classical Multidimensional Scaling)
+### 4.5 MDS (Classical Multidimensional Scaling)
 - **Function:** Reduce **pairwise leaf distances** (from the tree) to 2D, then cluster points in 2D with **DBSCAN**.
 - **Projection:** Pairwise distances are taken from the tree (path length between leaves). **Classical MDS:** D² is double-centered to form **B** = −0.5 · H · D² · H, where **H** = I − (1/n)·1·1ᵀ (identity minus n⁻¹ times the matrix of ones). Top two eigenvalues and eigenvectors of B are computed; coordinates are the eigenvectors scaled by √λᵢ.
 - **Clustering:** DBSCAN on the 2D points (see §4.5). The subtype point is excluded from DBSCAN expansion and effectively not part of the density-based clustering (it is treated as an always-isolated reference). Clusters are renumbered by distance from the subtype reference (and, if a founder exists, may be used for ordering). Calinski–Harabasz is computed from the **tree** using the same cluster assignment (so all methods are comparable).
@@ -212,10 +226,10 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
 - **Estimate DPI:** Computes days-post-infection for each current (non-noise) cluster using the same **JC69** correction and **dsr** as Group: **d = −(3/4) ln(1 − 4·api/3)**, **dpi = d / (2 × dsr)**. Shows results as **`clusterId (n, dpi)`** (singletons show `(n, —)`).
 - **Apply:** Applies the clustering to the tree (writes cluster tags to names and tree), computes cluster DPI estimates with the current **dsr** (JC69-corrected), and updates the legend as **`clusterId (n, dpi)`**. **Close:** Dismisses the overlay without applying.
 
-### 4.5 DBSCAN (used in MDS/UMAP)
+### 4.6 DBSCAN (used in MDS/UMAP)
 - **Algorithm:** Standard DBSCAN. Points within **eps** (Euclidean in 2D) are neighbors. If a point has ≥ **minPts** neighbors, it and all density-reachable points form a cluster. Otherwise it is noise (-1).
 
-### 4.6. Calinski–Harabasz index (tree-based)
+### 4.7. Calinski–Harabasz index (tree-based)
 
 Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use the **same** index on the **tree**.
 
@@ -230,7 +244,7 @@ Used to score and optimize clusterings (tree-clade, tree-cut, MDS/UMAP). All use
 
 - **Special cases:** If W ≤ 0, CH is returned as ∞ (best). Noise (−1) is excluded from clustering; remaining cluster IDs are used in the CH computation.
 
-### 4.7. Ball–Hall-Adapted index (tree-based)
+### 4.8. Ball–Hall-Adapted index (tree-based)
 
 This index is displayed alongside the Calinski–Harabasz value in the tree-based hierarchical clustering dialogs.
 
@@ -343,6 +357,7 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DPI: days default from filename (`dpi±N`, max if several) else 14; expected depth (DPI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (truncate at right border, half diamond + red oval if non-functional on clipped tips); dotted expected-depth line. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
+| k-DPIs         | Divisive tree: + splits largest-DPI leaf (minimise size-weighted mean DPI); − undoes last split; min size → noise; Auto until all DPI ≤ target (default 2× load DPI); bubble tree, leaf radius ∝ log(n). |
 | Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |
 | MDS            | B = −0.5·H·D²·H; eigendecomposition; coords = eigenvectors × √(eigenvalues). |
 | UMAP           | External UMAP on distances → 2D. |
