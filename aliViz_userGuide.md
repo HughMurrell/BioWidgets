@@ -40,7 +40,15 @@ On every alignment load, aliViz tests each sequence for **functionality** and st
 - **Nucleotide (NT) alignment:** Each row is translated using **reading frame 1** (same default as at load), then tested with the AA rules above.
 - **Non-functional:** Any sequence that fails one or more of these rules.
 
-**Load summary (`s`, `f`, `nf`, `dpi`):** Above the alignment filename you will see a compact report, e.g. **`s=56, f=25, nf=31, dpi=79`**, meaning 56 sequences total, 25 functional, 31 non-functional, and **79** days post infection (DPI). The DPI value is the same one used as the default in the tree SVG **DPI** scale dialog (see §3). It is set from the alignment **filename** when the file loads: aliViz looks for tokens like `dpi+79` or `dpi-79` (case-insensitive); if several tokens are present, the **largest** day count is used; if none are found, DPI defaults to **14**. This updates when you **Prune** sequences or when NT rows are converted to AA (e.g. after loading epitopes), and when you change the DPI (days) field in the SVG export dialog. It resets to **`s=0, f=0, nf=0, dpi=14`** when the alignment is cleared.
+**Load summary (`s`, `f`, `nf`, `dpi`, `dsr`, `etd`):** Above the alignment filename you will see a compact report, e.g. **`s=56, f=25, nf=31, dpi=24, dsr=0.0001, etd=0.0048`**, meaning 56 sequences total, 25 functional, 31 non-functional, **24** days post infection (DPI), daily substitution rate **dsr**, and **expected tree diameter** **etd**.
+
+- **DPI** is the same value used as the default in the tree SVG **DPI** scale dialog (see §3). It is set from the alignment **filename** when the file loads: aliViz looks for tokens like `dpi+24` or `dpi-24` (case-insensitive); if several tokens are present, the **largest** day count is used; if none are found, DPI defaults to **14**. It updates when you **Prune** sequences or when NT rows are converted to AA (e.g. after loading epitopes), and when you change the DPI (days) field in the SVG export dialog.
+- **dsr** is the current **daily substitution rate** (default **0.0001**). It resets to this default whenever the page is reloaded. If the alignment **filename** contains a DPI token, a dialog offers to keep the default or set another **dsr** for the session; you can also change **dsr** later in the Group dialog. Changing **dsr** updates this summary and **etd**.
+- **etd (expected tree diameter):** under an early-infection / strict-clock approximation, tip-to-tip path length is about twice the expected root→tip depth, so  
+  **etd = 2 × dsr × DPI**  
+  (e.g. DPI = 24 and dsr = 1×10⁻⁴ → etd = 0.0048 substitutions/site). This is an expected scale for the phylogeny, not a measured tree statistic.
+
+The summary resets to **`s=0, f=0, nf=0, dpi=14, dsr=0.0001, etd=…`** when the alignment is cleared (or on page reload before a file is loaded).
 
 **Tree indicators (interactive panel and SVG export):** Whenever a tree is drawn— in the **tree panel** beside the alignment, or in an exported **SVG** figure— leaf tips are shown as **diamonds** coloured by **cluster** (when clustering is active). **Non-functional** leaves are marked with a **red oval** (`#dc2626`) drawn around the diamond. The oval appears on:
 - Full tip diamonds (normal tips),
@@ -71,7 +79,7 @@ Functional leaves show only the cluster-coloured diamond with no oval. **Red is 
 ### Group
 - **Function:** Assign sequences to groups using a delimiter and a field in the sequence name.
 - **Algorithm:** You specify a **delimiter** (e.g. `_`) and a **field number** (1-based). Each sequence name is split by the delimiter; the value at that field becomes the group label. REF, SubType (if present), and PDB chain sequences are excluded from grouping. Groups are assigned unique IDs and used for coloring and legend.
-- **DPI estimate (per group):** After grouping, aliViz estimates **days post infection** for each group from the **maximum** pairwise **p-distance** (**api**: largest fraction of differing non-gap sites among all pairs in the group) and the **daily substitution rate** **dsr** from the Group dialog (default **0.00005**; remembered in `localStorage`). Under a Poisson substitution process, the linear rule `dpi = api / (2 × dsr)` is correct only in the **infinite-sites** limit (no multiple hits). When sites can change more than once, observed `api` saturates and underestimates divergence. aliViz therefore applies a **Jukes–Cantor (JC69)** multiple-hit correction, then converts corrected divergence to time with the same clock:
+- **DPI estimate (per group):** After grouping, aliViz estimates **days post infection** for each group from the **maximum** pairwise **p-distance** (**api**: largest fraction of differing non-gap sites among all pairs in the group) and the **daily substitution rate** **dsr** from the Group dialog (default **0.0001** for the session; not persisted across page reloads). Under a Poisson substitution process, the linear rule `dpi = api / (2 × dsr)` is correct only in the **infinite-sites** limit (no multiple hits). When sites can change more than once, observed `api` saturates and underestimates divergence. aliViz therefore applies a **Jukes–Cantor (JC69)** multiple-hit correction, then converts corrected divergence to time with the same clock:
   - **d** = −(3/4) ln(1 − 4·api/3) (undefined when api ≥ 0.75)
   - **dpi** = d / (2 × dsr), rounded to the nearest day
   - Shown in the legend as **`label (n, dpi)`**, e.g. **`2000 (12, 56)`** (n = sequence count). Groups with fewer than two sequences have no DPI estimate. Estimates are recomputed after **Prune**.
@@ -101,13 +109,11 @@ Functional leaves show only the cluster-coloured diamond with no oval. **Red is 
 ### Infer
 - **Function:** Build or load a phylogeny for the current alignment (excluding REF, subtype when present, and PDB chains; **including** founder sequences, including medoid founders).
 - **Methods:**
-  - **FastTree** (default in the infer dialog): Uses FastTree (via bioWASM) on the alignment. Model options appear for NT and AA.
+  - **Load inferred tree (Newick file)** (default in the infer dialog): Opens a file picker for an existing **Newick** tree. Accepted extensions: **`.nwk`**, **`.newick`**, **`.tree`**, **`.treefile`**, **`.txt`**.
+  - **FastTree**: Uses FastTree (via bioWASM) on the alignment. Model options appear for NT and AA.
   - **Neighbor Joining (NJ):** Uses PhyloTools (pairwise distances → NJ tree).
-  - **Load inferred tree (Newick file):** Opens a file picker for an existing **Newick** tree. Accepted extensions: **`.nwk`**, **`.newick`**, **`.tree`**, **`.treefile`**, **`.txt`**.
 - **Loading an external tree:** Leaf names in the Newick file must match alignment sequence names after normalization (cluster suffixes `_cl-*` are ignored for comparison). **Reference**, **subtype** (if present), and **PDB chains** are excluded from the required leaf set. A medoid founder keeps its sample name in the alignment, so tree leaves should use that name—not a separate `consensus_of_` name. If names do not match, loading is aborted with a message listing missing or extra leaves.
-- **Note:** Before inference (NJ/FastTree), any existing clustering is cleared and cluster suffixes (`_cl-*`) are removed from sequence and tree node names.
-
-### Reroot
+- **Tree diameter:** After a tree is inferred or loaded, aliViz computes the phylogeny **diameter** (maximum tip-to-tip path length in branch-length units) and shows it beside the **Phylogeny** control label as **`diam=…`**. It clears when the tree is removed.
 - **Function:** Reroot the tree on the **Founder** sequence.
 - **Targets:** **Founder** (requires a founder to be defined—consensus or medoid).
 - **Algorithm:** The founder leaf is located and the tree is rerooted at the edge leading to it so that the founder is the outgroup. Branch lengths and topology are preserved; only the root position changes.
@@ -138,21 +144,21 @@ Functional leaves show only the cluster-coloured diamond with no oval. **Red is 
 - **Circular:** Radial layout with **orthogonal** branches (circumferential arc + radial segment), outward-pointing tip diamonds, and dotted connectors to radial labels.
 
 #### Scale
-The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) available for branch lengths; its half-way mark is at **260 px**.
+The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) available for branch lengths; its quarter mark is at **130 px** (half-way would be 260 px).
 
 - **Auto (default):** Scales the tree to fit the plot area (linear branch span ≈ 520 px; circular outer branch radius ≈ 260 px, with branch lengths in circular mode drawn at **half** the linear scale per unit).
 - **Fixed:** Uses a chosen **branch length per 1 cm** of plot (dropdown: 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001; default **0.001**) so trees from different datasets are comparable. The tree is **not** shrunk to fit; shallow trees use only part of the space. If the tree would extend beyond the fixed plot width, export **aborts** with a message suggesting a **larger** value in the dropdown (more compact drawing) or **Auto** scale.
-- **DPI (days post infection):** Scales so an **expected** branch length lands at the **half-way mark (260 px)** of the branch region. You supply two parameters:
+- **DPI (days post infection):** Scales so an **expected** branch length lands at the **1/4 mark (130 px)** of the branch region. You supply two parameters:
   - **DPI (days):** number of days post infection. The default is taken from the loaded alignment **filename**: tokens matching `dpi+N` or `dpi-N` (case-insensitive) are parsed, and if several are present the **largest** `N` is used; if the filename has no such token, the default is **14**. The load summary’s `dpi=` value and this dialog field stay in sync. You can still edit the field before export.
-  - **Mutations/day (MPD):** expected substitution rate per day (default **0.001**).
-  - The expected branch length is **DPI × MPD** (e.g. 14 × 0.001 = 0.014), and the scale is set so this value maps to 260 px (i.e. `px per unit = 260 / (DPI × MPD)`). In circular mode the same value maps to a **130 px** radius (half, matching the Fixed circular convention).
+  - **Mutations/day (MPD):** expected substitution rate per day. Seeded from the session **dsr** at alignment load (including after the on-load dsr dialog); default **0.0001**. You can still edit it in this dialog before export.
+  - The expected branch length is **DPI × MPD** (e.g. 14 × 0.0001 = 0.0014), and the scale is set so this value maps to 130 px (i.e. `px per unit = 130 / (DPI × MPD)`). In circular mode the same value maps to a **65 px** radius (half, matching the Fixed circular convention).
   - **No overflow abort:** unlike Fixed scale, DPI **never** aborts. Branches longer than the plot width are truncated at the **right border** (so they cannot run into the sequence-name column); nothing is clipped on the left. In circular mode over-long branches are clamped to the outer radius.
   - **Clipped-branch marker (half diamond):** on **linear** SVG exports, any horizontal branch that would extend past the right border is drawn only up to that boundary. If the tip falls past the boundary, the full diamond is replaced by the **right half** of the diamond (apex on the boundary, pointing right), filled with the same **cluster** color as an unclipped tip. **Non-functional** clipped tips also receive the **red oval** around the half diamond. The dashed connector to the sequence name still starts from the boundary.
-  - **Expected-depth marker:** a **gray vertical dotted line** is drawn across the plot at the expected depth (the end of the scale bar, 260 px). Tips to the **right** are mutating **faster** than expected; tips to the **left** are mutating **slower** than expected.
+  - **Expected-depth marker:** a **gray vertical dotted line** is drawn across the plot at the expected depth (the end of the scale bar, 130 px). Tips to the **right** are mutating **faster** than expected; tips to the **left** are mutating **slower** than expected.
 
 #### Titles, scale bar, and legend (SVG only)
 - **Title (two lines):** Full alignment **filename** (no truncation); second line includes **inference method**, **`s=…, f=…, nf=…`** (functionality counts for **tree leaves only**—reference, subtype, and PDB chains excluded), **max tree depth** (3 significant figures), and **last clustering method** (or “No clustering”). Linear layout: titles are **left-aligned** with the scale bar; circular: titles are **centred**.
-- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value). In **DPI** mode the bar is **260 px** long (linear; 130 px circular) and is annotated with the parameters and expected depth, e.g. **`(14 DPI @ 0.001 = 0.014)`**, updating to match whatever DPI and MPD you enter.
+- **Phylogenetic scale bar:** Drawn on the **tree** panel (top-left for linear, top-right for circular—not in the floating HTML legend). Shows branch-length units; in **fixed** mode the bar is **1 cm** long with a numeric label matching the selected scale (circular bar length is **half** the linear bar for the same scale value). In **DPI** mode the bar is **130 px** long (linear; 65 px circular) and is annotated with the parameters and expected depth, e.g. **`(14 DPI @ 0.0001 = 0.0014)`**, updating to match whatever DPI and MPD you enter.
 - **Legend panel:** Header **Legend** (not “Color Legend”). **Groups** and **Clusters** as in the app; cluster rows show the **number only** (e.g. `1`, not `Cluster 1`). Page width split **7/8** tree, **1/8** legend.
 
 #### Layout details (unchanged behaviour, for reference)
@@ -168,7 +174,7 @@ The plot has a **520 px** branch region (≈ **13.76 cm** at 96 px/inch) availab
 
 Clicking **Cluster** opens a method selector, then the corresponding clustering interface.
 Each method clusters sample sequences; **Reference**, **Subtype** (if present), and **PDB chains** are excluded from clustering assignments.
-- **Methods (selector):** **None** (default), **Hierarchical (tree-clade clustering)**, **Hierarchical (tree-cut clustering)**, **k-DPIs (divisive DPI clustering)**, **UMAP**, **MDS**.
+- **Methods (selector):** **None**, **Hierarchical (tree-clade clustering)**, **Hierarchical (tree-cut clustering)**, **k-DPIs (divisive tree-diameter clustering)** (default), **UMAP**, **MDS**.
 
 ### None
 - **Function:** Remove active clustering.
@@ -199,20 +205,21 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
 - **Auto:** **Full grid search** over all triples (d1, d2, d3) with d1 ≤ d2 ≤ d3 on the discrete depth slider ticks. For each triple, computes the cluster map and the selected index; chooses the triple that maximizes it and sets the three sliders.
 - **Accept / Cancel:** Same idea as tree-clade: Accept writes cluster tags, computes cluster DPI estimates, and updates legend/tree; Cancel clears clustering and strips `_cl-*` while keeping group colors.
 
-### 4.3 k-DPIs (divisive DPI clustering)
-- **Function:** Partition sample sequences by repeatedly splitting the most diverse cluster according to **DPI from maximum pairwise p-distance** (then the same JC69 + **dsr** conversion as Group).
+### 4.3 k-DPIs (divisive tree-diameter clustering)
+- **Function:** Partition sample sequences by repeatedly splitting the cluster with the largest **tree diameter** (max pairwise path length on the phylogeny). Bubble / legend **DPI** labels still come from sequences (max pairwise p-distance + JC69 + **dsr**).
+- **Requires:** A loaded or inferred **tree** whose leaves match the sample sequences.
 - **Parameters:**
-  - **k** starts at **1**. Use **+** / **−** to increase or decrease k (**max 10** for manual +). Each **+** splits the current leaf with the largest DPI; each **−** undoes the last split (joins that pair back). Split history is remembered so decreases restore the prior partition.
+  - **k** starts at **1**. Use **+** / **−** to increase or decrease k (**max 10** for manual +). Each **+** splits the current leaf with the largest tree diameter; each **−** undoes the last split. Split history is remembered so decreases restore the prior partition.
   - **Min cluster size** (default **2**): any leaf with fewer than this many sequences is **noise** (−1 / `_cl-na`) and is excluded from the reported k.
-  - **Target DPI** (default **2 ×** the DPI parsed when the alignment was loaded) and **Auto**: keep splitting the largest-DPI leaf that is still above target until every non-noise cluster has DPI ≤ target. Undersized children become **noise**. Auto may split pairs into noise-only leaves when needed. Auto is not limited to k = 10.
+  - **Target diameter** (default = **etd** from alignment load: **etd = 2 × dsr × DPI**) with a linked **≈ DPI** field (rounded nearest day; either field updates the other via the same formula) and **Auto**: keep splitting the largest-diameter leaf that is still above target until every non-noise cluster has diameter ≤ target. Undersized children become **noise**. Auto may split pairs into noise-only leaves when needed. Auto is not limited to k = 10.
 - **Algorithm:**
-  1. On open: precompute a **full pairwise p-distance matrix** once for all sample sequences (cached for the session).
-  2. Start with one cluster (all sample sequences; REF / SubType / PDB excluded). Leaf DPI = JC69(**max** pairwise p-distance) / (2 × dsr).
-  3. On **+**: select a leaf eligible to split (size ≥ min size + 1) with the **largest DPI**. On **Auto**: any leaf with n ≥ 2 and DPI > target.
-  4. **Bipartition search** for that leaf: seed pairs (all pairs if n≤30; else farthest-point sample of 12–20 seeds) → Voronoi labels by nearer seed → score = size-weighted mean child DPI (each child DPI from **max** pairwise; prefer both sides ≥ min size). Then a short local search of single-sequence moves (1–2 passes when n is large).
+  1. On open: build a **tree path-distance** matrix for splitting, and a **sequence p-distance** matrix for DPI annotation.
+  2. Start with one cluster (all sample sequences; REF / SubType / PDB excluded). Leaf **diameter** = max pairwise tree distance; leaf **dpi** = JC69(max pairwise sequence p-distance) / (2 × dsr).
+  3. On **+**: select a leaf eligible to split (size ≥ min size + 1) with the **largest diameter**. On **Auto**: any leaf with n ≥ 2 and diameter > target.
+  4. **Bipartition search** for that leaf (on tree distances): seed pairs (all pairs if n≤30; else farthest-point sample of 20 seeds) → Voronoi labels by nearer seed → score = **n₁·d₁ + n₂·d₂** (child sizes × child diameters; prefer both sides ≥ min size). Then local search of single-point moves until no improvement.
   5. On **−**: reverse the most recent split.
   6. Non-noise leaves are numbered 1…k in left-to-right order; undersized leaves are noise.
-- **Display:** Bubble **tree** of the split hierarchy: edges show parent→child splits; **leaf** bubbles use cluster colours (noise grey); internal nodes are grey. Radius ∝ **log(n)**; label **`n, dpi`**.
+- **Display:** Bubble **tree** of the split hierarchy: edges show parent→child splits; **leaf** bubbles use cluster colours (noise grey); internal nodes are grey. Radius ∝ **log(n)**; label **`n, dpi`** (sequence-based DPI).
 - **Accept:** Writes `_cl-<id>` (or `_cl-na` for noise), stores cluster DPI / counts for the legend as **`id (n, dpi)`**. **Cancel:** Clears preview clustering without keeping tags.
 
 ### 4.4 UMAP
@@ -343,9 +350,9 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Feature        | Algorithm / formula |
 |----------------|---------------------|
 | Load sanitize  | A–Z, `-`, `*` kept; other chars → `X`; alert user. |
-| Functionality  | AA: ungapped M start, `*` end, no internal `*`; NT: translate frame 1 then same test; tag `functional`; report `s,f,nf,dpi` above filename (all seqs; DPI from filename `dpi±N` or 14) and `s,f,nf` in SVG title (tree leaves only); red oval around non-functional tree tips. |
+| Functionality  | AA: ungapped M start, `*` end, no internal `*`; NT: translate frame 1 then same test; tag `functional`; report `s,f,nf,dpi,dsr,etd` above filename (all seqs; DPI from filename `dpi±N` or 14; etd=2×dsr×DPI) and `s,f,nf` in SVG title (tree leaves only); red oval around non-functional tree tips. |
 | Has subtype    | If off, no subtype index; toggling clears group/tree/cluster state. |
-| Group          | Split name by delimiter; group = field value; unique IDs; dpi via max pairwise p-distance + JC69: d=−(3/4)ln(1−4·api/3), dpi=d/(2×dsr) (dsr from Group dialog, default 5e-5, persisted); legend `label (n, dpi)`. |
+| Group          | Split name by delimiter; group = field value; unique IDs; dpi via max pairwise p-distance + JC69: d=−(3/4)ln(1−4·api/3), dpi=d/(2×dsr) (dsr from Group dialog or on-load DPI prompt, default 1e-4 for the session); legend `label (n, dpi)`. |
 | Sort           | REF, SubType (if any) fixed; others by group ID then name. |
 | Prune          | Remove sequences in selected groups; renumber group IDs. |
 | Founder consensus | Majority per column over selected group; `consensus_of_*` name. |
@@ -356,10 +363,10 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Reroot         | Find founder leaf; reroot on edge to that leaf. |
 | Ladderize      | By weight: sort children by leaf count. By depth: sort by max root-to-leaf depth in subtree. |
 | Histogram      | Root-to-leaf distance = sum of branch lengths; bin and plot. |
-| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DPI: days default from filename (`dpi±N`, max if several) else 14; expected depth (DPI × MPD) → 260 px (linear) / 130 px (circular); no overflow abort (truncate at right border, half diamond + red oval if non-functional on clipped tips); dotted expected-depth line. |
+| SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DPI: days default from filename (`dpi±N`, max if several) else 14; MPD seeded from load-time dsr; expected depth (DPI × MPD) → 130 px = 1/4 mark (linear) / 65 px (circular); no overflow abort (truncate at right border, half diamond + red oval if non-functional on clipped tips); dotted expected-depth line. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
-| k-DPIs         | Divisive tree: + splits largest-DPI leaf (minimise size-weighted mean DPI); − undoes last split; min size → noise; Auto until all DPI ≤ target (default 2× load DPI); bubble tree, leaf radius ∝ log(n). |
+| k-DPIs         | Divisive tree: + splits largest tree-diameter leaf (minimise n₁·d₁+n₂·d₂ on tree paths); − undoes last split; min size → noise; Auto until diameter ≤ target (default etd=2×dsr×DPI); sequence max-p DPI for `n, dpi` labels; bubble tree, leaf radius ∝ log(n). |
 | Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |
 | MDS            | B = −0.5·H·D²·H; eigendecomposition; coords = eigenvectors × √(eigenvalues). |
 | UMAP           | External UMAP on distances → 2D. |
