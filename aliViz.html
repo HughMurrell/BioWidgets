@@ -235,7 +235,7 @@
                 <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt" style="display:none;">
                 <button id="btn-choose-file" type="button">Choose file</button>
                 <div style="display:flex; flex-direction:column; gap:1px;">
-                    <span id="inp-file-stats" style="font-size:11px; color:#6b7280; white-space:nowrap;">s=0, f=0, nf=0, dpi=14, dsr=0.0001, etd=0.0028</span>
+                    <span id="inp-file-stats" style="font-size:11px; color:#6b7280; white-space:nowrap;">s=0, f=0, nf=0, dpi=14, dsr=0.00005, etd=0.0014</span>
                     <input type="text" id="inp-file-name" value="No file chosen" readonly style="min-width: 270px; max-width: 390px; padding: 4px 6px; font-size: 12px; color: #374151; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 4px;">
                 </div>
                 <input type="file" id="inp-ref-file" accept=".fasta,.fa,.txt" style="display:none;">
@@ -258,7 +258,7 @@
         <div class="control-group">
             <label style="display:inline-flex; align-items:baseline; gap:8px;">
                 Phylogeny
-                <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Tree diameter = max tip-to-tip path length (branch-length units)">diam=—</span>
+                <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Mean pairwise tip-to-tip path length (branch-length units)">mean=—</span>
             </label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
@@ -470,9 +470,9 @@
                 <option value="none">None</option>
                 <option value="hierarchical-clade">Hierarchical (tree-clade clustering)</option>
                 <option value="hierarchical">Hierarchical (tree-cut clustering)</option>
-                <option value="k-dpis" selected>k-DPIs (divisive tree-diameter clustering)</option>
+                <option value="k-dpis">k-DPIs (divisive mean-distance clustering)</option>
                 <option value="umap">UMAP (Uniform Manifold Approximation and Projection)</option>
-                <option value="mds">MDS (Classical Multidimensional Scaling)</option>
+                <option value="mds" selected>MDS (Classical Multidimensional Scaling)</option>
             </select>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -537,7 +537,7 @@
                         </label>
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
                             <span class="tree-svg-dpi-hint">Mutations/day:</span>
-                            <input type="number" id="tree-svg-dpi-mpd" value="0.0001" min="0" step="any" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
+                            <input type="number" id="tree-svg-dpi-mpd" value="0.00005" min="0" step="any" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
                         </label>
                     </div>
                 </div>
@@ -635,24 +635,28 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits use <strong>tree</strong> pairwise distances (cluster diameter). Bubble labels still show sequence-based <strong>DPI</strong> (max p-distance, JC69). <strong>+</strong> splits the largest-diameter leaf; <strong>Auto</strong> until every non-noise cluster has diameter ≤ target (default = etd). Leaves smaller than min size are <strong>noise</strong>.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits use <strong>mean</strong> pairwise <strong>tree</strong> path distances; bipartitions minimise <strong>max(d₁,d₂)</strong>. If a leaf cannot be improved that way it stays as an <strong>unsplittable</strong> cluster and the next leaf is tried. Bubble labels show sequence-based <strong>DPI</strong> (mean p-distance, JC69). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Auto</strong> until target or max splits; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
                 <button type="button" id="btn-kdpis-minus" style="padding: 4px 12px; font-size: 16px; line-height: 1;">−</button>
                 <span id="kdpis-k-value" style="font-size: 14px; color: #374151; font-weight: 600; min-width: 28px; text-align: center;">1</span>
                 <button type="button" id="btn-kdpis-plus" style="padding: 4px 12px; font-size: 16px; line-height: 1;">+</button>
-                <span style="font-size: 11px; color: #9ca3af;">(max 10 manual)</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <label style="font-size: 12px; color: #374151;" for="kdpis-max-splits">Max splits:</label>
+                <input type="number" id="kdpis-max-splits" value="9" min="0" step="1" style="width: 4em; padding: 2px 6px; font-size: 12px;" title="Maximum number of splits for + and Auto (default 9 → up to 10 clusters)">
             </div>
             <div style="display: flex; align-items: center; gap: 6px;">
                 <label style="font-size: 12px; color: #374151;" for="kdpis-min-size">Min cluster size:</label>
                 <input type="number" id="kdpis-min-size" value="2" min="1" step="1" style="width: 4em; padding: 2px 6px; font-size: 12px;">
             </div>
             <div style="display: flex; align-items: center; gap: 6px;">
-                <label style="font-size: 12px; color: #374151;" for="kdpis-target-diameter">Target diameter:</label>
-                <input type="number" id="kdpis-target-diameter" value="0.00028" min="0" step="any" style="width: 7em; padding: 2px 6px; font-size: 12px;">
+                <label style="font-size: 12px; color: #374151;" for="kdpis-target-diameter">Target mean dist:</label>
+                <input type="number" id="kdpis-target-diameter" value="0.0014" min="0" step="any" style="width: 7em; padding: 2px 6px; font-size: 12px;">
                 <label style="font-size: 12px; color: #374151;" for="kdpis-target-dpi">≈ DPI:</label>
-                <input type="number" id="kdpis-target-dpi" value="14" min="0" step="1" style="width: 5em; padding: 2px 6px; font-size: 12px;" title="Equivalent days: diameter = 2 × dsr × DPI">
+                <input type="number" id="kdpis-target-dpi" value="14" min="0" step="1" style="width: 5em; padding: 2px 6px; font-size: 12px;" title="Equivalent days: mean dist ≈ 2 × dsr × DPI">
+                <button type="button" id="btn-kdpis-reset" style="padding: 4px 10px; font-size: 12px;" title="Clear splits and return to one cluster">Reset</button>
                 <button type="button" id="btn-kdpis-auto" style="padding: 4px 10px; font-size: 12px;">Auto</button>
             </div>
         </div>
@@ -760,12 +764,12 @@
         <h2>Daily substitution rate (dsr)</h2>
         <p style="font-size: 13px; color: #374151; margin: 0 0 10px 0;">
             Filename DPI = <strong id="dsr-on-load-dpi">14</strong> days.
-            Expected tree diameter <strong>etd = 2 × dsr × DPI</strong>.
+            Expected mean pairwise tip distance <strong>etd = 2 × dsr × DPI</strong>.
             Accept the default dsr or enter another value for this session.
         </p>
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;" for="inp-dsr-on-load">dsr (substitutions / site / day)</label>
-            <input type="number" id="inp-dsr-on-load" value="0.0001" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
+            <input type="number" id="inp-dsr-on-load" value="0.00005" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
         <p id="dsr-on-load-etd-hint" style="font-size: 12px; color: #6b7280; margin: 10px 0 0 0;"></p>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -788,7 +792,7 @@
         </div>
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;">Daily substitution rate (dsr) for group DPI estimates</label>
-            <input type="number" id="inp-group-dsr" value="0.0001" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
+            <input type="number" id="inp-group-dsr" value="0.00005" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
@@ -1182,12 +1186,12 @@ const state = {
     collapseFieldNum: null, // 1-based field number; null = no collapse
     persistentCollapseFieldNum: null, // Last chosen collapse field number (survives load/clear)
     groupNames: null, // Map from group ID to group value (for legend)
-    groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from max pairwise p-distance
+    groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from mean pairwise p-distance
     groupMemberCounts: null, // Map from group ID to sequence count (set with DPI estimates; stable across cluster renames)
     groupDpiDailySubstitutionRate: null, // Session dsr for DPI/etd; reset to default on page load
-    etdAtLoad: null, // Expected tree diameter snapshot from alignment load (2×dsr×DPI)
-    treeDiameter: null, // Max tip-to-tip path length of current phylogeny (branch-length units)
-    clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), from max pairwise p-distance
+    etdAtLoad: null, // Expected mean pairwise tip distance snapshot from alignment load (2×dsr×DPI; star-clock)
+    treeDiameter: null, // Mean pairwise tip-to-tip path length of current phylogeny (branch-length units)
+    clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), from mean pairwise p-distance
     clusterMemberCounts: null, // Map from cluster ID to sequence count (set with cluster DPI estimates)
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     originalSubtype: null, // Store original subtype sequence for reverting
@@ -2084,6 +2088,17 @@ async function init() {
 }
 
 // --- Export Logic ---
+/** Filename for FASTA download: uploaded alignment name, with `_clus` before the extension if clustering is active. */
+function getAlignmentDownloadFileName() {
+    const raw = state.currentFileName || dom.file?.files?.[0]?.name || '';
+    const base = (raw && String(raw).trim()) ? String(raw).trim() : `alignment_${state.mode}.fasta`;
+    const clusteringActive = !!(state.leafClusters && state.leafClusters.size > 0);
+    if (!clusteringActive) return base;
+    const dot = base.lastIndexOf('.');
+    if (dot <= 0) return `${base}_clus`;
+    return `${base.slice(0, dot)}_clus${base.slice(dot)}`;
+}
+
 function exportAlignment(target) {
     if (!state.viewSequences.length) return;
     
@@ -2105,7 +2120,7 @@ function exportAlignment(target) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `alignment_${state.mode}.fasta`;
+        a.download = getAlignmentDownloadFileName();
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -2552,9 +2567,9 @@ function getCurrentDpiDaysForDisplay() {
 }
 
 /**
- * Expected tree diameter (etd) early in infection:
+ * Expected mean pairwise tip-to-tip distance (etd) early in infection (strict-clock star):
  *   etd = 2 × dsr × DPI
- * (max tip-to-tip path ≈ twice the expected root→tip depth under a strict clock).
+ * (equals expected tree diameter under the same model).
  */
 function expectedTreeDiameter(dpiDays, dsr) {
     if (!Number.isFinite(dpiDays) || dpiDays < 0) return null;
@@ -2562,14 +2577,14 @@ function expectedTreeDiameter(dpiDays, dsr) {
     return 2 * dsr * dpiDays;
 }
 
-/** Inverse of etd: DPI days from tree diameter (rounded to nearest day). */
+/** Inverse of etd: DPI days from mean pairwise tip distance (rounded to nearest day). */
 function dpiDaysFromTreeDiameter(diameter, dsr = getGroupDpiDailySubstitutionRate()) {
     if (!Number.isFinite(diameter) || diameter < 0) return null;
     if (!Number.isFinite(dsr) || !(dsr > 0)) return null;
     return Math.round(diameter / (2 * dsr));
 }
 
-/** Snapshot current etd for k-DPIs target-diameter default (alignment load / dsr-on-load).
+/** Snapshot current etd for k-DPIs target mean-distance default (alignment load / dsr-on-load).
  *  Also seeds tree-SVG Mutations/day (MPD) from the load-time dsr. */
 function snapshotEtdAtLoad() {
     const dsr = getGroupDpiDailySubstitutionRate();
@@ -2578,7 +2593,7 @@ function snapshotEtdAtLoad() {
     return state.etdAtLoad;
 }
 
-/** Default k-DPIs target cluster diameter: etd from load, else live etd. */
+/** Default k-DPIs target mean pairwise tree distance: etd from load, else live etd. */
 function getDefaultKDpisTargetDiameter() {
     if (state.etdAtLoad != null && Number.isFinite(state.etdAtLoad) && state.etdAtLoad >= 0) {
         return state.etdAtLoad;
@@ -2608,7 +2623,7 @@ function updateLoadedFileStatsDisplay() {
     const dsrStr = formatLoadSummaryNumber(dsr);
     const etdStr = formatLoadSummaryNumber(etd);
     dom.fileStatsDisplay.textContent = `s=${n}, f=${f}, nf=${nf}, dpi=${dpi}, dsr=${dsrStr}, etd=${etdStr}`;
-    dom.fileStatsDisplay.title = `${n} sequences, ${f} functional, ${nf} non-functional, dpi=${dpi} days, dsr=${dsrStr}, etd=${etdStr} (expected tree diameter = 2×dsr×dpi)`;
+    dom.fileStatsDisplay.title = `${n} sequences, ${f} functional, ${nf} non-functional, dpi=${dpi} days, dsr=${dsrStr}, etd=${etdStr} (expected mean pairwise tip distance = 2×dsr×dpi)`;
 }
 
 function applySubtypeToggleReset(hasSubtype) {
@@ -3207,7 +3222,7 @@ function runCollapseTask() {
 // --- Group Sequences by Name Field ---
 
 /** Default daily substitution rate for group DPI / etd estimates. */
-const DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE = 0.0001;
+const DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE = 0.00005;
 
 /** Reset dsr to the built-in default (no persistence across page reloads). */
 function initGroupDpiDailySubstitutionRate() {
@@ -3346,7 +3361,7 @@ function jukesCantorCorrectedDistance(p) {
  *   d = −(3/4) ln(1 − 4·api/3)
  *   dpi = d / (2 × dsr)
  * (The linear rule dpi = api/(2×dsr) is the infinite-sites limit of the same model.)
- * Callers typically pass the **maximum** pairwise p-distance within a group/cluster.
+ * Callers typically pass the **mean** pairwise p-distance within a group/cluster.
  * Returns nearest whole day, or null if undefined.
  */
 function estimateDpiDaysFromApi(api, dsr = getGroupDpiDailySubstitutionRate()) {
@@ -3379,7 +3394,7 @@ function computeGroupDpiEstimates() {
     }
     byGroup.forEach((seqs, gid) => {
         counts.set(gid, seqs.length);
-        const api = maxPairwisePDistance(seqs);
+        const api = averagePairwisePDistance(seqs);
         const dpi = estimateDpiDaysFromApi(api, dsr);
         if (dpi != null) estimates.set(gid, dpi);
     });
@@ -3529,7 +3544,7 @@ function computeClusterDpiEstimatesFromAssignment(nameToCluster) {
     });
     byCluster.forEach((seqs, cid) => {
         counts.set(cid, seqs.length);
-        const api = maxPairwisePDistance(seqs);
+        const api = averagePairwisePDistance(seqs);
         const dpi = estimateDpiDaysFromApi(api, dsr);
         if (dpi != null) estimates.set(cid, dpi);
     });
@@ -3590,7 +3605,7 @@ function showClusterDpiEstimatesWindow(leaves, clusters) {
     }
     const sortedIds = Array.from(ids).sort((a, b) => a - b);
     if (meta) {
-        meta.textContent = `api = max pairwise p-distance; JC69: d = −(3/4) ln(1 − 4·api/3); dpi = d / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day.`;
+        meta.textContent = `api = mean pairwise p-distance; JC69: d = −(3/4) ln(1 − 4·api/3); dpi = d / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day.`;
     }
     if (sortedIds.length === 0) {
         content.innerHTML = '<p style="margin:0;color:#6b7280;">No non-noise clusters available for DPI estimation.</p>';
@@ -4165,8 +4180,8 @@ function getSvgPxPerBranchUnit(branchLengthPerCm) {
     return SVG_PX_PER_CM / s;
 }
 
-/** Quarter of the 520 px branch region; expected branch length (DPI × MPD) is scaled to land here. */
-const DPI_SVG_EXPECTED_MARK_PX = 130;
+/** 1/16 of the 520 px branch region; expected root→tip depth (DPI × MPD) is scaled to land here. */
+const DPI_SVG_EXPECTED_MARK_PX = 520 / 16;
 
 /** Default days-post-infection for tree SVG export (matches #tree-svg-dpi-days initial value). */
 const DEFAULT_TREE_SVG_DPI_DAYS = 14;
@@ -4204,14 +4219,20 @@ function applyTreeSvgMpdFromDsr(dsr) {
     mpdEl.value = String(rate);
 }
 
-/** Pixels per tree branch-length unit for DPI scale: expected branch length (days x mutationsPerDay)
- *  maps to DPI_SVG_EXPECTED_MARK_PX (130 px, the 1/4 mark of the 520 px branch region). */
-function getDpiPxPerBranchUnit(days, mutationsPerDay) {
+/** Expected root→tip branch length for SVG DPI scale: DPI × MPD. */
+function expectedDpiSvgBranchLength(days, mutationsPerDay) {
     const d = parseFloat(days);
     const m = parseFloat(mutationsPerDay);
-    const expected = d * m;
-    const fallbackMpd = DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE;
-    if (!isFinite(expected) || expected <= 0) return DPI_SVG_EXPECTED_MARK_PX / (DEFAULT_TREE_SVG_DPI_DAYS * fallbackMpd);
+    if (!isFinite(d) || d <= 0 || !isFinite(m) || m <= 0) return null;
+    return d * m;
+}
+
+/** Pixels per tree branch-length unit for DPI scale: expected root→tip length (DPI × MPD)
+ *  maps to DPI_SVG_EXPECTED_MARK_PX (520/16 px, the 1/16 mark of the 520 px branch region). */
+function getDpiPxPerBranchUnit(days, mutationsPerDay) {
+    const expected = expectedDpiSvgBranchLength(days, mutationsPerDay);
+    const fallback = expectedDpiSvgBranchLength(DEFAULT_TREE_SVG_DPI_DAYS, DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
+    if (expected == null || !(expected > 0)) return DPI_SVG_EXPECTED_MARK_PX / fallback;
     return DPI_SVG_EXPECTED_MARK_PX / expected;
 }
 
@@ -5134,7 +5155,7 @@ function assignRadialInternalAngles(node) {
     node._svgAngle = count ? sum / count : 0;
 }
 
-/** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so days x mutationsPerDay lands at the plot 1/4 mark.
+/** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so DPI × MPD lands at the plot 1/16 mark.
  *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm).
  *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day. */
 function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
@@ -5143,13 +5164,13 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
     const R = 260;
     const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
-    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days x mpd). null = auto.
+    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days × mpd). null = auto.
     let scaleBarVal = null;
     let explicitPxPerUnit = null;
     if (isDpiScale) {
         // Halve to match the fixed-scale circular convention (radius R vs linear width 2R).
         explicitPxPerUnit = getDpiPxPerBranchUnit(dpiParams.days, dpiParams.mpd) * 0.5;
-        scaleBarVal = dpiParams.days * dpiParams.mpd;
+        scaleBarVal = expectedDpiSvgBranchLength(dpiParams.days, dpiParams.mpd);
     } else if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
         explicitPxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm) * 0.5;
         scaleBarVal = fixedBranchPerCm;
@@ -5364,7 +5385,7 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     return parts.join('');
 }
 
-/** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so days x mutationsPerDay lands at 130 px (1/4 of the 520 px branch width).
+/** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so DPI × MPD lands at 520/16 px (1/16 of the 520 px branch width).
  *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm).
  *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day. */
 function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
@@ -5375,14 +5396,14 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     const isFixedScale =
         scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10));
     const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
-    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days x mpd). null = auto.
+    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days × mpd). null = auto.
     let scaleBarVal = null;
     // Custom scale-bar annotation (DPI mode), null = default numeric label.
     let scaleBarLabel = null;
     let xScale;
     if (isDpiScale) {
         xScale = getDpiPxPerBranchUnit(dpiParams.days, dpiParams.mpd);
-        scaleBarVal = dpiParams.days * dpiParams.mpd;
+        scaleBarVal = expectedDpiSvgBranchLength(dpiParams.days, dpiParams.mpd);
         scaleBarLabel = `(${dpiParams.days} DPI @ ${dpiParams.mpd} = ${formatPhyloBranchLength(scaleBarVal)})`;
     } else if (isFixedScale) {
         xScale = getSvgPxPerBranchUnit(fixedBranchPerCm);
@@ -5462,7 +5483,7 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     }
     drawNode(state.tree.root);
 
-    // DPI: vertical dotted line marking the expected tree depth (end of the scale bar, at DPI x MPD).
+    // DPI: vertical dotted line marking the expected root→tip depth (end of the scale bar, at DPI × MPD).
     // Tips to the right mutate faster than expected; tips to the left mutate slower.
     if (isDpiScale) {
         const expectedX = leftPad + scaleBarVal * xScale;
@@ -6347,8 +6368,8 @@ function treePathDistancesFromNode(start) {
 }
 
 /**
- * Phylogeny diameter = maximum tip-to-tip path length (branch-length units).
- * Uses two farthest-leaf passes (O(n) on a tree).
+ * Mean pairwise tip-to-tip path length (branch-length units).
+ * Under a strict-clock star tree this equals the diameter (and etd = 2×dsr×DPI).
  */
 function computePhylogenyTreeDiameter(root) {
     if (!root) return null;
@@ -6374,35 +6395,61 @@ function computePhylogenyTreeDiameter(root) {
     collect(root);
     if (leaves.length < 2) return 0;
 
-    let dist = treePathDistancesFromNode(leaves[0]);
-    let farthest = leaves[0];
-    let maxD = -1;
-    for (let i = 0; i < leaves.length; i++) {
-        const d = dist.has(leaves[i]) ? dist.get(leaves[i]) : -1;
-        if (d > maxD) {
-            maxD = d;
-            farthest = leaves[i];
+    const nodeToRootDistance = new Map();
+    function calculateRootDistances(node, distanceFromRoot) {
+        const currentDistance = distanceFromRoot + (node.len || 0);
+        nodeToRootDistance.set(node, currentDistance);
+        if (node.children) {
+            node.children.forEach(child => calculateRootDistances(child, currentDistance));
         }
     }
-    dist = treePathDistancesFromNode(farthest);
-    let diameter = 0;
-    for (let i = 0; i < leaves.length; i++) {
-        const d = dist.has(leaves[i]) ? dist.get(leaves[i]) : 0;
-        if (d > diameter) diameter = d;
+    calculateRootDistances(root, 0);
+
+    function findLCA(node1, node2) {
+        const ancestors1 = new Set();
+        let current = node1;
+        while (current) {
+            ancestors1.add(current);
+            current = current.parent;
+        }
+        current = node2;
+        while (current) {
+            if (ancestors1.has(current)) return current;
+            current = current.parent;
+        }
+        return root;
     }
-    return diameter;
+
+    function treePathDistance(node1, node2) {
+        if (node1 === node2) return 0;
+        const lca = findLCA(node1, node2);
+        const dist1 = nodeToRootDistance.get(node1) || 0;
+        const dist2 = nodeToRootDistance.get(node2) || 0;
+        const distLCA = nodeToRootDistance.get(lca) || 0;
+        return (dist1 - distLCA) + (dist2 - distLCA);
+    }
+
+    let sum = 0;
+    let pairs = 0;
+    for (let i = 0; i < leaves.length; i++) {
+        for (let j = i + 1; j < leaves.length; j++) {
+            sum += treePathDistance(leaves[i], leaves[j]);
+            pairs++;
+        }
+    }
+    return pairs > 0 ? sum / pairs : 0;
 }
 
-function updatePhylogenyDiameterDisplay(diameter) {
+function updatePhylogenyDiameterDisplay(meanDist) {
     const el = dom.phyloDiameterDisplay || document.getElementById('phylo-diameter-display');
     if (!el) return;
-    if (diameter == null || !Number.isFinite(diameter)) {
-        el.textContent = 'diam=—';
-        el.title = 'Tree diameter = max tip-to-tip path length (branch-length units)';
+    if (meanDist == null || !Number.isFinite(meanDist)) {
+        el.textContent = 'mean=—';
+        el.title = 'Mean pairwise tip-to-tip path length (branch-length units)';
         return;
     }
-    el.textContent = `diam=${formatLoadSummaryNumber(diameter)}`;
-    el.title = `Tree diameter (max tip-to-tip path length) = ${diameter} branch-length units`;
+    el.textContent = `mean=${formatLoadSummaryNumber(meanDist)}`;
+    el.title = `Mean pairwise tip-to-tip path length = ${meanDist} branch-length units`;
 }
 
 function parseTree(newick, isIndexed = false, shouldReroot = true) {
@@ -7512,7 +7559,7 @@ function performUMAP(distanceMatrix, nNeighbors = 15, spread = 1.0, minDist = 0.
     }
 }
 
-// --- k-DPIs: divisive clustering by tree diameter (DPI annotation from sequences) ---
+// --- k-DPIs: divisive clustering by mean pairwise tree distance (DPI annotation from sequences) ---
 
 /** Session caches: sequence p-distances (DPI labels) and tree path distances (splitting). */
 let kDpisDistCache = null;
@@ -7630,40 +7677,38 @@ function buildKDpisTreeDistCache(entries) {
     return kDpisTreeDistCache;
 }
 
-/** Maximum pairwise sequence p-distance among global sequence-cache indices (null if < 2). */
-function maxApiFromCacheIndices(indices) {
+/** Mean pairwise sequence p-distance among global sequence-cache indices (null if < 2). */
+function meanApiFromCacheIndices(indices) {
     if (!kDpisDistCache || !indices || indices.length < 2) return null;
     const P = kDpisDistCache.P;
     const m = indices.length;
-    let maxP = 0;
+    let sum = 0;
     let pairs = 0;
     for (let a = 0; a < m; a++) {
         const ia = indices[a];
         for (let b = a + 1; b < m; b++) {
-            const p = P[ia][indices[b]];
-            if (p > maxP) maxP = p;
+            sum += P[ia][indices[b]];
             pairs++;
         }
     }
-    return pairs > 0 ? maxP : null;
+    return pairs > 0 ? sum / pairs : null;
 }
 
-/** Maximum pairwise tree path distance among tree-cache indices (cluster diameter). */
-function maxTreeDistFromCacheIndices(indices) {
+/** Mean pairwise tree path distance among tree-cache indices. */
+function meanTreeDistFromCacheIndices(indices) {
     if (!kDpisTreeDistCache || !indices || indices.length < 2) return null;
     const T = kDpisTreeDistCache.T;
     const m = indices.length;
-    let maxD = 0;
+    let sum = 0;
     let pairs = 0;
     for (let a = 0; a < m; a++) {
         const ia = indices[a];
         for (let b = a + 1; b < m; b++) {
-            const d = T[ia][indices[b]];
-            if (d > maxD) maxD = d;
+            sum += T[ia][indices[b]];
             pairs++;
         }
     }
-    return pairs > 0 ? maxD : null;
+    return pairs > 0 ? sum / pairs : null;
 }
 
 /** Map entry list → global cache indices for sequence or tree cache. */
@@ -7679,29 +7724,29 @@ function kDpisEntriesToCacheIndices(entries, cache) {
 }
 
 /**
- * DPI annotation for a list of {name,seq} entries (max pairwise sequence p-distance + JC69).
+ * DPI annotation for a list of {name,seq} entries (mean pairwise sequence p-distance + JC69).
  * Not used as the split objective.
  */
 function dpiForKDpisEntries(entries) {
     if (!entries || entries.length < 2) return null;
     const indices = kDpisEntriesToCacheIndices(entries, kDpisDistCache);
     const api = indices
-        ? maxApiFromCacheIndices(indices)
-        : maxPairwisePDistance(entries.map(e => e.seq));
+        ? meanApiFromCacheIndices(indices)
+        : averagePairwisePDistance(entries.map(e => e.seq));
     return estimateDpiDaysFromApi(api);
 }
 
-/** Cluster diameter = max pairwise tree path distance among entries. */
+/** Cluster split metric = mean pairwise tree path distance among entries. */
 function diameterForKDpisEntries(entries) {
     if (!entries || entries.length < 2) return null;
     const indices = kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache);
     if (!indices) return null;
-    return maxTreeDistFromCacheIndices(indices);
+    return meanTreeDistFromCacheIndices(indices);
 }
 
 /**
- * Score a bipartition using size-weighted tree diameters of the two children.
- * Objective: minimise n1·d1 + n2·d2 (ni = child size, di = child diameter).
+ * Score a bipartition using mean tree distances of the two children.
+ * Objective: minimise max(d1, d2) (di = child mean pairwise tree distance).
  * indices[i] = tree-cache index for local position i; labels[i] ∈ {0,1}.
  */
 function scoreKDpisBipartitionCached(indices, labels, minSize, allowNoiseOnly) {
@@ -7715,11 +7760,11 @@ function scoreKDpisBipartitionCached(indices, labels, minSize, allowNoiseOnly) {
     const ok0 = g0.length >= minSize;
     const ok1 = g1.length >= minSize;
     if (!ok0 && !ok1 && !allowNoiseOnly) return null;
-    const d0 = maxTreeDistFromCacheIndices(g0);
-    const d1 = maxTreeDistFromCacheIndices(g1);
+    const d0 = meanTreeDistFromCacheIndices(g0);
+    const d1 = meanTreeDistFromCacheIndices(g1);
     const v0 = d0 == null ? 0 : d0;
     const v1 = d1 == null ? 0 : d1;
-    const score = g0.length * v0 + g1.length * v1;
+    const score = Math.max(v0, v1);
     const tier = (ok0 && ok1) ? 0 : ((ok0 || ok1) ? 1 : 2);
     return { tier, score };
 }
@@ -7733,8 +7778,9 @@ function isBetterKDpisBipScore(cand, best) {
 }
 
 /**
- * Find a bipartition that minimises the size-weighted sum of child tree-diameters (n1·d1 + n2·d2).
+ * Find a bipartition that minimises max(child mean tree distances).
  * Voronoi / local search use the tree path-distance matrix.
+ * Returns { left, right, score } or null.
  */
 function bestKDpisBipartition(entries, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
@@ -7795,7 +7841,7 @@ function bestKDpisBipartition(entries, minSize, opts) {
             }
         }
     }
-    if (!bestLabels) return null;
+    if (!bestLabels || !bestMeta) return null;
 
     let improved = true;
     while (improved) {
@@ -7818,7 +7864,7 @@ function bestKDpisBipartition(entries, minSize, opts) {
     const left = [];
     const right = [];
     for (let i = 0; i < n; i++) (bestLabels[i] === 0 ? left : right).push(entries[i]);
-    return [left, right];
+    return { left, right, score: bestMeta.score };
 }
 
 /** Create a k-DPIs tree node from sequence entries. */
@@ -7828,6 +7874,7 @@ function makeKDpisNode(entries) {
         n: entries.length,
         diameter: diameterForKDpisEntries(entries),
         dpi: dpiForKDpisEntries(entries),
+        unsplittable: false, // true after a failed bipartition attempt (kept as a normal cluster)
         left: null,
         right: null
     };
@@ -7851,7 +7898,8 @@ function collectKDpisLeaves(root, out) {
 }
 
 /**
- * Choose the current leaf to split: largest tree diameter, then largest size.
+ * Choose the current leaf to split: largest mean pairwise tree distance, then largest size.
+ * Skips leaves already marked unsplittable after a failed split attempt.
  * @param {{requireDiameterAbove?: number|null, allowNoiseOnly?: boolean}} opts
  */
 function findKDpisLeafToSplit(root, minSize, opts) {
@@ -7864,6 +7912,7 @@ function findKDpisLeafToSplit(root, minSize, opts) {
     let maxDiam = -Infinity;
     for (let i = 0; i < leaves.length; i++) {
         const leaf = leaves[i];
+        if (leaf.unsplittable) continue;
         if (leaf.n < minSplitN) continue;
         if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
         if (requireDiameterAbove != null && !(leaf.diameter > requireDiameterAbove)) continue;
@@ -7876,6 +7925,7 @@ function findKDpisLeafToSplit(root, minSize, opts) {
     if (requireDiameterAbove != null) return null;
     let maxLen = minSplitN - 1;
     for (let i = 0; i < leaves.length; i++) {
+        if (leaves[i].unsplittable) continue;
         if (leaves[i].n > maxLen) {
             maxLen = leaves[i].n;
             best = leaves[i];
@@ -7884,52 +7934,122 @@ function findKDpisLeafToSplit(root, minSize, opts) {
     return best && best.n >= minSplitN ? best : null;
 }
 
+/** True if some leaf is above Auto target (or large enough for +) but marked unsplittable. */
+function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
+    minSize = Math.max(1, parseInt(minSize, 10) || 1);
+    const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
+    const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
+    const minSplitN = (requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
+    const leaves = collectKDpisLeaves(root);
+    for (let i = 0; i < leaves.length; i++) {
+        const leaf = leaves[i];
+        if (!leaf.unsplittable || leaf.n < minSplitN) continue;
+        if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+        if (requireDiameterAbove != null && !(leaf.diameter > requireDiameterAbove)) continue;
+        return true;
+    }
+    return false;
+}
+
 /**
  * Split one leaf in-place; returns true on success.
+ * Minimises max(d1,d2). If that best value is greater than the parent mean
+ * distance d (or no valid bipartition exists), leave the leaf intact, mark it
+ * unsplittable, and return false so the caller can try another leaf.
  * @param {{allowNoiseOnly?: boolean}} opts
  */
 function splitKDpisLeaf(leaf, minSize, opts) {
-    if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf)) return false;
+    if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf) || leaf.unsplittable) return false;
+    const parentD = (leaf.diameter != null && Number.isFinite(leaf.diameter)) ? leaf.diameter : null;
     const bip = bestKDpisBipartition(leaf.entries, minSize, opts);
-    if (!bip) return false;
-    leaf.left = makeKDpisNode(bip[0]);
-    leaf.right = makeKDpisNode(bip[1]);
+    if (!bip || (parentD != null && bip.score > parentD)) {
+        leaf.unsplittable = true;
+        leaf.left = null;
+        leaf.right = null;
+        return false;
+    }
+    leaf.unsplittable = false;
+    leaf.left = makeKDpisNode(bip.left);
+    leaf.right = makeKDpisNode(bip.right);
     return true;
 }
 
-/** Undo a split: clear children of a previously split node. */
+/** Undo a split: clear children. */
 function joinKDpisNode(node) {
     if (!node) return;
     node.left = null;
     node.right = null;
 }
 
+/** Map normalized tip name → vertical row index in the current phylogeny layout (top = 0). */
+function buildKDpisPhyloTipYOrder() {
+    const order = new Map();
+    if (state.viewSequences) {
+        state.viewSequences.forEach((s, i) => {
+            if (s && s.name) order.set(normalizeSequenceName(s.name), i);
+        });
+    }
+    return order;
+}
+
+/** Representative vertical position of a k-DPIs leaf (min tip yRow among members; lower = higher on tree). */
+function kDpisLeafPhyloY(leaf, tipYOrder) {
+    if (!leaf || !leaf.entries || leaf.entries.length === 0) return Infinity;
+    let minY = Infinity;
+    for (let i = 0; i < leaf.entries.length; i++) {
+        const y = tipYOrder.get(leaf.entries[i].name);
+        if (y != null && y < minY) minY = y;
+    }
+    return minY;
+}
+
 /**
  * Build name→clusterId map from current leaves.
- * Leaves with n < minSize → id -1 (noise); others renumbered 1..k in DFS order.
+ * Non-noise leaves are numbered 1..k by phylogeny tip order: clusters nearer the
+ * top of the tree (smaller yRow) get lower IDs; those toward the bottom get higher IDs.
+ * Unsplittable leaves remain normal clusters (not noise).
  */
 function kDpisNameToClusterFromRoot(root, minSize) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
     const leaves = collectKDpisLeaves(root);
+    const tipYOrder = buildKDpisPhyloTipYOrder();
     const nameToCluster = new Map();
     const clusters = [];
-    let nextId = 1;
     let noiseCount = 0;
+
+    const noiseLeaves = [];
+    const clusterLeaves = [];
     leaves.forEach(leaf => {
-        if (leaf.n < minSize) {
-            leaf.clusterId = -1;
-            leaf.isNoise = true;
-            leaf.entries.forEach(e => nameToCluster.set(e.name, -1));
-            noiseCount += leaf.n;
-            clusters.push({ id: -1, entries: leaf.entries, n: leaf.n, dpi: leaf.dpi, node: leaf, isNoise: true });
-        } else {
-            const id = nextId++;
-            leaf.clusterId = id;
-            leaf.isNoise = false;
-            leaf.entries.forEach(e => nameToCluster.set(e.name, id));
-            clusters.push({ id, entries: leaf.entries, n: leaf.n, dpi: leaf.dpi, node: leaf, isNoise: false });
-        }
+        if (leaf.n < minSize) noiseLeaves.push(leaf);
+        else clusterLeaves.push(leaf);
     });
+
+    clusterLeaves.sort((a, b) => {
+        const ya = kDpisLeafPhyloY(a, tipYOrder);
+        const yb = kDpisLeafPhyloY(b, tipYOrder);
+        if (ya !== yb) return ya - yb;
+        // Stable tie-break: larger cluster first, then original DFS order via identity
+        if (b.n !== a.n) return b.n - a.n;
+        return 0;
+    });
+
+    noiseLeaves.forEach(leaf => {
+        leaf.clusterId = -1;
+        leaf.isNoise = true;
+        leaf.entries.forEach(e => nameToCluster.set(e.name, -1));
+        noiseCount += leaf.n;
+        clusters.push({ id: -1, entries: leaf.entries, n: leaf.n, dpi: leaf.dpi, node: leaf, isNoise: true });
+    });
+
+    let nextId = 1;
+    clusterLeaves.forEach(leaf => {
+        const id = nextId++;
+        leaf.clusterId = id;
+        leaf.isNoise = false;
+        leaf.entries.forEach(e => nameToCluster.set(e.name, id));
+        clusters.push({ id, entries: leaf.entries, n: leaf.n, dpi: leaf.dpi, node: leaf, isNoise: false });
+    });
+
     return { nameToCluster, clusters, leaves, k: nextId - 1, noiseCount };
 }
 
@@ -8148,9 +8268,11 @@ function showKDpisModal() {
     const btnMinus = document.getElementById('btn-kdpis-minus');
     const btnPlus = document.getElementById('btn-kdpis-plus');
     const btnAuto = document.getElementById('btn-kdpis-auto');
+    const btnReset = document.getElementById('btn-kdpis-reset');
     const btnCancel = document.getElementById('btn-kdpis-cancel');
     const btnAccept = document.getElementById('btn-kdpis-accept');
     const minSizeEl = document.getElementById('kdpis-min-size');
+    const maxSplitsEl = document.getElementById('kdpis-max-splits');
     const targetDiamEl = document.getElementById('kdpis-target-diameter');
     const targetDpiEl = document.getElementById('kdpis-target-dpi');
     const noiseHintEl = document.getElementById('kdpis-noise-hint');
@@ -8162,7 +8284,6 @@ function showKDpisModal() {
     clearKDpisDistCache();
     let root = null; // set after distance caches are built
     const splitHistory = []; // stack of nodes that were split (for undo / join)
-    const K_MAX = 10;
     let currentNameToCluster = new Map();
     let busy = false;
     let syncingTargetFields = false;
@@ -8170,6 +8291,11 @@ function showKDpisModal() {
     function readMinSize() {
         const v = minSizeEl ? parseInt(minSizeEl.value, 10) : 2;
         return Math.max(1, Number.isFinite(v) ? v : 2);
+    }
+
+    function readMaxSplits() {
+        const v = maxSplitsEl ? parseInt(maxSplitsEl.value, 10) : 9;
+        return Math.max(0, Number.isFinite(v) ? v : 9);
     }
 
     function readTargetDiameter() {
@@ -8203,25 +8329,28 @@ function showKDpisModal() {
         });
     }
 
+    function updatePlusMinusEnabled() {
+        if (busy || !root) return;
+        const minSize = readMinSize();
+        const maxSplits = readMaxSplits();
+        btnMinus.disabled = splitHistory.length === 0;
+        btnPlus.disabled = splitHistory.length >= maxSplits || !findKDpisLeafToSplit(root, minSize);
+    }
+
     function setKDpisBusy(on, msg) {
         busy = !!on;
         if (busyEl) {
             busyEl.style.display = on ? 'flex' : 'none';
             if (on && busyMsgEl) busyMsgEl.textContent = msg || 'Working...';
         }
-        [btnMinus, btnPlus, btnAuto, btnCancel, btnAccept, minSizeEl, targetDiamEl, targetDpiEl].forEach(el => {
+        [btnMinus, btnPlus, btnAuto, btnReset, btnCancel, btnAccept, minSizeEl, maxSplitsEl, targetDiamEl, targetDpiEl].forEach(el => {
             if (el) el.disabled = !!on;
         });
-        if (!on && root) {
-            // Re-enable +/- based on current state after busy ends
-            const minSize = readMinSize();
-            const { k } = kDpisNameToClusterFromRoot(root, minSize);
-            btnMinus.disabled = splitHistory.length === 0;
-            btnPlus.disabled = k >= K_MAX || !findKDpisLeafToSplit(root, minSize);
-        }
+        if (!on && root) updatePlusMinusEnabled();
     }
 
     if (minSizeEl) minSizeEl.value = String(Math.max(1, parseInt(minSizeEl.value, 10) || 2));
+    if (maxSplitsEl) maxSplitsEl.value = String(Math.max(0, parseInt(maxSplitsEl.value, 10) || 9));
     if (targetDiamEl) targetDiamEl.value = String(getDefaultKDpisTargetDiameter());
     syncTargetDpiFromDiameter();
 
@@ -8232,11 +8361,11 @@ function showKDpisModal() {
         refresh();
     }
 
+    // Parameter edits only update linked fields / labels — do not reset the bubble tree until Reset or Auto.
     if (targetDiamEl) {
         const onTargetDiamEdit = () => {
             if (busy || syncingTargetFields) return;
             syncTargetDpiFromDiameter();
-            resetKDpisToOneCluster();
         };
         targetDiamEl.addEventListener('input', onTargetDiamEdit);
         targetDiamEl.addEventListener('change', onTargetDiamEdit);
@@ -8245,7 +8374,6 @@ function showKDpisModal() {
         const onTargetDpiEdit = () => {
             if (busy || syncingTargetFields) return;
             syncTargetDiameterFromDpi();
-            resetKDpisToOneCluster();
         };
         targetDpiEl.addEventListener('input', onTargetDpiEdit);
         targetDpiEl.addEventListener('change', onTargetDpiEdit);
@@ -8258,10 +8386,7 @@ function showKDpisModal() {
         const { nameToCluster, k, noiseCount } = kDpisNameToClusterFromRoot(root, minSize);
         currentNameToCluster = nameToCluster;
         if (valueEl) valueEl.textContent = String(k);
-        if (!busy) {
-            btnMinus.disabled = splitHistory.length === 0;
-            btnPlus.disabled = k >= K_MAX || !findKDpisLeafToSplit(root, minSize);
-        }
+        if (!busy) updatePlusMinusEnabled();
         if (noiseHintEl) {
             noiseHintEl.textContent = noiseCount > 0
                 ? `Noise: ${noiseCount} sequence(s) in leaves smaller than min size ${minSize} (labelled _cl-na on Accept).`
@@ -8274,21 +8399,27 @@ function showKDpisModal() {
     btnPlus.onclick = async () => {
         if (busy) return;
         const minSize = readMinSize();
-        const { k } = kDpisNameToClusterFromRoot(root, minSize);
-        if (k >= K_MAX) return;
-        const leaf = findKDpisLeafToSplit(root, minSize);
-        if (!leaf) {
-            alert('No further split possible (need a leaf large enough to yield a non-noise child).');
-            return;
-        }
+        const maxSplits = readMaxSplits();
+        if (splitHistory.length >= maxSplits) return;
         setKDpisBusy(true, 'Working...');
         await yieldToUi();
         try {
-            if (!splitKDpisLeaf(leaf, minSize)) {
-                alert('Could not find a valid bipartition for that cluster.');
-                return;
+            while (true) {
+                const leaf = findKDpisLeafToSplit(root, minSize);
+                if (!leaf) {
+                    if (kDpisHasUnsplittableBlockingLeaves(root, minSize, null)) {
+                        alert('All remaining clusters are unsplittable (no bipartition improves max child distance). Splitting stopped.');
+                    } else {
+                        alert('No further split possible (need a leaf large enough to yield a non-noise child).');
+                    }
+                    break;
+                }
+                if (splitKDpisLeaf(leaf, minSize)) {
+                    splitHistory.push(leaf);
+                    break;
+                }
+                // Failed: leaf marked unsplittable; try the next candidate.
             }
-            splitHistory.push(leaf);
             refresh();
         } finally {
             setKDpisBusy(false);
@@ -8306,6 +8437,17 @@ function showKDpisModal() {
         minSizeEl.onchange = () => { if (!busy) refresh(); };
         minSizeEl.oninput = () => { if (!busy) refresh(); };
     }
+    if (maxSplitsEl) {
+        maxSplitsEl.onchange = () => { if (!busy) updatePlusMinusEnabled(); };
+        maxSplitsEl.oninput = () => { if (!busy) updatePlusMinusEnabled(); };
+    }
+
+    if (btnReset) {
+        btnReset.onclick = () => {
+            if (busy) return;
+            resetKDpisToOneCluster();
+        };
+    }
 
     if (btnAuto) {
         btnAuto.onclick = async () => {
@@ -8314,7 +8456,7 @@ function showKDpisModal() {
             const target = readTargetDiameter();
             if (targetDiamEl) targetDiamEl.value = String(target);
             syncTargetDpiFromDiameter();
-            const maxSteps = Math.max(1, entries.length);
+            const maxSteps = readMaxSplits();
             setKDpisBusy(true, 'Working...');
             await yieldToUi();
             let steps = 0;
@@ -8327,18 +8469,30 @@ function showKDpisModal() {
                 await yieldToUi();
 
                 const autoOpts = { requireDiameterAbove: target, allowNoiseOnly: true };
+                let stoppedUnsplittable = false;
                 while (steps < maxSteps) {
                     const leaf = findKDpisLeafToSplit(root, minSize, autoOpts);
-                    if (!leaf) break;
-                    if (!splitKDpisLeaf(leaf, minSize, { allowNoiseOnly: true })) break;
+                    if (!leaf) {
+                        stoppedUnsplittable = kDpisHasUnsplittableBlockingLeaves(root, minSize, autoOpts);
+                        break;
+                    }
+                    if (!splitKDpisLeaf(leaf, minSize, { allowNoiseOnly: true })) {
+                        // Leaf marked unsplittable; try another without counting a split.
+                        if (busyMsgEl) busyMsgEl.textContent = 'Working... (skipping unsplittable cluster)';
+                        await yieldToUi();
+                        continue;
+                    }
                     splitHistory.push(leaf);
                     steps++;
                     // Update bubble plot (and k) after each split; defer full legend/tree preview until done
                     refresh({ skipPreview: true });
-                    if (busyMsgEl) busyMsgEl.textContent = `Working... (split ${steps})`;
+                    if (busyMsgEl) busyMsgEl.textContent = `Working... (split ${steps}/${maxSteps})`;
                     await yieldToUi();
                 }
                 refresh();
+                if (stoppedUnsplittable) {
+                    alert('Auto stopped: remaining clusters above the target are unsplittable (no bipartition improves max child distance).');
+                }
             } finally {
                 setKDpisBusy(false);
             }
