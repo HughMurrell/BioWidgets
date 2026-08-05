@@ -261,7 +261,7 @@
                 <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Mean pairwise tip-to-tip path length (branch-length units)">mean=—</span>
             </label>
             <div style="display:flex; gap:5px; align-items:center;">
-                <button id="btn-infer-tree" title="Infer NJ tree from sequences">Infer</button>
+                <button id="btn-infer-tree" title="Infer phylogeny (requires a founder)">Infer</button>
                 <input type="file" id="inp-tree" accept=".nwk,.newick,.tree,.tre,.treefile,.txt" style="display:none;">
                 <button id="btn-reroot-tree" title="Reroot tree on subtype sequence">Reroot</button>
                 <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
@@ -441,6 +441,11 @@
                 </select>
             </div>
         </div>
+
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: #374151; cursor: pointer;">
+            <input type="checkbox" id="chk-infer-root-ladderize" checked>
+            Root &amp; ladderize (reroot on founder, then ladderize by depth)
+        </label>
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button onclick="document.getElementById('infer-overlay').style.display='none'">Cancel</button>
@@ -635,7 +640,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits use <strong>mean</strong> pairwise <strong>tree</strong> path distances; bipartitions minimise <strong>max(d₁,d₂)</strong>. If a leaf cannot be improved that way it stays as an <strong>unsplittable</strong> cluster and the next leaf is tried. Bubble labels show sequence-based <strong>DPI</strong> (mean p-distance, JC69). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Auto</strong> until target or max splits; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits use <strong>mean</strong> pairwise <strong>tree</strong> path distances; bipartitions minimise <strong>max(d₁,d₂)</strong>. If a leaf cannot be improved that way it stays as an <strong>unsplittable</strong> cluster and the next leaf is tried. Bubble labels show sequence-based <strong>DPI</strong> (mean p-distance, JC69). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Auto</strong> until target or max splits; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target mean dist (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -651,6 +656,10 @@
                 <label style="font-size: 12px; color: #374151;" for="kdpis-min-size">Min cluster size:</label>
                 <input type="number" id="kdpis-min-size" value="2" min="1" step="1" style="width: 4em; padding: 2px 6px; font-size: 12px;">
             </div>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer;">
+                <input type="checkbox" id="chk-kdpis-remove-branch-outliers" checked>
+                Remove long-branch tips as noise (incoming branch &gt; target mean dist from ≈ DPI)
+            </label>
             <div style="display: flex; align-items: center; gap: 6px;">
                 <label style="font-size: 12px; color: #374151;" for="kdpis-target-diameter">Target mean dist:</label>
                 <input type="number" id="kdpis-target-diameter" value="0.002212" min="0" step="any" style="width: 7em; padding: 2px 6px; font-size: 12px;">
@@ -925,7 +934,7 @@
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
         <div class="help-row"><span class="help-key">Prune</span> <span>Remove sequences from deselected groups</span></div>
         <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
-        <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny using FastTree of Neighbor Joining</span></div>
+        <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny (requires founder; optional root &amp; ladderize)</span></div>
         <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
         <div class="help-row"><span class="help-key">Ladderize</span> <span>Ladderize tree and reorder sequences</span></div>
         <div class="help-row"><span class="help-key">Histogram</span> <span>Show histogram of root-to-leaf distances</span></div>
@@ -1175,7 +1184,7 @@ const state = {
     aioliCLI: null,
     isAASequence: false, // Flag to track if sequences are already amino acids (not DNA to be translated)
     leafClusters: null, // Map from leaf name to cluster ID (from MDS clustering)
-    lastAcceptedClusterMethod: null, // 'Hierarchical', 'Hierarchical-clade', 'UMAP', or 'MDS'
+    lastAcceptedClusterMethod: null, // 'Hierarchical', 'Hierarchical-clade', 'k-DPIs', 'UMAP', or 'MDS'
     hierarchicalActive: false, // Whether hierarchical clustering modal is active
     hierarchicalDepths: [0, 0, 0], // Current depth values for hierarchical clustering sliders
     sequenceGroups: null, // Map from sequence name to group ID (from grouping by name field)
@@ -1194,6 +1203,7 @@ const state = {
     clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), from mean pairwise p-distance
     clusterMemberCounts: null, // Map from cluster ID to sequence count (set with cluster DPI estimates)
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
+    pendingRootAndLadderize: false, // If true, parseTree will reroot on founder and ladderize by depth
     originalSubtype: null, // Store original subtype sequence for reverting
     currentFileName: null, // Store the current alignment file name
     rememberedExternalReference: null, // { text, fileName } — last reference FASTA for dual-load (no ref in alignment)
@@ -1325,13 +1335,26 @@ function enableButtonsAfterLoad() {
     if (dom.btnAa) dom.btnAa.disabled = false;
     if (dom.btnCollapseSequences) dom.btnCollapseSequences.disabled = false;
     if (dom.btnGroupSequences) dom.btnGroupSequences.disabled = false;
-    if (dom.btnInferTree) dom.btnInferTree.disabled = false;
     if (dom.btnDownload) dom.btnDownload.disabled = false;
     if (dom.btnClearAlignment) dom.btnClearAlignment.disabled = false;
     if (dom.selHighlight) dom.selHighlight.disabled = false;
     if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = false;
+    // Infer remains disabled until a founder is settled
+    syncInferButtonWithFounder();
     // Add Founder and Sort remain disabled until grouping is done
     // Histogram, Cluster, and tree export remain disabled until ladderize is done
+}
+
+/** Enable Infer only when an alignment is loaded and a founder has been designated. */
+function syncInferButtonWithFounder() {
+    if (!dom.btnInferTree) return;
+    const hasAlignment = !!(state.rawSequences && state.rawSequences.length >= 2);
+    const hasFounder = !!state.founderSequenceName;
+    dom.btnInferTree.disabled = !(hasAlignment && hasFounder);
+}
+
+function enableButtonsAfterFounder() {
+    syncInferButtonWithFounder();
 }
 
 function enableButtonsAfterGrouping() {
@@ -2396,6 +2419,7 @@ function undo() {
     state.founderSequenceName = prev.founderName || null;
     if(prev.refIdx < state.rawSequences.length) state.refIndex = prev.refIdx;
     else state.refIndex = 0;
+    syncInferButtonWithFounder();
     
     recalc();
 }
@@ -2893,11 +2917,17 @@ function loadTreeFile(file) {
         const newick = e.target.result;
         const validation = validateTreeNamesAgainstAlignment(newick);
         if (!validation.ok) {
+            state.pendingRootAndLadderize = false;
             showOverlay(false);
             alert(validation.message);
             return;
         }
         parseTree(newick, false, false); // Don't reroot when loading from file
+    };
+    reader.onerror = () => {
+        state.pendingRootAndLadderize = false;
+        showOverlay(false);
+        alert('Failed to read tree file.');
     };
     reader.readAsText(file);
 }
@@ -3574,6 +3604,12 @@ function refreshClusterDpiEstimates() {
     state.clusterDpiEstimates = computeClusterDpiEstimatesFromAssignment(state.leafClusters);
 }
 
+/** Legend label for noise cluster with member count. */
+function formatNoiseLegendLabel() {
+    const n = countSequencesInCluster(-1);
+    return n > 0 ? `Noise (${n})` : 'Noise';
+}
+
 /** Legend label for a cluster, e.g. "1 (8, 56)" = n sequences, dpi days. */
 function formatClusterLegendLabel(clusterId) {
     const base = String(clusterId);
@@ -4115,6 +4151,9 @@ function applySubtypeFounder() {
     
     // Close modal
     document.getElementById('subtype-overlay').style.display = 'none';
+
+    // Infer becomes available once a founder is settled
+    enableButtonsAfterFounder();
     
     // Re-render
     recalc();
@@ -4398,7 +4437,7 @@ function updateColorLegend() {
                 colorBox.style.borderRadius = '3px';
                 
                 const label = document.createElement('span');
-                label.textContent = 'Noise';
+                label.textContent = formatNoiseLegendLabel();
                 label.style.color = '#374151';
                 
                 item.appendChild(colorBox);
@@ -4480,16 +4519,24 @@ function showInferModal() {
         alert("Need at least 2 sequences to infer a tree.");
         return;
     }
+    if (!state.founderSequenceName) {
+        alert("Please add a founder before inferring a tree.");
+        return;
+    }
+    state.pendingRootAndLadderize = false;
     document.getElementById('infer-overlay').style.display = 'flex';
 }
 
 function runInferTask() {
     const method = document.getElementById('sel-infer-method').value;
+    const rootLadderizeChk = document.getElementById('chk-infer-root-ladderize');
+    state.pendingRootAndLadderize = !!(rootLadderizeChk && rootLadderizeChk.checked);
     document.getElementById('infer-overlay').style.display = 'none';
 
     if (method === 'load-tree') {
         if (!dom.fileTree) {
             alert("Tree file input is unavailable.");
+            state.pendingRootAndLadderize = false;
             return;
         }
         dom.fileTree.click();
@@ -4559,6 +4606,21 @@ function runInferTask() {
     }
 }
 
+/** After successful parseTree: optionally reroot on founder and ladderize by depth. */
+function maybeRootAndLadderizeAfterInfer() {
+    if (!state.pendingRootAndLadderize) return;
+    state.pendingRootAndLadderize = false;
+    if (!state.tree || !state.tree.root) return;
+    if (!state.founderSequenceName) {
+        console.warn('Root & ladderize skipped: no founder designated.');
+        return;
+    }
+    rerootTreeOnTarget('founder', { skipSave: true });
+    if (state.tree && state.tree.root) {
+        ladderizeTree('depth', { skipSave: true });
+    }
+}
+
 function inferTreeNJ() {
     const startTime = performance.now();
     showOverlay(true);
@@ -4580,6 +4642,7 @@ function inferTreeNJ() {
             
             if (nonRefSequences.length < 2) {
                 alert("Need at least 2 sequences (excluding reference, optional subtype, and PDB) to infer a tree.");
+                state.pendingRootAndLadderize = false;
                 showOverlay(false);
                 return;
             }
@@ -4599,6 +4662,7 @@ function inferTreeNJ() {
             console.log(`NJ Tree Inference completed in ${executionTime} seconds`);
         } catch (err) {
             console.error("Error inferring tree:", err);
+            state.pendingRootAndLadderize = false;
             alert("Failed to infer tree: " + err.message);
             showOverlay(false);
         }
@@ -4610,6 +4674,7 @@ async function runFastTreeTask() {
     
     if (!state.aioliCLI) {
         alert("FastTree (bioWASM) is not yet initialized. Please wait or refresh.");
+        state.pendingRootAndLadderize = false;
         return;
     }
 
@@ -4630,6 +4695,7 @@ async function runFastTreeTask() {
         
         if (nonRefSequences.length < 2) {
             alert("Need at least 2 sequences (excluding reference, optional subtype, and PDB) to infer a tree.");
+            state.pendingRootAndLadderize = false;
             showOverlay(false);
             return;
         }
@@ -4733,6 +4799,7 @@ async function runFastTreeTask() {
         }
     } catch (err) {
         console.error("FastTree error:", err);
+        state.pendingRootAndLadderize = false;
         alert("FastTree failed: " + err.message);
         showOverlay(false);
     }
@@ -5022,7 +5089,7 @@ function appendTreeSvgColorLegend(parts, legendX, legendY, legendW, legendH) {
         });
         if (hasNoise) {
             leg.push(`<rect x="${x0}" y="${y - sw / 2 + 1}" width="${sw}" height="${sw}" fill="#9ca3af" stroke="#d1d5db" stroke-width="1" rx="2"/>\n`);
-            leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">Noise</text>\n`);
+            leg.push(`<text x="${x0 + sw + 8}" y="${y + 4}" fill="#374151">${escapeXml(formatNoiseLegendLabel())}</text>\n`);
             y += rowH;
         }
     }
@@ -5894,7 +5961,7 @@ function runRerootTask() {
     }
 }
 
-function rerootTreeOnTarget(targetType) {
+function rerootTreeOnTarget(targetType, options = {}) {
     if (!state.tree || !state.tree.root) {
         alert("Please load or infer a tree first.");
         return;
@@ -5928,7 +5995,7 @@ function rerootTreeOnTarget(targetType) {
         alert("Invalid target type.");
         return;
     }
-    saveState();
+    if (!options.skipSave) saveState();
     
     // Find the subtype node first - prefer leaf nodes (actual sequences) over internal nodes with same name
     // Collect all nodes with matching name, then return the leaf one
@@ -6609,6 +6676,7 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
     
     recalc();
     showOverlay(false);
+    maybeRootAndLadderizeAfterInfer();
 }
 
 function applyTreeOrder(root) {
@@ -7383,6 +7451,8 @@ function showProjectionPlot(selectedMethod) {
         
         // Update state.sequenceGroups to use new names (with cluster suffix)
         rekeySequenceGroupsToCurrentNames();
+
+        state.lastAcceptedClusterMethod = selectedMethod === 'umap' ? 'UMAP' : 'MDS';
         
         refreshClusterDpiEstimates();
         // Update legend
@@ -7900,13 +7970,16 @@ function collectKDpisLeaves(root, out) {
 /**
  * Choose the current leaf to split: largest mean pairwise tree distance, then largest size.
  * Skips leaves already marked unsplittable after a failed split attempt.
- * @param {{requireDiameterAbove?: number|null, allowNoiseOnly?: boolean}} opts
+ * Auto mode: pass requireDpiAbove (sequence-based cluster DPI, same as legend/bubbles).
+ * Manual + mode: omit requireDpiAbove / requireDiameterAbove.
+ * @param {{requireDpiAbove?: number|null, requireDiameterAbove?: number|null, allowNoiseOnly?: boolean}} opts
  */
 function findKDpisLeafToSplit(root, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
+    const requireDpiAbove = opts && opts.requireDpiAbove != null ? opts.requireDpiAbove : null;
     const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
     const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
-    const minSplitN = (requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
+    const minSplitN = (requireDpiAbove != null || requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
     const leaves = collectKDpisLeaves(root);
     let best = null;
     let maxDiam = -Infinity;
@@ -7914,15 +7987,22 @@ function findKDpisLeafToSplit(root, minSize, opts) {
         const leaf = leaves[i];
         if (leaf.unsplittable) continue;
         if (leaf.n < minSplitN) continue;
-        if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
-        if (requireDiameterAbove != null && !(leaf.diameter > requireDiameterAbove)) continue;
-        if (leaf.diameter > maxDiam || (leaf.diameter === maxDiam && (!best || leaf.n > best.n))) {
-            maxDiam = leaf.diameter;
+        if (requireDpiAbove != null) {
+            if (leaf.dpi == null || !Number.isFinite(leaf.dpi) || !(leaf.dpi > requireDpiAbove)) continue;
+        } else if (requireDiameterAbove != null) {
+            if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+            if (!(leaf.diameter > requireDiameterAbove)) continue;
+        } else {
+            if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+        }
+        const sortKey = leaf.diameter != null && Number.isFinite(leaf.diameter) ? leaf.diameter : -Infinity;
+        if (sortKey > maxDiam || (sortKey === maxDiam && (!best || leaf.n > best.n))) {
+            maxDiam = sortKey;
             best = leaf;
         }
     }
     if (best) return best;
-    if (requireDiameterAbove != null) return null;
+    if (requireDpiAbove != null || requireDiameterAbove != null) return null;
     let maxLen = minSplitN - 1;
     for (let i = 0; i < leaves.length; i++) {
         if (leaves[i].unsplittable) continue;
@@ -7937,15 +8017,22 @@ function findKDpisLeafToSplit(root, minSize, opts) {
 /** True if some leaf is above Auto target (or large enough for +) but marked unsplittable. */
 function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
+    const requireDpiAbove = opts && opts.requireDpiAbove != null ? opts.requireDpiAbove : null;
     const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
     const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
-    const minSplitN = (requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
+    const minSplitN = (requireDpiAbove != null || requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
     const leaves = collectKDpisLeaves(root);
     for (let i = 0; i < leaves.length; i++) {
         const leaf = leaves[i];
         if (!leaf.unsplittable || leaf.n < minSplitN) continue;
-        if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
-        if (requireDiameterAbove != null && !(leaf.diameter > requireDiameterAbove)) continue;
+        if (requireDpiAbove != null) {
+            if (leaf.dpi == null || !Number.isFinite(leaf.dpi) || !(leaf.dpi > requireDpiAbove)) continue;
+        } else if (requireDiameterAbove != null) {
+            if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+            if (!(leaf.diameter > requireDiameterAbove)) continue;
+        } else {
+            if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+        }
         return true;
     }
     return false;
@@ -8041,6 +8128,24 @@ function kDpisNameToClusterFromRoot(root, minSize) {
         clusters.push({ id: -1, entries: leaf.entries, n: leaf.n, dpi: leaf.dpi, node: leaf, isNoise: true });
     });
 
+    const preNoise = root.preNoiseEntries || [];
+    if (preNoise.length > 0) {
+        preNoise.forEach(e => {
+            if (!e || !e.name) return;
+            nameToCluster.set(e.name, -1);
+            noiseCount += 1;
+        });
+        clusters.push({
+            id: -1,
+            entries: preNoise,
+            n: preNoise.length,
+            dpi: dpiForKDpisEntries(preNoise),
+            node: null,
+            isNoise: true,
+            isPreNoise: true
+        });
+    }
+
     let nextId = 1;
     clusterLeaves.forEach(leaf => {
         const id = nextId++;
@@ -8063,6 +8168,66 @@ function collectKDpisEntries() {
         entries.push({ name: normalizeSequenceName(seq.name), seq: seq.seq });
     }
     return entries;
+}
+
+/** Incoming branch length (node.len) for each k-DPIs entry from the current tree. */
+function getKDpisIncomingBranchLengths(entries) {
+    if (!state.tree || !state.tree.root || !entries || entries.length === 0) return [];
+    ensureKDpisTreeParents(state.tree.root, null);
+    const leafByNormName = new Map();
+    function collectLeaves(node) {
+        if (!node) return;
+        if (!node.children || node.children.length === 0) {
+            if (node.name) leafByNormName.set(normalizeSequenceName(node.name), node);
+            return;
+        }
+        node.children.forEach(collectLeaves);
+    }
+    collectLeaves(state.tree.root);
+    const out = [];
+    for (let i = 0; i < entries.length; i++) {
+        const leaf = leafByNormName.get(entries[i].name);
+        if (!leaf) continue;
+        const len = leaf.len != null && Number.isFinite(leaf.len) ? leaf.len : 0;
+        out.push({ name: entries[i].name, value: len });
+    }
+    return out;
+}
+
+/**
+ * Partition entries: pre-noise = incoming branch length > maxBranchLength.
+ * maxBranchLength is typically etd from target DPI (2 × dsr × DPI).
+ * @returns {{ clusterEntries: Array, preNoiseEntries: Array }}
+ */
+function partitionKDpisLongBranchNoise(entries, maxBranchLength) {
+    if (!entries || entries.length === 0) {
+        return { clusterEntries: [], preNoiseEntries: [] };
+    }
+    if (!Number.isFinite(maxBranchLength) || maxBranchLength < 0) {
+        return { clusterEntries: entries.slice(), preNoiseEntries: [] };
+    }
+    const lengths = getKDpisIncomingBranchLengths(entries);
+    const noiseNames = new Set();
+    lengths.forEach(({ name, value }) => {
+        if (Number.isFinite(value) && value > maxBranchLength) noiseNames.add(name);
+    });
+    if (!noiseNames.size) {
+        return { clusterEntries: entries.slice(), preNoiseEntries: [] };
+    }
+    const preNoiseEntries = [];
+    const clusterEntries = [];
+    entries.forEach(e => {
+        if (noiseNames.has(e.name)) preNoiseEntries.push(e);
+        else clusterEntries.push(e);
+    });
+    return { clusterEntries, preNoiseEntries };
+}
+
+/** k-DPIs root with optional pre-noise entries excluded from splits but labelled noise on Accept. */
+function makeKDpisClusterRoot(clusterEntries, preNoiseEntries) {
+    const root = makeKDpisNode(clusterEntries);
+    root.preNoiseEntries = (preNoiseEntries && preNoiseEntries.length) ? preNoiseEntries.slice() : [];
+    return root;
 }
 
 /** Assign layout coordinates (_x leaf-index, _y depth) for tree drawing. */
@@ -8264,6 +8429,7 @@ function showKDpisModal() {
         alert('No sample sequences available for k-DPIs (REF / SubType / PDB excluded).');
         return;
     }
+    const noiseRemovalChk = document.getElementById('chk-kdpis-remove-branch-outliers');
     const valueEl = document.getElementById('kdpis-k-value');
     const btnMinus = document.getElementById('btn-kdpis-minus');
     const btnPlus = document.getElementById('btn-kdpis-plus');
@@ -8288,6 +8454,19 @@ function showKDpisModal() {
     let busy = false;
     let syncingTargetFields = false;
 
+    function partitionForClustering() {
+        if (noiseRemovalChk && noiseRemovalChk.checked) {
+            const maxBranchLen = readTargetDiameter();
+            return partitionKDpisLongBranchNoise(entries, maxBranchLen);
+        }
+        return { clusterEntries: entries.slice(), preNoiseEntries: [] };
+    }
+
+    function buildClusterRoot() {
+        const { clusterEntries, preNoiseEntries } = partitionForClustering();
+        return makeKDpisClusterRoot(clusterEntries, preNoiseEntries);
+    }
+
     function readMinSize() {
         const v = minSizeEl ? parseInt(minSizeEl.value, 10) : 2;
         return Math.max(1, Number.isFinite(v) ? v : 2);
@@ -8296,6 +8475,14 @@ function showKDpisModal() {
     function readMaxSplits() {
         const v = maxSplitsEl ? parseInt(maxSplitsEl.value, 10) : 9;
         return Math.max(0, Number.isFinite(v) ? v : 9);
+    }
+
+    function readTargetDpi() {
+        if (targetDpiEl) {
+            const v = parseFloat(targetDpiEl.value);
+            if (Number.isFinite(v) && v >= 0) return Math.round(v);
+        }
+        return dpiDaysFromTreeDiameter(readTargetDiameter());
     }
 
     function readTargetDiameter() {
@@ -8343,7 +8530,7 @@ function showKDpisModal() {
             busyEl.style.display = on ? 'flex' : 'none';
             if (on && busyMsgEl) busyMsgEl.textContent = msg || 'Working...';
         }
-        [btnMinus, btnPlus, btnAuto, btnReset, btnCancel, btnAccept, minSizeEl, maxSplitsEl, targetDiamEl, targetDpiEl].forEach(el => {
+        [btnMinus, btnPlus, btnAuto, btnReset, btnCancel, btnAccept, minSizeEl, maxSplitsEl, targetDiamEl, targetDpiEl, noiseRemovalChk].forEach(el => {
             if (el) el.disabled = !!on;
         });
         if (!on && root) updatePlusMinusEnabled();
@@ -8357,7 +8544,7 @@ function showKDpisModal() {
     function resetKDpisToOneCluster() {
         if (!root || busy) return;
         splitHistory.length = 0;
-        root = makeKDpisNode(entries);
+        root = buildClusterRoot();
         refresh();
     }
 
@@ -8388,9 +8575,24 @@ function showKDpisModal() {
         if (valueEl) valueEl.textContent = String(k);
         if (!busy) updatePlusMinusEnabled();
         if (noiseHintEl) {
-            noiseHintEl.textContent = noiseCount > 0
-                ? `Noise: ${noiseCount} sequence(s) in leaves smaller than min size ${minSize} (labelled _cl-na on Accept).`
-                : `Leaves with fewer than ${minSize} sequence(s) are classified as noise.`;
+            const preNoiseN = (root && root.preNoiseEntries) ? root.preNoiseEntries.length : 0;
+            const minSizeNoise = Math.max(0, noiseCount - preNoiseN);
+            const maxBranchLen = readTargetDiameter();
+            const maxBranchStr = formatLoadSummaryNumber(maxBranchLen);
+            if (noiseCount > 0) {
+                const parts = [];
+                if (preNoiseN > 0) {
+                    parts.push(`${preNoiseN} incoming branch > target mean dist (${maxBranchStr})`);
+                }
+                if (minSizeNoise > 0) {
+                    parts.push(`${minSizeNoise} below min cluster size ${minSize}`);
+                }
+                noiseHintEl.textContent = `Noise: ${noiseCount} sequence(s) — ${parts.join('; ')} (labelled _cl-na on Accept).`;
+            } else if (noiseRemovalChk && noiseRemovalChk.checked) {
+                noiseHintEl.textContent = `Long-branch removal on: no tips with incoming branch > target mean dist (${maxBranchStr} = 2×dsr×DPI). Leaves with < ${minSize} sequence(s) are also noise.`;
+            } else {
+                noiseHintEl.textContent = `Leaves with fewer than ${minSize} sequence(s) are classified as noise.`;
+            }
         }
         drawKDpisBubbleTree(root);
         if (!skipPreview) applyKDpisPreview(nameToCluster);
@@ -8453,9 +8655,8 @@ function showKDpisModal() {
         btnAuto.onclick = async () => {
             if (busy) return;
             const minSize = readMinSize();
-            const target = readTargetDiameter();
-            if (targetDiamEl) targetDiamEl.value = String(target);
-            syncTargetDpiFromDiameter();
+            const targetDpi = readTargetDpi();
+            syncTargetDiameterFromDpi();
             const maxSteps = readMaxSplits();
             setKDpisBusy(true, 'Working...');
             await yieldToUi();
@@ -8463,12 +8664,14 @@ function showKDpisModal() {
             try {
                 // Always restart Auto from a single cluster (clear prior splits / bubble tree)
                 splitHistory.length = 0;
-                root = makeKDpisNode(entries);
+                root = buildClusterRoot();
                 refresh({ skipPreview: true });
                 if (busyMsgEl) busyMsgEl.textContent = 'Working... (reset to k=1)';
                 await yieldToUi();
 
-                const autoOpts = { requireDiameterAbove: target, allowNoiseOnly: true };
+                // Stop when every cluster's sequence-based DPI (legend/bubbles) is ≤ target DPI.
+                // Bipartitions still optimise tree mean pairwise distance; only the Auto stop rule uses DPI.
+                const autoOpts = { requireDpiAbove: targetDpi, allowNoiseOnly: true };
                 let stoppedUnsplittable = false;
                 while (steps < maxSteps) {
                     const leaf = findKDpisLeafToSplit(root, minSize, autoOpts);
@@ -8491,7 +8694,7 @@ function showKDpisModal() {
                 }
                 refresh();
                 if (stoppedUnsplittable) {
-                    alert('Auto stopped: remaining clusters above the target are unsplittable (no bipartition improves max child distance).');
+                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no bipartition improves max child tree distance).');
                 }
             } finally {
                 setKDpisBusy(false);
@@ -8541,21 +8744,24 @@ function showKDpisModal() {
     overlay.style.display = 'flex';
     // Tree distances for splitting; sequence distances for DPI annotation labels
     (async () => {
+        const { clusterEntries, preNoiseEntries } = partitionForClustering();
         setKDpisBusy(true, entries.length >= 100
-            ? `Precomputing distances (${entries.length} sequences)...`
+            ? `Precomputing distances (${clusterEntries.length} sequences)...`
             : 'Working...');
         await yieldToUi();
         try {
-            if (!buildKDpisTreeDistCache(entries)) {
+            if (clusterEntries.length > 0 && !buildKDpisTreeDistCache(clusterEntries)) {
                 alert('Could not match all sample sequences to tree leaves. Infer or load a tree that includes them.');
                 overlay.style.display = 'none';
                 clearKDpisDistCache();
                 return;
             }
             await yieldToUi();
-            if (busyMsgEl) busyMsgEl.textContent = 'Computing sequence DPI distances...';
-            buildKDpisDistCache(entries);
-            root = makeKDpisNode(entries);
+            if (clusterEntries.length > 0) {
+                if (busyMsgEl) busyMsgEl.textContent = 'Computing sequence DPI distances...';
+                buildKDpisDistCache(clusterEntries);
+            }
+            root = makeKDpisClusterRoot(clusterEntries, preNoiseEntries);
             refresh();
         } finally {
             setKDpisBusy(false);
@@ -8896,6 +9102,8 @@ function showHierarchicalModal() {
         
         // Update state.sequenceGroups to use new names (with cluster suffix)
         rekeySequenceGroupsToCurrentNames();
+
+        state.lastAcceptedClusterMethod = 'Hierarchical';
         
         refreshClusterDpiEstimates();
         updateColorLegend();
@@ -9098,6 +9306,7 @@ function showHierarchicalCladeModal() {
             state.leafClusters = updatedLeafClusters;
         }
         rekeySequenceGroupsToCurrentNames();
+        state.lastAcceptedClusterMethod = 'Hierarchical-clade';
         refreshClusterDpiEstimates();
         updateColorLegend();
         document.getElementById('hierarchical-clade-overlay').style.display = 'none';
@@ -10342,13 +10551,13 @@ function runLadderizeTask() {
     ladderizeTree(mode);
 }
 
-function ladderizeTree(mode) {
+function ladderizeTree(mode, options = {}) {
     if (!state.tree || !state.tree.root) {
         alert("Please load or infer a tree first.");
         return;
     }
     
-    saveState();
+    if (!options.skipSave) saveState();
     
     if (mode === 'weight') {
         // Sort by number of leaves (weight)

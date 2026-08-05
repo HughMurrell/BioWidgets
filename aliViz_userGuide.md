@@ -101,20 +101,24 @@ Functional leaves show only the cluster-coloured diamond with no oval. **Red is 
   - **Medoid sequence of a group (default):** Selects an **existing** sequence in the group that minimizes total **padded Hamming distance** to all other sequences in that group. The sequence **keeps its original name**; it is marked as founder and shown with the **[Founder]** label in the name column and tree.
 - **Switching modes:** Replacing a consensus founder removes or overwrites the synthetic `consensus_of_` row; switching to medoid on a group removes a previous synthetic founder if present and tags the medoid sequence instead.
 - **Clustering:** The founder is **not** forced into cluster 0. When **no subtype** is present, cluster IDs start at **1** (cluster 0 is reserved for subtype when it exists). A medoid founder participates in clustering like any other sample sequence; the **[Founder]** label is preserved after clustering (name matching tolerates `_cl-*` suffixes added by clustering).
-- **Usage:** Group sequences first (for group-based founders). Open **Add Founder**, choose **Founder source**, select a group (or **[SubType]** when available), then **Add Founder**. Tree inference is cleared; re-infer or load a tree afterward.
+- **Usage:** Group sequences first (for group-based founders). Open **Add Founder**, choose **Founder source**, select a group (or **[SubType]** when available), then **Add Founder**. Any existing tree is cleared; **Infer** becomes enabled once the founder is settled.
 
 ---
 
 ## 3. Tree inference and manipulation
 
 ### Infer
+- **Requirement:** A **founder** must be designated first (**Add Founder**). The **Infer** button stays disabled until then.
 - **Function:** Build or load a phylogeny for the current alignment (excluding REF, subtype when present, and PDB chains; **including** founder sequences, including medoid founders).
 - **Methods:**
   - **Load inferred tree (Newick file)** (default in the infer dialog): Opens a file picker for an existing **Newick** tree. Accepted extensions: **`.nwk`**, **`.newick`**, **`.tree`**, **`.treefile`**, **`.txt`**.
   - **FastTree**: Uses FastTree (via bioWASM) on the alignment. Model options appear for NT and AA.
   - **Neighbor Joining (NJ):** Uses PhyloTools (pairwise distances → NJ tree).
+- **Root & ladderize:** The infer dialog includes a **Root & ladderize** checkbox (on by default). When checked, after the tree is inferred or loaded aliViz automatically **reroots on the founder** and then **ladderizes by depth** (same as the Reroot and Ladderize tools). Uncheck to leave the raw inferred/loaded tree and run those steps manually.
 - **Loading an external tree:** Leaf names in the Newick file must match alignment sequence names after normalization (cluster suffixes `_cl-*` are ignored for comparison). **Reference**, **subtype** (if present), and **PDB chains** are excluded from the required leaf set. A medoid founder keeps its sample name in the alignment, so tree leaves should use that name—not a separate `consensus_of_` name. If names do not match, loading is aborted with a message listing missing or extra leaves.
 - **Mean pairwise distance:** After a tree is inferred or loaded, aliViz computes the **mean pairwise tip-to-tip path length** (branch-length units) and shows it beside the **Phylogeny** control label as **`mean=…`**. It clears when the tree is removed.
+
+### Reroot
 - **Function:** Reroot the tree on the **Founder** sequence.
 - **Targets:** **Founder** (requires a founder to be defined—consensus or medoid).
 - **Algorithm:** The founder leaf is located and the tree is rerooted at the edge leading to it so that the founder is the outgroup. Branch lengths and topology are preserved; only the root position changes.
@@ -213,10 +217,11 @@ Each method clusters sample sequences; **Reference**, **Subtype** (if present), 
   - **k** starts at **1**. Use **+** / **−** to increase or decrease k. Each **+** splits the current leaf with the largest mean tree distance; each **−** undoes the last split. Split history is remembered so decreases restore the prior partition. **+** and **Auto** stop after **Max splits** (default **9**).
   - **Max splits** (default **9**): upper bound on how many times the tree may be split (**+** or **Auto**).
   - **Min cluster size** (default **2**): any leaf with fewer than this many sequences is **noise** (−1 / `_cl-na`) and is excluded from the reported k.
-  - **Target mean dist** (default = **etd** from alignment load: **etd = 2 × dsr × DPI**) with a linked **≈ DPI** field (rounded nearest day; either field updates the other via the same formula). Editing target / DPI / min size / max splits does **not** clear the bubble tree; use **Reset** (back to one cluster) or **Auto** (reset then split until mean distance ≤ target or max splits). Undersized children become **noise**. Auto may split pairs into noise-only leaves when needed.
+  - **Remove long-branch tips as noise** (default **on**): when checked, at **open**, **Reset**, and **Auto** start, tips whose incoming branch length (`node.len`) is **greater than** the **target mean dist** field (linked to **≈ DPI** via **etd = 2 × dsr × DPI**) are marked **noise** and **excluded from splitting**. Uncheck to cluster all tips.
+  - **Target mean dist** (default = **etd** from alignment load: **etd = 2 × dsr × DPI**) with a linked **≈ DPI** field (rounded nearest day; either field updates the other via the same formula). **Auto** uses the **≈ DPI** value as its stop target: it keeps splitting only while some cluster’s **sequence-based DPI** (mean pairwise p-distance + JC69, same as legend/bubble labels) is **greater than** that target. Bipartitions themselves still use **tree** mean pairwise distances. Editing target / DPI / min size / max splits does **not** clear the bubble tree; use **Reset** (back to one cluster) or **Auto** (reset then split until all cluster DPIs ≤ target or max splits). Undersized children become **noise**. Auto may split pairs into noise-only leaves when needed.
 - **Algorithm:**
-  1. On open: build a **tree path-distance** matrix for splitting, and a **sequence p-distance** matrix for DPI annotation.
-  2. Start with one cluster (all sample sequences; REF / SubType / PDB excluded). Leaf **mean dist** = mean pairwise tree distance; leaf **dpi** = JC69(mean pairwise sequence p-distance) / (2 × dsr).
+  1. On open: optionally remove branch-length outliers as pre-noise; build a **tree path-distance** matrix for splitting (remaining sequences), and a **sequence p-distance** matrix for DPI annotation.
+  2. Start with one cluster (sample sequences after optional outlier removal; REF / SubType / PDB excluded). Leaf **mean dist** = mean pairwise tree distance; leaf **dpi** = JC69(mean pairwise sequence p-distance) / (2 × dsr).
   3. On **+**: select a leaf eligible to split (size ≥ min size + 1) with the **largest mean dist**. On **Auto**: any leaf with n ≥ 2 and mean dist > target.
   4. **Bipartition search** for that leaf (on tree distances): seed pairs (all pairs if n≤30; else farthest-point sample of 20 seeds) → Voronoi labels by nearer seed → score = **max(d₁, d₂)** (child mean pairwise tree distances; prefer both sides ≥ min size). Then local search of single-point moves until no improvement. If the best score is **greater than** the parent leaf’s mean distance (or no valid bipartition exists), **leave the leaf as an unsplittable cluster** and try the next candidate. If every remaining candidate is unsplittable, stop and **warn**.
   5. On **−**: reverse the most recent split.
@@ -359,16 +364,16 @@ If BH(k) = 0, the adapted index is returned as ∞.
 | Prune          | Remove sequences in selected groups; renumber group IDs. |
 | Founder consensus | Majority per column over selected group; `consensus_of_*` name. |
 | Founder medoid | Minimize sum of padded Hamming distances to other group sequences; keep original name; `[Founder]` label. |
-| NJ tree        | PhyloTools from alignment (pairwise distances → NJ). |
-| FastTree       | bioWASM FastTree on alignment. |
-| Load Newick    | Parse Newick; validate leaf names vs alignment; no auto-reroot on subtype. |
+| NJ tree        | PhyloTools from alignment (pairwise distances → NJ); optional auto root on founder + ladderize by depth. |
+| FastTree       | bioWASM FastTree on alignment; optional auto root on founder + ladderize by depth. |
+| Load Newick    | Parse Newick; validate leaf names vs alignment; optional auto root on founder + ladderize by depth (Infer dialog). |
 | Reroot         | Find founder leaf; reroot on edge to that leaf. |
 | Ladderize      | By weight: sort children by leaf count. By depth: sort by max root-to-leaf depth in subtree. |
 | Histogram      | Root-to-leaf distance = sum of branch lengths; bin and plot. |
 | SVG scale      | Auto: fit to 520 px (linear) / R=260 (circular, ½ px per unit). Fixed: branch length per cm; overflow check. DPI: days default from filename (`dpi±N`, max if several) else 14; MPD seeded from load-time dsr; expected root→tip depth (DPI × MPD) → 32.5 px = 1/16 mark (linear) / 16.25 px (circular); no overflow abort (truncate at right border, half diamond + red oval if non-functional on clipped tips); dotted expected-depth line. |
 | Tree-clade     | DFS; new cluster when edge length > threshold; min-leaves → noise. |
 | Tree-cut       | Three depth cutoffs; BFS assign clusters; min-leaves → noise. |
-| k-DPIs         | Divisive tree: minimise max(d₁,d₂); failed improve → unsplittable (kept as cluster), try next; if all unsplittable → warn/stop; +/−; Max splits (default 9); Reset → k=1; Auto until target or max splits; min size → noise; sequence mean-p DPI labels; bubble tree. |
+| k-DPIs         | Divisive tree: minimise max(d₁,d₂); optional pre-noise if incoming branch &gt; target etd (default on); failed improve → unsplittable (kept as cluster), try next; if all unsplittable → warn/stop; +/−; Max splits (default 9); Reset → k=1; Auto until all cluster DPIs ≤ target (sequence JC69) or max splits; min size → noise; sequence mean-p DPI labels; bubble tree. |
 | Cluster None   | Clear `leafClusters`; strip `_cl-*`; keep groups. |
 | MDS            | B = −0.5·H·D²·H; eigendecomposition; coords = eigenvectors × √(eigenvalues). |
 | UMAP           | External UMAP on distances → 2D. |
