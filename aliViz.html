@@ -475,7 +475,7 @@
                 <option value="none">None</option>
                 <option value="hierarchical-clade">Hierarchical (tree-clade clustering)</option>
                 <option value="hierarchical">Hierarchical (tree-cut clustering)</option>
-                <option value="k-dpis">k-DPIs (divisive mean-distance clustering)</option>
+                <option value="k-dpis">k-DPIs (divisive max-depth clustering)</option>
                 <option value="umap">UMAP (Uniform Manifold Approximation and Projection)</option>
                 <option value="mds" selected>MDS (Classical Multidimensional Scaling)</option>
             </select>
@@ -640,7 +640,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits use <strong>mean</strong> pairwise <strong>tree</strong> path distances; bipartitions minimise <strong>max(d₁,d₂)</strong>. If a leaf cannot be improved that way it stays as an <strong>unsplittable</strong> cluster and the next leaf is tried. Bubble labels show sequence-based <strong>DPI</strong> (mean p-distance, JC69). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Auto</strong> until target or max splits; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target mean dist (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate cuts off the descendant tip set vs the remainder; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). <strong>Auto</strong> stops when every cluster’s tree-based <strong>DPI</strong> ≤ target DPI. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -661,10 +661,10 @@
                 Remove long-branch tips as noise (incoming branch &gt; target mean dist from ≈ DPI)
             </label>
             <div style="display: flex; align-items: center; gap: 6px;">
-                <label style="font-size: 12px; color: #374151;" for="kdpis-target-diameter">Target mean dist:</label>
+                <label style="font-size: 12px; color: #374151;" for="kdpis-target-diameter">Target max depth:</label>
                 <input type="number" id="kdpis-target-diameter" value="0.002212" min="0" step="any" style="width: 7em; padding: 2px 6px; font-size: 12px;">
                 <label style="font-size: 12px; color: #374151;" for="kdpis-target-dpi">≈ DPI:</label>
-                <input type="number" id="kdpis-target-dpi" value="14" min="0" step="1" style="width: 5em; padding: 2px 6px; font-size: 12px;" title="Equivalent days: mean dist ≈ 2 × dsr × DPI">
+                <input type="number" id="kdpis-target-dpi" value="14" min="0" step="1" style="width: 5em; padding: 2px 6px; font-size: 12px;" title="Target max depth ≈ 2 × dsr × DPI">
                 <button type="button" id="btn-kdpis-reset" style="padding: 4px 10px; font-size: 12px;" title="Clear splits and return to one cluster">Reset</button>
                 <button type="button" id="btn-kdpis-auto" style="padding: 4px 10px; font-size: 12px;">Auto</button>
             </div>
@@ -2608,7 +2608,7 @@ function dpiDaysFromTreeDiameter(diameter, dsr = getGroupDpiDailySubstitutionRat
     return Math.round(diameter / (2 * dsr));
 }
 
-/** Snapshot current etd for k-DPIs target mean-distance default (alignment load / dsr-on-load).
+/** Snapshot current etd for k-DPIs target max-depth default (alignment load / dsr-on-load).
  *  Also seeds tree-SVG Mutations/day (MPD) from the load-time dsr. */
 function snapshotEtdAtLoad() {
     const dsr = getGroupDpiDailySubstitutionRate();
@@ -2617,7 +2617,7 @@ function snapshotEtdAtLoad() {
     return state.etdAtLoad;
 }
 
-/** Default k-DPIs target mean pairwise tree distance: etd from load, else live etd. */
+/** Default k-DPIs target max depth: etd from load, else live etd. */
 function getDefaultKDpisTargetDiameter() {
     if (state.etdAtLoad != null && Number.isFinite(state.etdAtLoad) && state.etdAtLoad >= 0) {
         return state.etdAtLoad;
@@ -7008,6 +7008,44 @@ function showMdsModal() {
     document.getElementById('method-select-overlay').style.display = 'flex';
 }
 
+/** Snap a value to a valid HTML range-input step (min + round((v−min)/step)·step, clamped to max). */
+function snapRangeInputValue(min, max, step, value) {
+    if (!Number.isFinite(value)) return min;
+    let v = value;
+    if (Number.isFinite(min) && v < min) v = min;
+    if (Number.isFinite(max) && v > max) v = max;
+    if (Number.isFinite(step) && step > 0 && Number.isFinite(min)) {
+        v = min + Math.round((v - min) / step) * step;
+        if (Number.isFinite(max) && v > max) v = max;
+        if (v < min) v = min;
+    }
+    return v;
+}
+
+/** Every discrete value an HTML range slider can take from min to max inclusive. */
+function enumerateRangeInputValues(min, max, step) {
+    if (!Number.isFinite(min) || !Number.isFinite(max) || !(step > 0)) {
+        return Number.isFinite(min) ? [min] : [];
+    }
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; ; i++) {
+        const raw = min + i * step;
+        if (raw > max + step * 0.5 && i > 0) break;
+        const v = snapRangeInputValue(min, max, step, Math.min(raw, max));
+        const key = v.toFixed(15);
+        if (seen.has(key)) {
+            if (v >= max - 1e-15) break;
+            continue;
+        }
+        seen.add(key);
+        out.push(v);
+        if (v >= max - 1e-15) break;
+        if (i > 100000) break;
+    }
+    return out;
+}
+
 function showProjectionPlot(selectedMethod) {
     // Get stored data
     const { leaves, distanceMatrix, subtypeName } = window.mdsModalData;
@@ -7149,7 +7187,10 @@ function showProjectionPlot(selectedMethod) {
     };
     
     const updatePlot = () => {
-        const eps = parseFloat(epsSlider.value);
+        const epsMinPlot = parseFloat(epsSlider.min);
+        const epsMaxPlot = parseFloat(epsSlider.max);
+        const epsStepPlot = parseFloat(epsSlider.step) || (epsMaxPlot - epsMinPlot) / 50;
+        const eps = snapRangeInputValue(epsMinPlot, epsMaxPlot, epsStepPlot, parseFloat(epsSlider.value));
         const minPts = parseInt(minPtsSlider.value);
         // Format epsilon with appropriate decimal places based on step size
         epsValue.textContent = eps.toFixed(decimalPlaces);
@@ -7242,15 +7283,12 @@ function showProjectionPlot(selectedMethod) {
         const epsMin = parseFloat(epsSlider.min);
         const epsMax = parseFloat(epsSlider.max);
         const epsStep = parseFloat(epsSlider.step) || (epsMax - epsMin) / 50;
-        let bestEps = parseFloat(epsSlider.value);
+        const epsValues = enumerateRangeInputValues(epsMin, epsMax, epsStep);
+        let bestEps = snapRangeInputValue(epsMin, epsMax, epsStep, parseFloat(epsSlider.value));
         let bestMetric = -Infinity;
-        // Walk every slider tick so the chosen eps cannot snap to an unevaluated value.
-        const nTicks = (epsStep > 0 && epsMax >= epsMin)
-            ? Math.max(1, Math.round((epsMax - epsMin) / epsStep))
-            : 1;
-        for (let i = 0; i <= nTicks; i++) {
-            const eps = i === nTicks ? epsMax : epsMin + i * epsStep;
-            const leafWeights = getCollapseWeightsForLeaves(data.leaves);
+        const leafWeights = getCollapseWeightsForLeaves(data.leaves);
+        for (let t = 0; t < epsValues.length; t++) {
+            const eps = epsValues[t];
             let clusters = performDBSCAN(data.coords, eps, minPts, subtypeIdx, null, leafWeights);
             clusters = renumberClustersByDistanceFromSubtype(clusters, data.coords, subtypeIdx, data.leaves, data.subtypeName);
             const nameToCluster = buildNameToCluster(clusters, data.leaves);
@@ -7258,10 +7296,12 @@ function showProjectionPlot(selectedMethod) {
                 ? ballHallAdaptedTree(nameToCluster, { log: false })
                 : calinskiHarabaszTree(nameToCluster);
             const metricNum = (metricVal === Infinity) ? 1e308 : (metricVal != null && Number.isFinite(metricVal) ? metricVal : -Infinity);
-            if (metricNum > bestMetric) { bestMetric = metricNum; bestEps = eps; }
+            if (metricNum > bestMetric) {
+                bestMetric = metricNum;
+                bestEps = eps;
+            }
         }
-        epsSlider.value = bestEps.toString();
-        epsValue.textContent = bestEps.toFixed(decimalPlaces);
+        epsSlider.value = String(bestEps);
         updatePlot();
     };
     
@@ -7629,7 +7669,7 @@ function performUMAP(distanceMatrix, nNeighbors = 15, spread = 1.0, minDist = 0.
     }
 }
 
-// --- k-DPIs: divisive clustering by mean pairwise tree distance (DPI annotation from sequences) ---
+// --- k-DPIs: divisive clustering by phylogeny-node bipartitions (max depth / LCA height) ---
 
 /** Session caches: sequence p-distances (DPI labels) and tree path distances (splitting). */
 let kDpisDistCache = null;
@@ -7672,7 +7712,8 @@ function ensureKDpisTreeParents(node, parent) {
 }
 
 /**
- * Build pairwise tree path-distance matrix for entries (same name order as sequence cache).
+ * Build tree geometry cache for k-DPIs splits (leaf nodes, root distances, LCA).
+ * Pairwise path matrix is no longer required for splitting.
  * Returns null if the tree is missing or any entry has no matching leaf.
  */
 function buildKDpisTreeDistCache(entries) {
@@ -7725,26 +7766,86 @@ function buildKDpisTreeDistCache(entries) {
         return state.tree.root;
     }
 
-    function treePathDistance(node1, node2) {
-        if (node1 === node2) return 0;
-        const lca = findLCA(node1, node2);
-        const dist1 = nodeToRootDistance.get(node1) || 0;
-        const dist2 = nodeToRootDistance.get(node2) || 0;
-        const distLCA = nodeToRootDistance.get(lca) || 0;
-        return (dist1 - distLCA) + (dist2 - distLCA);
-    }
+    kDpisTreeDistCache = {
+        indexByName,
+        leafNodes,
+        leafByNormName,
+        nodeToRootDistance,
+        findLCA,
+        n
+    };
+    return kDpisTreeDistCache;
+}
 
-    const T = new Array(n);
-    for (let i = 0; i < n; i++) T[i] = new Float64Array(n);
+/** Escape a field for CSV (RFC-style quotes when needed). */
+function csvEscapeField(value) {
+    const str = String(value == null ? '' : value);
+    if (/[",\r\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+    return str;
+}
+
+/**
+ * Tip × tip tree path-distance matrix for k-DPIs entries (symmetric, zero diagonal).
+ * Uses the current phylogeny; returns { names, matrix } or null if tips cannot be matched.
+ */
+function buildKDpisTreePairwiseDistanceMatrix(entries) {
+    if (!entries || entries.length === 0) return null;
+    if (!buildKDpisTreeDistCache(entries)) return null;
+    const { leafNodes, nodeToRootDistance, findLCA } = kDpisTreeDistCache;
+    const n = entries.length;
+    const names = entries.map(e => e.name);
+    const matrix = new Array(n);
+    for (let i = 0; i < n; i++) {
+        matrix[i] = new Array(n);
+        matrix[i][i] = 0;
+    }
     for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
-            const d = treePathDistance(leafNodes[i], leafNodes[j]);
-            T[i][j] = d;
-            T[j][i] = d;
+            const a = leafNodes[i];
+            const b = leafNodes[j];
+            const lca = findLCA(a, b);
+            const d = (nodeToRootDistance.get(a) || 0)
+                + (nodeToRootDistance.get(b) || 0)
+                - 2 * (nodeToRootDistance.get(lca) || 0);
+            const v = Number.isFinite(d) && d > 0 ? d : 0;
+            matrix[i][j] = v;
+            matrix[j][i] = v;
         }
     }
-    kDpisTreeDistCache = { indexByName, T, n };
-    return kDpisTreeDistCache;
+    return { names, matrix };
+}
+
+function buildKDpisTreeDistanceCsvFileName() {
+    const raw = state.currentFileName || dom.file?.files?.[0]?.name || 'alignment';
+    const base = String(raw).replace(/\.[^.]+$/, '').replace(/[^\w.\-]+/g, '_') || 'alignment';
+    return `${base}_kdpis_tree_distances.csv`;
+}
+
+/** Download a symmetric tip×tip tree path-distance matrix as CSV (zero diagonal). */
+function downloadKDpisTreeDistanceMatrixCsv(entries) {
+    const built = buildKDpisTreePairwiseDistanceMatrix(entries);
+    if (!built || !built.names.length) return false;
+    const { names, matrix } = built;
+    const lines = [];
+    lines.push([''].concat(names.map(csvEscapeField)).join(','));
+    for (let i = 0; i < names.length; i++) {
+        const row = [csvEscapeField(names[i])];
+        for (let j = 0; j < names.length; j++) {
+            row.push(i === j ? '0' : String(matrix[i][j]));
+        }
+        lines.push(row.join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = buildKDpisTreeDistanceCsvFileName();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    console.log('[k-DPIs] downloaded tree pairwise distance matrix:', names.length, '×', names.length);
+    return true;
 }
 
 /** Mean pairwise sequence p-distance among global sequence-cache indices (null if < 2). */
@@ -7764,23 +7865,6 @@ function meanApiFromCacheIndices(indices) {
     return pairs > 0 ? sum / pairs : null;
 }
 
-/** Mean pairwise tree path distance among tree-cache indices. */
-function meanTreeDistFromCacheIndices(indices) {
-    if (!kDpisTreeDistCache || !indices || indices.length < 2) return null;
-    const T = kDpisTreeDistCache.T;
-    const m = indices.length;
-    let sum = 0;
-    let pairs = 0;
-    for (let a = 0; a < m; a++) {
-        const ia = indices[a];
-        for (let b = a + 1; b < m; b++) {
-            sum += T[ia][indices[b]];
-            pairs++;
-        }
-    }
-    return pairs > 0 ? sum / pairs : null;
-}
-
 /** Map entry list → global cache indices for sequence or tree cache. */
 function kDpisEntriesToCacheIndices(entries, cache) {
     if (!cache || !entries) return null;
@@ -7794,49 +7878,105 @@ function kDpisEntriesToCacheIndices(entries, cache) {
 }
 
 /**
- * DPI annotation for a list of {name,seq} entries (mean pairwise sequence p-distance + JC69).
- * Not used as the split objective.
+ * DPI annotation for a list of {name,seq} entries.
+ * Prefers mean pairwise tree path distance (same metric as the k-DPIs CSV):
+ *   dpi = mean_tree_d / (2 × dsr)
+ * Falls back to sequence mean p-distance + JC69 if the tree is unavailable.
  */
 function dpiForKDpisEntries(entries) {
     if (!entries || entries.length < 2) return null;
-    const indices = kDpisEntriesToCacheIndices(entries, kDpisDistCache);
-    const api = indices
-        ? meanApiFromCacheIndices(indices)
-        : averagePairwisePDistance(entries.map(e => e.seq));
+    const meanTree = meanPairwiseTreePathDistance(entries);
+    if (meanTree != null) {
+        return dpiDaysFromTreeDiameter(meanTree);
+    }
+    const api = averagePairwisePDistance(entries.map(e => e.seq));
     return estimateDpiDaysFromApi(api);
 }
 
-/** Cluster split metric = mean pairwise tree path distance among entries. */
-function diameterForKDpisEntries(entries) {
+/** Unrounded DPI days from mean pairwise tree path distance (diagnostics). */
+function dpiDaysRawFromEntries(entries) {
     if (!entries || entries.length < 2) return null;
-    const indices = kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache);
-    if (!indices) return null;
-    return meanTreeDistFromCacheIndices(indices);
+    const meanTree = meanPairwiseTreePathDistance(entries);
+    if (meanTree != null) {
+        const dsr = getGroupDpiDailySubstitutionRate();
+        if (!(dsr > 0)) return null;
+        const dpi = meanTree / (2 * dsr);
+        return Number.isFinite(dpi) && dpi >= 0 ? dpi : null;
+    }
+    const api = averagePairwisePDistance(entries.map(e => e.seq));
+    if (api == null || !Number.isFinite(api)) return null;
+    const d = jukesCantorCorrectedDistance(api);
+    if (d == null) return null;
+    const dsr = getGroupDpiDailySubstitutionRate();
+    if (!(dsr > 0)) return null;
+    const dpi = d / (2 * dsr);
+    return Number.isFinite(dpi) && dpi >= 0 ? dpi : null;
 }
 
 /**
- * Score a bipartition using mean tree distances of the two children.
- * Objective: minimise max(d1, d2) (di = child mean pairwise tree distance).
- * indices[i] = tree-cache index for local position i; labels[i] ∈ {0,1}.
+ * Mean pairwise tree path distance among entries (null if < 2 or tips unmatched).
+ * Uses / builds kDpisTreeDistCache. Subsets of the cached tip set are OK.
  */
-function scoreKDpisBipartitionCached(indices, labels, minSize, allowNoiseOnly) {
-    minSize = Math.max(1, parseInt(minSize, 10) || 1);
-    const g0 = [];
-    const g1 = [];
-    for (let i = 0; i < indices.length; i++) {
-        (labels[i] === 0 ? g0 : g1).push(indices[i]);
+function meanPairwiseTreePathDistance(entries) {
+    if (!entries || entries.length < 2) return null;
+    let indices = kDpisTreeDistCache
+        ? kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache)
+        : null;
+    if (!indices) {
+        if (!buildKDpisTreeDistCache(entries)) return null;
+        indices = kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache);
+        if (!indices) return null;
     }
-    if (g0.length === 0 || g1.length === 0) return null;
-    const ok0 = g0.length >= minSize;
-    const ok1 = g1.length >= minSize;
-    if (!ok0 && !ok1 && !allowNoiseOnly) return null;
-    const d0 = meanTreeDistFromCacheIndices(g0);
-    const d1 = meanTreeDistFromCacheIndices(g1);
-    const v0 = d0 == null ? 0 : d0;
-    const v1 = d1 == null ? 0 : d1;
-    const score = Math.max(v0, v1);
-    const tier = (ok0 && ok1) ? 0 : ((ok0 || ok1) ? 1 : 2);
-    return { tier, score };
+    const { leafNodes, nodeToRootDistance, findLCA } = kDpisTreeDistCache;
+    const m = indices.length;
+    let sum = 0;
+    let pairs = 0;
+    for (let a = 0; a < m; a++) {
+        const n1 = leafNodes[indices[a]];
+        for (let b = a + 1; b < m; b++) {
+            const n2 = leafNodes[indices[b]];
+            const lca = findLCA(n1, n2);
+            const d = (nodeToRootDistance.get(n1) || 0)
+                + (nodeToRootDistance.get(n2) || 0)
+                - 2 * (nodeToRootDistance.get(lca) || 0);
+            sum += (Number.isFinite(d) && d > 0) ? d : 0;
+            pairs++;
+        }
+    }
+    return pairs > 0 ? sum / pairs : null;
+}
+
+/**
+ * Max depth of a tip set = height of the induced subtree:
+ * max path length from the LCA of the tips to any tip in the set.
+ * Singletons have depth 0.
+ */
+function maxDepthFromTreeLeafNodes(leafNodes) {
+    if (!kDpisTreeDistCache || !leafNodes || leafNodes.length < 2) return 0;
+    const { nodeToRootDistance, findLCA } = kDpisTreeDistCache;
+    let lca = leafNodes[0];
+    for (let i = 1; i < leafNodes.length; i++) {
+        lca = findLCA(lca, leafNodes[i]);
+    }
+    const distLca = nodeToRootDistance.get(lca) || 0;
+    let maxD = 0;
+    for (let i = 0; i < leafNodes.length; i++) {
+        const d = (nodeToRootDistance.get(leafNodes[i]) || 0) - distLca;
+        if (d > maxD) maxD = d;
+    }
+    return maxD;
+}
+
+/** Max depth (LCA height) among entries; stored on k-DPIs nodes as `.diameter`. */
+function diameterForKDpisEntries(entries) {
+    if (!entries || entries.length < 2) return 0;
+    if (!kDpisTreeDistCache) {
+        if (!buildKDpisTreeDistCache(entries)) return null;
+    }
+    const indices = kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache);
+    if (!indices) return null;
+    const leafNodes = indices.map(i => kDpisTreeDistCache.leafNodes[i]);
+    return maxDepthFromTreeLeafNodes(leafNodes);
 }
 
 function isBetterKDpisBipScore(cand, best) {
@@ -7848,8 +7988,11 @@ function isBetterKDpisBipScore(cand, best) {
 }
 
 /**
- * Find a bipartition that minimises max(child mean tree distances).
- * Voronoi / local search use the tree path-distance matrix.
+ * Find a bipartition by trying every internal phylogeny node:
+ *   left  = cluster tips descending from that node
+ *   right = remaining cluster tips
+ * Choose the bipartition that minimises max(depth(left), depth(right)),
+ * where depth = LCA-subtree height.
  * Returns { left, right, score } or null.
  */
 function bestKDpisBipartition(entries, minSize, opts) {
@@ -7857,84 +8000,78 @@ function bestKDpisBipartition(entries, minSize, opts) {
     const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
     const n = entries.length;
     if (n < 2) return null;
+    if (!state.tree || !state.tree.root) return null;
 
-    let indices = kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache);
-    if (!indices) {
+    if (!kDpisTreeDistCache) {
         if (!buildKDpisTreeDistCache(entries)) return null;
-        indices = kDpisEntriesToCacheIndices(entries, kDpisTreeDistCache);
     }
-    if (!indices || !kDpisTreeDistCache) return null;
-    const T = kDpisTreeDistCache.T;
+    const cache = kDpisTreeDistCache;
+    const indices = kDpisEntriesToCacheIndices(entries, cache);
+    if (!indices) return null;
 
-    function dist(i, j) {
-        return T[indices[i]][indices[j]];
+    const clusterTipSet = new Set();
+    for (let i = 0; i < n; i++) {
+        clusterTipSet.add(entries[i].name);
     }
 
-    const seeds = [];
-    if (n <= 30) {
-        for (let i = 0; i < n; i++) seeds.push(i);
-    } else {
-        const seedCap = 20;
-        seeds.push(0);
-        while (seeds.length < seedCap) {
-            let best = -1;
-            let bestMin = -1;
-            for (let i = 0; i < n; i++) {
-                if (seeds.indexOf(i) >= 0) continue;
-                let minD = Infinity;
-                for (let s = 0; s < seeds.length; s++) minD = Math.min(minD, dist(i, seeds[s]));
-                if (minD > bestMin) {
-                    bestMin = minD;
-                    best = i;
-                }
-            }
-            if (best < 0) break;
-            seeds.push(best);
+    // For each phylogeny node: which cluster tips descend from it
+    const tipsUnderNode = new Map();
+    function collectClusterTips(node) {
+        if (!node) return [];
+        if (!node.children || node.children.length === 0) {
+            const nm = node.name ? normalizeSequenceName(node.name) : null;
+            const tips = (nm && clusterTipSet.has(nm)) ? [nm] : [];
+            tipsUnderNode.set(node, tips);
+            return tips;
         }
+        const tips = [];
+        for (let i = 0; i < node.children.length; i++) {
+            const childTips = collectClusterTips(node.children[i]);
+            for (let j = 0; j < childTips.length; j++) tips.push(childTips[j]);
+        }
+        tipsUnderNode.set(node, tips);
+        return tips;
     }
+    collectClusterTips(state.tree.root);
 
     let bestMeta = null;
-    let bestLabels = null;
-    for (let ai = 0; ai < seeds.length; ai++) {
-        for (let bi = ai + 1; bi < seeds.length; bi++) {
-            const a = seeds[ai];
-            const b = seeds[bi];
-            const labels = new Array(n);
-            for (let i = 0; i < n; i++) labels[i] = dist(i, a) <= dist(i, b) ? 0 : 1;
-            let n0 = 0;
-            for (let i = 0; i < n; i++) if (labels[i] === 0) n0++;
-            if (n0 === 0 || n0 === n) continue;
-            const meta = scoreKDpisBipartitionCached(indices, labels, minSize, allowNoiseOnly);
-            if (isBetterKDpisBipScore(meta, bestMeta)) {
-                bestMeta = meta;
-                bestLabels = labels.slice();
-            }
-        }
-    }
-    if (!bestLabels || !bestMeta) return null;
+    let bestLeft = null;
+    let bestRight = null;
 
-    let improved = true;
-    while (improved) {
-        improved = false;
+    tipsUnderNode.forEach((leftNames, node) => {
+        if (!node.children || node.children.length === 0) return; // internal nodes only
+        const leftN = leftNames.length;
+        if (leftN === 0 || leftN === n) return; // must be a proper nonempty subset
+
+        const leftEntries = [];
+        const rightEntries = [];
+        const leftNameSet = new Set(leftNames);
         for (let i = 0; i < n; i++) {
-            const trial = bestLabels.slice();
-            trial[i] = 1 - trial[i];
-            let n0 = 0;
-            for (let j = 0; j < n; j++) if (trial[j] === 0) n0++;
-            if (n0 === 0 || n0 === n) continue;
-            const meta = scoreKDpisBipartitionCached(indices, trial, minSize, allowNoiseOnly);
-            if (isBetterKDpisBipScore(meta, bestMeta)) {
-                bestMeta = meta;
-                bestLabels = trial;
-                improved = true;
-            }
+            const e = entries[i];
+            if (leftNameSet.has(e.name)) leftEntries.push(e);
+            else rightEntries.push(e);
         }
-    }
 
-    const left = [];
-    const right = [];
-    for (let i = 0; i < n; i++) (bestLabels[i] === 0 ? left : right).push(entries[i]);
-    return { left, right, score: bestMeta.score };
+        const ok0 = leftEntries.length >= minSize;
+        const ok1 = rightEntries.length >= minSize;
+        if (!ok0 && !ok1 && !allowNoiseOnly) return;
+
+        const leftLeaves = leftEntries.map(e => cache.leafByNormName.get(e.name)).filter(Boolean);
+        const rightLeaves = rightEntries.map(e => cache.leafByNormName.get(e.name)).filter(Boolean);
+        const d0 = maxDepthFromTreeLeafNodes(leftLeaves);
+        const d1 = maxDepthFromTreeLeafNodes(rightLeaves);
+        const score = Math.max(d0, d1);
+        const tier = (ok0 && ok1) ? 0 : ((ok0 || ok1) ? 1 : 2);
+        const meta = { tier, score };
+        if (isBetterKDpisBipScore(meta, bestMeta)) {
+            bestMeta = meta;
+            bestLeft = leftEntries;
+            bestRight = rightEntries;
+        }
+    });
+
+    if (!bestMeta || !bestLeft || !bestRight) return null;
+    return { left: bestLeft, right: bestRight, score: bestMeta.score };
 }
 
 /** Create a k-DPIs tree node from sequence entries. */
@@ -7942,7 +8079,7 @@ function makeKDpisNode(entries) {
     return {
         entries: entries.slice(),
         n: entries.length,
-        diameter: diameterForKDpisEntries(entries),
+        diameter: diameterForKDpisEntries(entries), // max depth (LCA height)
         dpi: dpiForKDpisEntries(entries),
         unsplittable: false, // true after a failed bipartition attempt (kept as a normal cluster)
         left: null,
@@ -7968,10 +8105,10 @@ function collectKDpisLeaves(root, out) {
 }
 
 /**
- * Choose the current leaf to split: largest mean pairwise tree distance, then largest size.
+ * Choose the current leaf to split: largest max depth, then largest size.
  * Skips leaves already marked unsplittable after a failed split attempt.
- * Auto mode: pass requireDpiAbove (sequence-based cluster DPI, same as legend/bubbles).
- * Manual + mode: omit requireDpiAbove / requireDiameterAbove.
+ * Auto mode: pass requireDpiAbove (tree mean-pairwise DPI > target DPI).
+ * Manual + mode: omit requireDpiAbove / requireDiameterAbove (split largest max depth).
  * @param {{requireDpiAbove?: number|null, requireDiameterAbove?: number|null, allowNoiseOnly?: boolean}} opts
  */
 function findKDpisLeafToSplit(root, minSize, opts) {
@@ -8040,16 +8177,16 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
 
 /**
  * Split one leaf in-place; returns true on success.
- * Minimises max(d1,d2). If that best value is greater than the parent mean
- * distance d (or no valid bipartition exists), leave the leaf intact, mark it
- * unsplittable, and return false so the caller can try another leaf.
+ * Minimises max(depth₁, depth₂) over internal-node bipartitions.
+ * If no valid bipartition exists, or best score exceeds parent max depth,
+ * mark unsplittable and return false.
  * @param {{allowNoiseOnly?: boolean}} opts
  */
 function splitKDpisLeaf(leaf, minSize, opts) {
     if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf) || leaf.unsplittable) return false;
     const parentD = (leaf.diameter != null && Number.isFinite(leaf.diameter)) ? leaf.diameter : null;
     const bip = bestKDpisBipartition(leaf.entries, minSize, opts);
-    if (!bip || (parentD != null && bip.score > parentD)) {
+    if (!bip || (parentD != null && bip.score > parentD + 1e-12)) {
         leaf.unsplittable = true;
         leaf.left = null;
         leaf.right = null;
@@ -8170,11 +8307,11 @@ function collectKDpisEntries() {
     return entries;
 }
 
-/** Incoming branch length (node.len) for each k-DPIs entry from the current tree. */
-function getKDpisIncomingBranchLengths(entries) {
-    if (!state.tree || !state.tree.root || !entries || entries.length === 0) return [];
-    ensureKDpisTreeParents(state.tree.root, null);
+/** Map normalized tip name → leaf node on the current phylogeny. */
+function getKDpisLeafByNormName() {
     const leafByNormName = new Map();
+    if (!state.tree || !state.tree.root) return leafByNormName;
+    ensureKDpisTreeParents(state.tree.root, null);
     function collectLeaves(node) {
         if (!node) return;
         if (!node.children || node.children.length === 0) {
@@ -8184,6 +8321,13 @@ function getKDpisIncomingBranchLengths(entries) {
         node.children.forEach(collectLeaves);
     }
     collectLeaves(state.tree.root);
+    return leafByNormName;
+}
+
+/** Incoming branch length (node.len) for each k-DPIs entry from the current tree. */
+function getKDpisIncomingBranchLengths(entries) {
+    if (!entries || entries.length === 0) return [];
+    const leafByNormName = getKDpisLeafByNormName();
     const out = [];
     for (let i = 0; i < entries.length; i++) {
         const leaf = leafByNormName.get(entries[i].name);
@@ -8192,6 +8336,43 @@ function getKDpisIncomingBranchLengths(entries) {
         out.push({ name: entries[i].name, value: len });
     }
     return out;
+}
+
+/**
+ * Pendant (incoming) and root-to-tip depth stats for a tip set (tree geometry only).
+ * Used to contrast long-branch noise removal with sequence-based DPI.
+ */
+function summarizeKDpisTipTreeGeometry(entries) {
+    if (!entries || entries.length === 0) return null;
+    const leafByNormName = getKDpisLeafByNormName();
+    let maxPendant = 0;
+    let sumPendant = 0;
+    let maxRootToTip = 0;
+    let sumRootToTip = 0;
+    let n = 0;
+    const tips = [];
+    for (let i = 0; i < entries.length; i++) {
+        const leaf = leafByNormName.get(entries[i].name);
+        if (!leaf) continue;
+        const pendant = leaf.len != null && Number.isFinite(leaf.len) ? leaf.len : 0;
+        const rtt = leaf.xDepth != null && Number.isFinite(leaf.xDepth) ? leaf.xDepth : pendant;
+        maxPendant = Math.max(maxPendant, pendant);
+        sumPendant += pendant;
+        maxRootToTip = Math.max(maxRootToTip, rtt);
+        sumRootToTip += rtt;
+        n++;
+        tips.push({ name: entries[i].name, pendant, rootToTip: rtt });
+    }
+    if (!n) return null;
+    tips.sort((a, b) => b.pendant - a.pendant);
+    return {
+        n,
+        maxPendant,
+        meanPendant: sumPendant / n,
+        maxRootToTip,
+        meanRootToTip: sumRootToTip / n,
+        tips
+    };
 }
 
 /**
@@ -8410,9 +8591,39 @@ function acceptKDpisClustering(nameToCluster) {
     state.leafClusters = updatedLeafClusters;
     rekeySequenceGroupsToCurrentNames();
     state.lastAcceptedClusterMethod = 'k-DPIs';
-    refreshClusterDpiEstimates();
+    state.clusterDpiEstimates = computeKDpisTreeClusterDpiEstimates(nameToCluster);
     updateColorLegend();
     recalc();
+}
+
+/** Cluster DPI estimates from mean pairwise tree path distance (k-DPIs Accept / legend). */
+function computeKDpisTreeClusterDpiEstimates(nameToCluster) {
+    const estimates = new Map();
+    const counts = new Map();
+    if (!nameToCluster || nameToCluster.size === 0) {
+        state.clusterMemberCounts = counts;
+        return estimates;
+    }
+    const byCluster = new Map();
+    nameToCluster.forEach((cid, name) => {
+        if (cid == null || cid === -1) return;
+        const seq = findRawSequenceForTreeNode(name);
+        if (!seq || !seq.seq) return;
+        if (!byCluster.has(cid)) byCluster.set(cid, []);
+        byCluster.get(cid).push({ name: normalizeSequenceName(seq.name), seq: seq.seq });
+    });
+    const allEntries = [];
+    byCluster.forEach(ents => {
+        for (let i = 0; i < ents.length; i++) allEntries.push(ents[i]);
+    });
+    if (allEntries.length >= 2) buildKDpisTreeDistCache(allEntries);
+    byCluster.forEach((ents, cid) => {
+        counts.set(cid, ents.length);
+        const dpi = dpiForKDpisEntries(ents);
+        if (dpi != null) estimates.set(cid, dpi);
+    });
+    state.clusterMemberCounts = counts;
+    return estimates;
 }
 
 function showKDpisModal() {
@@ -8462,9 +8673,65 @@ function showKDpisModal() {
         return { clusterEntries: entries.slice(), preNoiseEntries: [] };
     }
 
+    /**
+     * Rebuild clustering root: long-branch outliers → pre-noise first, then one cluster
+     * of the remaining tips. Distance caches are rebuilt for cluster tips only so
+     * splits never see pre-noise sequences. Cluster DPI is recomputed from the
+     * remaining tips only (not the pre-noise set).
+     */
     function buildClusterRoot() {
         const { clusterEntries, preNoiseEntries } = partitionForClustering();
-        return makeKDpisClusterRoot(clusterEntries, preNoiseEntries);
+        clearKDpisDistCache();
+        // Before shrinking the tip set: tree mean-pairwise DPI on all sample tips
+        let dpiAll = null;
+        let rawAll = null;
+        let meanTreeAll = null;
+        if (preNoiseEntries.length > 0 && entries.length >= 2) {
+            meanTreeAll = meanPairwiseTreePathDistance(entries);
+            dpiAll = meanTreeAll != null ? dpiDaysFromTreeDiameter(meanTreeAll) : null;
+            rawAll = dpiDaysRawFromEntries(entries);
+        }
+        if (clusterEntries.length > 0) {
+            if (!buildKDpisTreeDistCache(clusterEntries)) {
+                alert('Could not match all sample sequences to tree leaves. Infer or load a tree that includes them.');
+                return makeKDpisClusterRoot([], preNoiseEntries.concat(clusterEntries));
+            }
+            buildKDpisDistCache(clusterEntries);
+        }
+        const root = makeKDpisClusterRoot(clusterEntries, preNoiseEntries);
+        if (preNoiseEntries.length > 0) {
+            const dpiCluster = root.dpi;
+            const rawCluster = dpiDaysRawFromEntries(clusterEntries);
+            const meanTreeKeep = meanPairwiseTreePathDistance(clusterEntries);
+            root._dpiBeforeNoiseRemoval = dpiAll;
+            const fmt = (x, d) => (x != null && Number.isFinite(x) ? x.toFixed(d) : '—');
+            const pct = (a, b) => (a > 0 && b != null && Number.isFinite(b)
+                ? `${((100 * (a - b)) / a).toFixed(1)}%`
+                : '—');
+            console.log(
+                '[k-DPIs] long-branch noise removal:',
+                preNoiseEntries.length, 'tip(s) → noise;',
+                clusterEntries.length, 'tip(s) remain;',
+                'mean pairwise tree dist',
+                fmt(meanTreeAll, 6), '→', fmt(meanTreeKeep, 6),
+                `(drop ${pct(meanTreeAll, meanTreeKeep)});`,
+                'DPI (tree mean / 2dsr) =', dpiAll,
+                `(raw ${fmt(rawAll, 2)}) →`, dpiCluster,
+                `(raw ${fmt(rawCluster, 2)})`
+            );
+            const geoAll = summarizeKDpisTipTreeGeometry(entries);
+            const geoKeep = summarizeKDpisTipTreeGeometry(clusterEntries);
+            const geoNoise = summarizeKDpisTipTreeGeometry(preNoiseEntries);
+            console.log(
+                '[k-DPIs] tree geometry: max pendant',
+                fmt(geoAll && geoAll.maxPendant, 6), '→', fmt(geoKeep && geoKeep.maxPendant, 6),
+                '; max root-to-tip',
+                fmt(geoAll && geoAll.maxRootToTip, 6), '→', fmt(geoKeep && geoKeep.maxRootToTip, 6),
+                '; noise tips:',
+                (geoNoise && geoNoise.tips ? geoNoise.tips.map(t => `${t.name}(len=${fmt(t.pendant, 6)})`).join(', ') : '—')
+            );
+        }
+        return root;
     }
 
     function readMinSize() {
@@ -8582,14 +8849,21 @@ function showKDpisModal() {
             if (noiseCount > 0) {
                 const parts = [];
                 if (preNoiseN > 0) {
-                    parts.push(`${preNoiseN} incoming branch > target mean dist (${maxBranchStr})`);
+                    parts.push(`${preNoiseN} incoming branch > target max depth (${maxBranchStr})`);
+                    const dpiAfter = root.dpi;
+                    const dpiBefore = root._dpiBeforeNoiseRemoval;
+                    if (dpiAfter != null || dpiBefore != null) {
+                        parts.push(
+                            `tree DPI ${dpiBefore != null ? dpiBefore : '—'} → ${dpiAfter != null ? dpiAfter : '—'} after removal`
+                        );
+                    }
                 }
                 if (minSizeNoise > 0) {
                     parts.push(`${minSizeNoise} below min cluster size ${minSize}`);
                 }
                 noiseHintEl.textContent = `Noise: ${noiseCount} sequence(s) — ${parts.join('; ')} (labelled _cl-na on Accept).`;
             } else if (noiseRemovalChk && noiseRemovalChk.checked) {
-                noiseHintEl.textContent = `Long-branch removal on: no tips with incoming branch > target mean dist (${maxBranchStr} = 2×dsr×DPI). Leaves with < ${minSize} sequence(s) are also noise.`;
+                noiseHintEl.textContent = `Long-branch removal on: no tips with incoming branch > target max depth (${maxBranchStr} = 2×dsr×DPI). Leaves with < ${minSize} sequence(s) are also noise.`;
             } else {
                 noiseHintEl.textContent = `Leaves with fewer than ${minSize} sequence(s) are classified as noise.`;
             }
@@ -8662,15 +8936,21 @@ function showKDpisModal() {
             await yieldToUi();
             let steps = 0;
             try {
-                // Always restart Auto from a single cluster (clear prior splits / bubble tree)
+                // Always restart Auto from a single cluster after outlier → noise removal
                 splitHistory.length = 0;
                 root = buildClusterRoot();
                 refresh({ skipPreview: true });
-                if (busyMsgEl) busyMsgEl.textContent = 'Working... (reset to k=1)';
+                if (busyMsgEl) {
+                    const pn = (root && root.preNoiseEntries) ? root.preNoiseEntries.length : 0;
+                    busyMsgEl.textContent = pn > 0
+                        ? `Working... (reset to k=1; ${pn} long-branch tip(s) as noise)`
+                        : 'Working... (reset to k=1)';
+                }
                 await yieldToUi();
 
                 // Stop when every cluster's sequence-based DPI (legend/bubbles) is ≤ target DPI.
-                // Bipartitions still optimise tree mean pairwise distance; only the Auto stop rule uses DPI.
+                // Bipartitions still minimise max(child LCA depths); only the Auto stop rule uses DPI.
+                // Pre-noise tips are already excluded from root and are not split.
                 const autoOpts = { requireDpiAbove: targetDpi, allowNoiseOnly: true };
                 let stoppedUnsplittable = false;
                 while (steps < maxSteps) {
@@ -8694,7 +8974,7 @@ function showKDpisModal() {
                 }
                 refresh();
                 if (stoppedUnsplittable) {
-                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no bipartition improves max child tree distance).');
+                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no internal-node bipartition reduces max child depth).');
                 }
             } finally {
                 setKDpisBusy(false);
@@ -8742,26 +9022,26 @@ function showKDpisModal() {
     };
 
     overlay.style.display = 'flex';
-    // Tree distances for splitting; sequence distances for DPI annotation labels
+    // Tip×tip tree path distances for all sample tips (must run in the open click stack)
+    downloadKDpisTreeDistanceMatrixCsv(entries);
+    // Partition long-branch outliers as pre-noise first; caches/splits use remaining tips only
     (async () => {
-        const { clusterEntries, preNoiseEntries } = partitionForClustering();
         setKDpisBusy(true, entries.length >= 100
-            ? `Precomputing distances (${clusterEntries.length} sequences)...`
+            ? `Precomputing distances (${entries.length} sequences)...`
             : 'Working...');
         await yieldToUi();
         try {
-            if (clusterEntries.length > 0 && !buildKDpisTreeDistCache(clusterEntries)) {
-                alert('Could not match all sample sequences to tree leaves. Infer or load a tree that includes them.');
+            root = buildClusterRoot();
+            if (!root) {
                 overlay.style.display = 'none';
                 clearKDpisDistCache();
                 return;
             }
-            await yieldToUi();
-            if (clusterEntries.length > 0) {
-                if (busyMsgEl) busyMsgEl.textContent = 'Computing sequence DPI distances...';
-                buildKDpisDistCache(clusterEntries);
+            const pn = root.preNoiseEntries ? root.preNoiseEntries.length : 0;
+            if (pn > 0 && busyMsgEl) {
+                busyMsgEl.textContent = `Ready (${pn} long-branch tip(s) held as noise)`;
+                await yieldToUi();
             }
-            root = makeKDpisClusterRoot(clusterEntries, preNoiseEntries);
             refresh();
         } finally {
             setKDpisBusy(false);
@@ -10028,6 +10308,29 @@ function performClassicalMDS(distanceMatrix) {
     return coords;
 }
 
+/** Flip eigenvector sign so the largest-magnitude entry is positive (MDS axis canonicalization). */
+function canonicalizeEigenvectorSign(v) {
+    if (!v || v.length === 0) return v;
+    let maxIdx = 0;
+    let maxAbs = Math.abs(v[0]);
+    for (let i = 1; i < v.length; i++) {
+        const a = Math.abs(v[i]);
+        if (a > maxAbs) {
+            maxAbs = a;
+            maxIdx = i;
+        }
+    }
+    if (v[maxIdx] < 0) return v.map(x => -x);
+    return v;
+}
+
+/** Deterministic unit vector for power iteration (standard basis, cycles by index). */
+function deterministicUnitVector(n, index) {
+    const v = new Array(n).fill(0);
+    if (n > 0) v[((index % n) + n) % n] = 1;
+    return v;
+}
+
 function computeEigenDecomposition(matrix, numComponents) {
     const n = matrix.length;
     const vectors = [];
@@ -10036,20 +10339,14 @@ function computeEigenDecomposition(matrix, numComponents) {
     // Work with a copy of the matrix to avoid modifying the original
     const A = matrix.map(row => [...row]);
     
-    // Use power iteration with deflation for multiple eigenvectors
+    // Power iteration with deflation; deterministic starts (no Math.random).
     for (let comp = 0; comp < numComponents; comp++) {
-        // Start with random vector
-        let v = [];
-        for (let i = 0; i < n; i++) {
-            v[i] = Math.random() - 0.5;
-        }
+        let v = deterministicUnitVector(n, comp);
         
-        // Normalize
+        // Normalize (unit vectors from deterministicUnitVector are already normalized)
         let norm = Math.sqrt(v.reduce((sum, x) => sum + x * x, 0));
         if (norm < 1e-10) {
-            // If norm is too small, use a unit vector
-            v = new Array(n).fill(0);
-            v[comp % n] = 1;
+            v = deterministicUnitVector(n, comp + 1);
             norm = 1;
         }
         v = v.map(x => x / norm);
@@ -10077,11 +10374,9 @@ function computeEigenDecomposition(matrix, numComponents) {
             // Normalize
             norm = Math.sqrt(newV.reduce((sum, x) => sum + x * x, 0));
             if (norm < 1e-10) {
-                // Vector collapsed, try a different direction
-                for (let i = 0; i < n; i++) {
-                    newV[i] = Math.random() - 0.5;
-                }
-                // Re-orthogonalize
+                // Vector collapsed: try the next deterministic basis direction
+                const fallback = deterministicUnitVector(n, comp + iter + 1);
+                for (let i = 0; i < n; i++) newV[i] = fallback[i];
                 for (let prev = 0; prev < comp; prev++) {
                     const dot = newV.reduce((sum, x, i) => sum + x * vectors[prev][i], 0);
                     for (let i = 0; i < n; i++) {
@@ -10092,13 +10387,14 @@ function computeEigenDecomposition(matrix, numComponents) {
                 if (norm < 1e-10) break;
             }
             
-            newV.forEach((x, i) => { v[i] = x / norm; });
+            const prevV = v.slice();
+            v = newV.map(x => x / norm);
             
             // Check convergence
             if (iter > 10) {
                 let maxChange = 0;
                 for (let i = 0; i < n; i++) {
-                    const change = Math.abs(newV[i] / norm - v[i]);
+                    const change = Math.abs(v[i] - prevV[i]);
                     if (change > maxChange) maxChange = change;
                 }
                 if (maxChange < 1e-8) break;
@@ -10116,7 +10412,7 @@ function computeEigenDecomposition(matrix, numComponents) {
         }
         const eigenvalue = v.reduce((sum, x, i) => sum + x * Av[i], 0);
         
-        vectors.push([...v]);
+        vectors.push(canonicalizeEigenvectorSign([...v]));
         values.push(eigenvalue);
         
         // Deflate matrix for next iteration: A = A - lambda * v * v^T
