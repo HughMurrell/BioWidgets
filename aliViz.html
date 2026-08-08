@@ -235,7 +235,7 @@
                 <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt" style="display:none;">
                 <button id="btn-choose-file" type="button">Choose file</button>
                 <div style="display:flex; flex-direction:column; gap:1px;">
-                    <span id="inp-file-stats" style="font-size:11px; color:#6b7280; white-space:nowrap;">s=0, f=0, nf=0, dpi=14, dsr=0.000079, etd=0.002212</span>
+                    <span id="inp-file-stats" style="font-size:11px; color:#6b7280; white-space:nowrap;">s=0, f=0, nf=0</span>
                     <input type="text" id="inp-file-name" value="No file chosen" readonly style="min-width: 270px; max-width: 390px; padding: 4px 6px; font-size: 12px; color: #374151; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 4px;">
                 </div>
                 <input type="file" id="inp-ref-file" accept=".fasta,.fa,.txt" style="display:none;">
@@ -252,21 +252,27 @@
                 <button id="btn-sort-sequences" title="Sort by current grouping, or by name if no grouping (REF and SUBTYPE remain first)">Sort</button>
                 <button id="btn-prune" title="Remove sequences from selected groups">Prune</button>
                 <button id="btn-subtype" title="Add founder sequence from selected group">Add Founder</button>
-                <button id="btn-download" title="Download Current View">fasta</button>
             </div>
         </div>
         <div class="control-group">
             <label style="display:inline-flex; align-items:baseline; gap:8px;">
                 Phylogeny
-                <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Mean pairwise tip-to-tip path length (branch-length units)">mean=—</span>
+                <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Daily substitution rate (dsr) and target DPI (days)">dsr=0.000079, target-dpi=14</span>
             </label>
             <div style="display:flex; gap:5px; align-items:center;">
+                <button id="btn-dsr" type="button" title="Set daily substitution rate used for DPI estimates">dsr</button>
                 <button id="btn-infer-tree" title="Infer phylogeny (requires a founder)">Infer</button>
                 <input type="file" id="inp-tree" accept=".nwk,.newick,.tree,.tre,.treefile,.txt" style="display:none;">
                 <button id="btn-reroot-tree" title="Reroot tree on subtype sequence">Reroot</button>
                 <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
                 <button id="btn-histogram" title="Show histogram of root-to-leaf distances" disabled>Histogram</button>
                 <button id="btn-mds" title="Show 2D projection and clustering of pairwise leaf distances" disabled>Cluster</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <label>Download</label>
+            <div style="display:flex; gap:5px; align-items:center;">
+                <button id="btn-download" title="Download Current View">fasta</button>
                 <button id="btn-export-tree" title="Export current tree as Newick">tree</button>
                 <button id="btn-export-tree-svg" title="Export current tree as SVG (linear or circular)">svg</button>
             </div>
@@ -640,7 +646,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate cuts off the descendant tip set vs the remainder; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). <strong>Auto</strong> stops when every cluster’s tree-based <strong>DPI</strong> ≤ target DPI. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate cuts off the descendant tip set vs the remainder; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). A cut is accepted only if <strong>max(DPI₁, DPI₂)</strong> is not worse than the parent DPI. <strong>Auto</strong> stops when every cluster’s tree-based <strong>DPI</strong> ≤ target DPI. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -768,22 +774,24 @@
     </div>
 </div>
 
-<div id="dsr-on-load-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10050;">
+<div id="dsr-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10050;">
     <div class="help-box" style="width: 450px;">
         <h2>Daily substitution rate (dsr)</h2>
         <p style="font-size: 13px; color: #374151; margin: 0 0 10px 0;">
-            Filename DPI = <strong id="dsr-on-load-dpi">14</strong> days.
-            Expected mean pairwise tip distance <strong>etd = 2 × dsr × DPI</strong>.
-            Accept the default dsr or enter another value for this session.
+            Used with phylogeny branch lengths to estimate DPI:
+            <strong>dpi = mean pairwise tip distance / (2 × dsr)</strong>.
+            Expected early-infection tip distance <strong>etd = 2 × dsr × DPI</strong>
+            (filename DPI = <strong id="dsr-dialog-dpi">14</strong> days).
         </p>
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
-            <label style="text-transform: none; font-size: 13px; color: #374151;" for="inp-dsr-on-load">dsr (substitutions / site / day)</label>
-            <input type="number" id="inp-dsr-on-load" value="0.000079" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;" for="inp-dsr">dsr (substitutions / site / day)</label>
+            <input type="number" id="inp-dsr" value="0.000079" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
-        <p id="dsr-on-load-etd-hint" style="font-size: 12px; color: #6b7280; margin: 10px 0 0 0;"></p>
+        <p id="dsr-etd-hint" style="font-size: 12px; color: #6b7280; margin: 10px 0 0 0;"></p>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
-            <button type="button" id="btn-dsr-on-load-default">Use default</button>
-            <button type="button" id="btn-dsr-on-load-apply" class="active">Apply</button>
+            <button type="button" id="btn-dsr-cancel">Cancel</button>
+            <button type="button" id="btn-dsr-default">Use default</button>
+            <button type="button" id="btn-dsr-apply" class="active">Apply</button>
         </div>
     </div>
 </div>
@@ -798,10 +806,6 @@
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;">Field Number (1-indexed, after splitting by delimiter)</label>
             <input type="number" id="inp-group-field" value="3" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
-        </div>
-        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
-            <label style="text-transform: none; font-size: 13px; color: #374151;">Daily substitution rate (dsr) for group DPI estimates</label>
-            <input type="number" id="inp-group-dsr" value="0.000079" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
             <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
@@ -934,14 +938,15 @@
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
         <div class="help-row"><span class="help-key">Prune</span> <span>Remove sequences from deselected groups</span></div>
         <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
+        <div class="help-row"><span class="help-key">dsr</span> <span>Set daily substitution rate used for tree-based DPI estimates</span></div>
         <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny (requires founder; optional root &amp; ladderize)</span></div>
         <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
         <div class="help-row"><span class="help-key">Ladderize</span> <span>Ladderize tree and reorder sequences</span></div>
         <div class="help-row"><span class="help-key">Histogram</span> <span>Show histogram of root-to-leaf distances</span></div>
         <div class="help-row"><span class="help-key">Cluster</span> <span>Cluster sequences (tree-clade, tree-cut, k-DPIs, UMAP, or MDS)</span></div>
-        <div class="help-row"><span class="help-key">fasta</span> <span>Download current view (NT or AA) as FASTA</span></div>
-        <div class="help-row"><span class="help-key">tree</span> <span>Export current tree as Newick format</span></div>
-        <div class="help-row"><span class="help-key">svg</span> <span>Export current tree as SVG (linear or circular; Auto, Fixed, or DPI scale)</span></div>
+        <div class="help-row"><span class="help-key">fasta</span> <span>Download current view (NT or AA) as FASTA (Download group)</span></div>
+        <div class="help-row"><span class="help-key">tree</span> <span>Export current tree as Newick format (Download group)</span></div>
+        <div class="help-row"><span class="help-key">svg</span> <span>Export current tree as SVG (Download group; linear or circular; Auto, Fixed, or DPI scale)</span></div>
         <div class="help-row"><span class="help-key">Clear Alignment</span> <span>Remove all sequences</span></div>
         <div class="help-row"><span class="help-key">Clear Tree</span> <span>Remove current tree</span></div>
         <div class="help-row"><span class="help-key">View Mode</span> <span>Switch between Nucleotide (NT) and Amino Acid (AA) view</span></div>
@@ -1195,12 +1200,12 @@ const state = {
     collapseFieldNum: null, // 1-based field number; null = no collapse
     persistentCollapseFieldNum: null, // Last chosen collapse field number (survives load/clear)
     groupNames: null, // Map from group ID to group value (for legend)
-    groupDpiEstimates: null, // Map from group ID to estimated DPI (days), from mean pairwise p-distance
-    groupMemberCounts: null, // Map from group ID to sequence count (set with DPI estimates; stable across cluster renames)
+    groupDpiEstimates: null, // Map group ID → DPI days from mean pairwise tree path length (null/empty until phylogeny exists)
+    groupMemberCounts: null, // Map from group ID to sequence count (set when grouping; stable across cluster renames)
     groupDpiDailySubstitutionRate: null, // Session dsr for DPI/etd; reset to default on page load
     etdAtLoad: null, // Expected mean pairwise tip distance snapshot from alignment load (2×dsr×DPI; star-clock)
     treeDiameter: null, // Mean pairwise tip-to-tip path length of current phylogeny (branch-length units)
-    clusterDpiEstimates: null, // Map from cluster ID to estimated DPI (days), from mean pairwise p-distance
+    clusterDpiEstimates: null, // Map cluster ID → DPI days from mean pairwise tree path length
     clusterMemberCounts: null, // Map from cluster ID to sequence count (set with cluster DPI estimates)
     founderSequenceName: null, // Current founder sequence name (consensus sequence or selected medoid sequence)
     pendingRootAndLadderize: false, // If true, parseTree will reroot on founder and ladderize by depth
@@ -1224,6 +1229,7 @@ const dom = {
     refFile: document.getElementById('inp-ref-file'),
     fileTree: document.getElementById('inp-tree'),
     btnInferTree: document.getElementById('btn-infer-tree'),
+    btnDsr: document.getElementById('btn-dsr'),
     phyloDiameterDisplay: document.getElementById('phylo-diameter-display'),
     btnExportTree: document.getElementById('btn-export-tree'),
     btnExportTreeSvg: document.getElementById('btn-export-tree-svg'),
@@ -1400,10 +1406,8 @@ function enableButtonsAfterSelectEpitope() {
 async function init() {
     // Initialize Aioli with FastTree only
     try {
-        console.log("Loading FastTree from bioWASM...");
         state.aioliCLI = await new Aioli(["fasttree/2.1.11"]);
-        console.log("FastTree successfully loaded");
-        } catch (err) {
+    } catch (err) {
         console.error("Failed to initialize FastTree:", err);
         state.aioliCLI = null;
     }
@@ -1411,31 +1415,32 @@ async function init() {
     // Disable buttons that require a file to be loaded
     disableButtonsOnStartup();
     initGroupDpiDailySubstitutionRate();
-    const btnDsrOnLoadDefault = document.getElementById('btn-dsr-on-load-default');
-    const btnDsrOnLoadApply = document.getElementById('btn-dsr-on-load-apply');
-    const inpDsrOnLoad = document.getElementById('inp-dsr-on-load');
-    if (btnDsrOnLoadDefault) {
-        btnDsrOnLoadDefault.addEventListener('click', () => {
-            setGroupDpiDailySubstitutionRate(DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
-            snapshotEtdAtLoad();
-            closeDsrOnLoadOverlay();
+    const btnDsr = dom.btnDsr || document.getElementById('btn-dsr');
+    const btnDsrCancel = document.getElementById('btn-dsr-cancel');
+    const btnDsrDefault = document.getElementById('btn-dsr-default');
+    const btnDsrApply = document.getElementById('btn-dsr-apply');
+    const inpDsr = document.getElementById('inp-dsr');
+    if (btnDsr) btnDsr.addEventListener('click', showDsrModal);
+    if (btnDsrCancel) btnDsrCancel.addEventListener('click', closeDsrOverlay);
+    if (btnDsrDefault) {
+        btnDsrDefault.addEventListener('click', () => {
+            if (inpDsr) inpDsr.value = String(DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
+            updateDsrDialogEtdHint();
         });
     }
-    if (btnDsrOnLoadApply) {
-        btnDsrOnLoadApply.addEventListener('click', () => {
-            const raw = inpDsrOnLoad ? inpDsrOnLoad.value : DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE;
-            const dsr = setGroupDpiDailySubstitutionRate(raw);
-            if (dsr == null) {
+    if (btnDsrApply) {
+        btnDsrApply.addEventListener('click', () => {
+            const raw = inpDsr ? inpDsr.value : DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE;
+            if (!applySessionDsr(raw)) {
                 alert('Daily substitution rate must be a positive number.');
                 return;
             }
-            snapshotEtdAtLoad();
-            closeDsrOnLoadOverlay();
+            closeDsrOverlay();
         });
     }
-    if (inpDsrOnLoad) {
-        inpDsrOnLoad.addEventListener('input', updateDsrOnLoadEtdHint);
-        inpDsrOnLoad.addEventListener('change', updateDsrOnLoadEtdHint);
+    if (inpDsr) {
+        inpDsr.addEventListener('input', updateDsrDialogEtdHint);
+        inpDsr.addEventListener('change', updateDsrDialogEtdHint);
     }
     const mdsClusterDpiClose = document.getElementById('mds-cluster-dpi-close');
     const mdsClusterDpiOverlay = document.getElementById('mds-cluster-dpi-overlay');
@@ -1854,8 +1859,14 @@ async function init() {
     });
     const treeSvgDpiDaysInput = document.getElementById('tree-svg-dpi-days');
     if (treeSvgDpiDaysInput) {
-        treeSvgDpiDaysInput.addEventListener('input', () => updateLoadedFileStatsDisplay());
-        treeSvgDpiDaysInput.addEventListener('change', () => updateLoadedFileStatsDisplay());
+        treeSvgDpiDaysInput.addEventListener('input', () => {
+            updateLoadedFileStatsDisplay();
+            updatePhylogenyDiameterDisplay();
+        });
+        treeSvgDpiDaysInput.addEventListener('change', () => {
+            updateLoadedFileStatsDisplay();
+            updatePhylogenyDiameterDisplay();
+        });
     }
     if (btnTreeSvgExport && treeSvgOverlay) {
         btnTreeSvgExport.addEventListener('click', () => {
@@ -2111,15 +2122,43 @@ async function init() {
 }
 
 // --- Export Logic ---
-/** Filename for FASTA download: uploaded alignment name, with `_clus` before the extension if clustering is active. */
+/**
+ * Alignment basename + `_gr-<numGroups>_cl-<numClusters>` (clusters exclude noise).
+ * Same convention as SVG export; `extension` includes the leading dot (e.g. `.fasta`).
+ */
+function buildAlignmentAnnotatedFileName(extension) {
+    const rawName = state.currentFileName || dom.file?.files?.[0]?.name || '';
+    let baseName = (rawName && String(rawName).trim()) ? String(rawName).trim() : '';
+    if (baseName) {
+        baseName = baseName.replace(/\.[^.]+$/, '') || baseName;
+    } else {
+        baseName = 'alignment';
+    }
+    let numGroups = 0;
+    if (state.sequenceGroups && state.groupNames) {
+        numGroups = state.groupNames.size;
+    }
+    let numClusters = 0;
+    if (state.leafClusters) {
+        const clusterIds = new Set();
+        state.leafClusters.forEach(clusterId => {
+            if (clusterId !== -1) clusterIds.add(clusterId);
+        });
+        numClusters = clusterIds.size;
+    }
+    const ext = extension && String(extension).startsWith('.')
+        ? String(extension)
+        : (extension ? `.${extension}` : '');
+    return `${baseName}_gr-${numGroups}_cl-${numClusters}${ext}`;
+}
+
+/** Filename for FASTA download (SVG-style `_gr-n_cl-n` annotation). */
 function getAlignmentDownloadFileName() {
     const raw = state.currentFileName || dom.file?.files?.[0]?.name || '';
     const base = (raw && String(raw).trim()) ? String(raw).trim() : `alignment_${state.mode}.fasta`;
-    const clusteringActive = !!(state.leafClusters && state.leafClusters.size > 0);
-    if (!clusteringActive) return base;
     const dot = base.lastIndexOf('.');
-    if (dot <= 0) return `${base}_clus`;
-    return `${base.slice(0, dot)}_clus${base.slice(dot)}`;
+    const ext = dot > 0 ? base.slice(dot) : '.fasta';
+    return buildAlignmentAnnotatedFileName(ext);
 }
 
 function exportAlignment(target) {
@@ -2370,6 +2409,12 @@ function clearTreeOnly() {
     state.leafClusters = null; // Clear clusters when tree is cleared
     state.clusterDpiEstimates = null;
     state.clusterMemberCounts = null;
+    // Group counts stay; DPI requires a phylogeny
+    if (state.sequenceGroups && state.groupNames) {
+        state.groupDpiEstimates = computeGroupDpiEstimates();
+    } else {
+        state.groupDpiEstimates = null;
+    }
     updatePhylogenyDiameterDisplay(null);
     setTreeWidth(0);
     if (dom.btnHistogram) {
@@ -2608,8 +2653,8 @@ function dpiDaysFromTreeDiameter(diameter, dsr = getGroupDpiDailySubstitutionRat
     return Math.round(diameter / (2 * dsr));
 }
 
-/** Snapshot current etd for k-DPIs target max-depth default (alignment load / dsr-on-load).
- *  Also seeds tree-SVG Mutations/day (MPD) from the load-time dsr. */
+/** Snapshot current etd for k-DPIs target max-depth default (alignment load / dsr dialog).
+ *  Also seeds tree-SVG Mutations/day (MPD) from the session dsr. */
 function snapshotEtdAtLoad() {
     const dsr = getGroupDpiDailySubstitutionRate();
     state.etdAtLoad = expectedTreeDiameter(getCurrentDpiDaysForDisplay(), dsr);
@@ -2641,13 +2686,22 @@ function formatLoadSummaryNumber(x) {
 function updateLoadedFileStatsDisplay() {
     if (!dom.fileStatsDisplay) return;
     const { n, f, nf } = getSequenceFunctionalityStats();
-    const dpi = getCurrentDpiDaysForDisplay();
+    dom.fileStatsDisplay.textContent = `s=${n}, f=${f}, nf=${nf}`;
+    dom.fileStatsDisplay.title = `${n} sequences, ${f} functional, ${nf} non-functional`;
+}
+
+function updatePhylogenyDiameterDisplay(meanDist) {
+    const el = dom.phyloDiameterDisplay || document.getElementById('phylo-diameter-display');
+    if (!el) return;
+    if (arguments.length > 0) {
+        state.treeDiameter = (meanDist != null && Number.isFinite(meanDist)) ? meanDist : null;
+    }
     const dsr = getGroupDpiDailySubstitutionRate();
-    const etd = expectedTreeDiameter(dpi, dsr);
     const dsrStr = formatLoadSummaryNumber(dsr);
-    const etdStr = formatLoadSummaryNumber(etd);
-    dom.fileStatsDisplay.textContent = `s=${n}, f=${f}, nf=${nf}, dpi=${dpi}, dsr=${dsrStr}, etd=${etdStr}`;
-    dom.fileStatsDisplay.title = `${n} sequences, ${f} functional, ${nf} non-functional, dpi=${dpi} days, dsr=${dsrStr}, etd=${etdStr} (expected mean pairwise tip distance = 2×dsr×dpi)`;
+    const targetDpi = getCurrentDpiDaysForDisplay();
+    const targetDpiStr = (targetDpi != null && Number.isFinite(targetDpi)) ? String(Math.round(targetDpi)) : '—';
+    el.textContent = `dsr=${dsrStr}, target-dpi=${targetDpiStr}`;
+    el.title = `dsr = ${dsr} substitutions/site/day; target-dpi = ${targetDpiStr} days (from filename dpi±N or SVG DPI field; used for etd = 2×dsr×DPI)`;
 }
 
 function applySubtypeToggleReset(hasSubtype) {
@@ -3260,12 +3314,11 @@ function initGroupDpiDailySubstitutionRate() {
         localStorage.removeItem('aliViz.groupDpiDailySubstitutionRate');
     } catch (e) { /* ignore */ }
     state.groupDpiDailySubstitutionRate = DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE;
-    const inp = document.getElementById('inp-group-dsr');
+    const inp = document.getElementById('inp-dsr');
     if (inp) inp.value = String(DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
-    const loadInp = document.getElementById('inp-dsr-on-load');
-    if (loadInp) loadInp.value = String(DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
     applyTreeSvgMpdFromDsr(DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
     updateLoadedFileStatsDisplay();
+    updatePhylogenyDiameterDisplay();
 }
 
 function getGroupDpiDailySubstitutionRate() {
@@ -3279,21 +3332,38 @@ function setGroupDpiDailySubstitutionRate(rate) {
     const parsed = typeof rate === 'number' ? rate : parseFloat(rate);
     if (!Number.isFinite(parsed) || parsed <= 0) return null;
     state.groupDpiDailySubstitutionRate = parsed;
-    const inp = document.getElementById('inp-group-dsr');
+    const inp = document.getElementById('inp-dsr');
     if (inp) inp.value = String(parsed);
-    const loadInp = document.getElementById('inp-dsr-on-load');
-    if (loadInp) loadInp.value = String(parsed);
     updateLoadedFileStatsDisplay();
+    updatePhylogenyDiameterDisplay();
     return parsed;
 }
 
-/** Update the etd preview line in the on-load dsr dialog. */
-function updateDsrOnLoadEtdHint() {
-    const hint = document.getElementById('dsr-on-load-etd-hint');
-    const dpiEl = document.getElementById('dsr-on-load-dpi');
-    const inp = document.getElementById('inp-dsr-on-load');
+/**
+ * Apply session dsr and refresh DPI-dependent UI (etd, group/cluster DPI, SVG MPD seed).
+ * @returns {number|null} applied dsr or null if invalid
+ */
+function applySessionDsr(rate) {
+    const dsr = setGroupDpiDailySubstitutionRate(rate);
+    if (dsr == null) return null;
+    snapshotEtdAtLoad();
+    applyTreeSvgMpdFromDsr(dsr);
+    refreshGroupDpiEstimates();
+    if (state.leafClusters && state.leafClusters.size > 0) {
+        refreshClusterDpiEstimates();
+    }
+    updateColorLegend();
+    return dsr;
+}
+
+/** Update the etd preview line in the dsr dialog. */
+function updateDsrDialogEtdHint() {
+    const hint = document.getElementById('dsr-etd-hint');
+    const dpiEl = document.getElementById('dsr-dialog-dpi');
+    const inp = document.getElementById('inp-dsr');
     if (!hint || !dpiEl || !inp) return;
-    const dpi = parseInt(dpiEl.textContent, 10);
+    const dpi = getCurrentDpiDaysForDisplay();
+    dpiEl.textContent = String(dpi);
     const dsr = parseFloat(inp.value);
     const etd = expectedTreeDiameter(dpi, dsr);
     hint.textContent = Number.isFinite(dsr) && dsr > 0 && etd != null
@@ -3301,25 +3371,19 @@ function updateDsrOnLoadEtdHint() {
         : 'Enter a positive dsr to preview etd.';
 }
 
-/**
- * If the alignment filename contained a DPI token, offer to set dsr for this session.
- * Called after DPI days have been applied from the filename.
- */
-function maybePromptDsrAfterDpiFromFileName(fileName) {
-    const parsed = parseDpiDaysFromFileName(fileName);
-    if (parsed == null) return;
-    const overlay = document.getElementById('dsr-on-load-overlay');
-    const dpiEl = document.getElementById('dsr-on-load-dpi');
-    const inp = document.getElementById('inp-dsr-on-load');
-    if (!overlay || !dpiEl || !inp) return;
-    dpiEl.textContent = String(parsed);
-    inp.value = String(DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE);
-    updateDsrOnLoadEtdHint();
+function showDsrModal() {
+    const overlay = document.getElementById('dsr-overlay');
+    const inp = document.getElementById('inp-dsr');
+    const dpiEl = document.getElementById('dsr-dialog-dpi');
+    if (!overlay) return;
+    if (inp) inp.value = String(getGroupDpiDailySubstitutionRate());
+    if (dpiEl) dpiEl.textContent = String(getCurrentDpiDaysForDisplay());
+    updateDsrDialogEtdHint();
     overlay.style.display = 'flex';
 }
 
-function closeDsrOnLoadOverlay() {
-    const overlay = document.getElementById('dsr-on-load-overlay');
+function closeDsrOverlay() {
+    const overlay = document.getElementById('dsr-overlay');
     if (overlay) overlay.style.display = 'none';
 }
 
@@ -3385,25 +3449,18 @@ function jukesCantorCorrectedDistance(p) {
 }
 
 /**
- * Estimate days post infection from an observed pairwise p-distance (api).
- * Under a Poisson substitution model, observed p underestimates true divergence
- * when multiple hits occur. Apply Jukes–Cantor correction, then convert with the clock:
- *   d = −(3/4) ln(1 − 4·api/3)
+ * Estimate days post infection from mean pairwise tree path distance:
  *   dpi = d / (2 × dsr)
- * (The linear rule dpi = api/(2×dsr) is the infinite-sites limit of the same model.)
- * Callers typically pass the **mean** pairwise p-distance within a group/cluster.
- * Returns nearest whole day, or null if undefined.
+ * Alignment sequence p-distances are not used for DPI.
  */
-function estimateDpiDaysFromApi(api, dsr = getGroupDpiDailySubstitutionRate()) {
-    if (api == null || !Number.isFinite(api) || !(dsr > 0)) return null;
-    const d = jukesCantorCorrectedDistance(api);
-    if (d == null) return null;
-    const dpi = d / (2 * dsr);
-    if (!Number.isFinite(dpi) || dpi < 0) return null;
-    return Math.round(dpi);
+function estimateDpiDaysFromMeanTreeDistance(meanTreeDist, dsr = getGroupDpiDailySubstitutionRate()) {
+    return dpiDaysFromTreeDiameter(meanTreeDist, dsr);
 }
 
-/** Build Map(groupId → estimated DPI days) for current grouping; also stores groupMemberCounts. */
+/**
+ * Build Map(groupId → DPI days) when a phylogeny is present; always refresh groupMemberCounts.
+ * Without a tree: counts only (empty DPI map). With a tree: dpi from mean pairwise tip path length.
+ */
 function computeGroupDpiEstimates() {
     const estimates = new Map();
     const counts = new Map();
@@ -3411,7 +3468,6 @@ function computeGroupDpiEstimates() {
         state.groupMemberCounts = counts;
         return estimates;
     }
-    const dsr = getGroupDpiDailySubstitutionRate();
     const byGroup = new Map();
     for (let i = 0; i < state.rawSequences.length; i++) {
         if (i === state.refIndex || i === state.subtypeIndex || isPdbChainSequence(state.rawSequences[i])) continue;
@@ -3420,16 +3476,38 @@ function computeGroupDpiEstimates() {
         const gid = getSequenceGroupId(seq.name);
         if (gid === undefined) continue;
         if (!byGroup.has(gid)) byGroup.set(gid, []);
-        byGroup.get(gid).push(seq.seq || []);
+        byGroup.get(gid).push({ name: normalizeSequenceName(seq.name) });
     }
-    byGroup.forEach((seqs, gid) => {
-        counts.set(gid, seqs.length);
-        const api = averagePairwisePDistance(seqs);
-        const dpi = estimateDpiDaysFromApi(api, dsr);
-        if (dpi != null) estimates.set(gid, dpi);
+    byGroup.forEach((ents, gid) => {
+        counts.set(gid, ents.length);
     });
     state.groupMemberCounts = counts;
+
+    if (!state.tree || !state.tree.root) {
+        return estimates;
+    }
+
+    const allEntries = [];
+    byGroup.forEach(ents => {
+        for (let i = 0; i < ents.length; i++) allEntries.push(ents[i]);
+    });
+    if (allEntries.length >= 2) {
+        buildKDpisTreeDistCache(allEntries);
+    }
+    byGroup.forEach((ents, gid) => {
+        const dpi = dpiDaysFromTipNameEntries(ents);
+        if (dpi != null) estimates.set(gid, dpi);
+    });
     return estimates;
+}
+
+/** Recompute group DPI from the current phylogeny (or clear DPI if no tree); keep counts. */
+function refreshGroupDpiEstimates() {
+    if (!state.sequenceGroups || !state.groupNames) {
+        state.groupDpiEstimates = null;
+        return;
+    }
+    state.groupDpiEstimates = computeGroupDpiEstimates();
 }
 
 /** Resolve group ID for a sequence name, tolerating cluster-suffix key mismatches. */
@@ -3544,18 +3622,21 @@ function countSequencesInCluster(clusterId) {
     return n;
 }
 
-/** Legend label for a group, e.g. "2000 (12, 56)" = n sequences, dpi days. */
+/** Legend label for a group: "2000 (12)" counts only, or "2000 (12, 56)" with tree-based dpi. */
 function formatGroupLegendLabel(groupId, groupValue) {
     const base = groupValue || `Group ${groupId}`;
+    const n = countSequencesInGroup(groupId);
     const dpi = state.groupDpiEstimates ? state.groupDpiEstimates.get(groupId) : undefined;
     if (dpi != null && Number.isFinite(dpi)) {
-        const n = countSequencesInGroup(groupId);
         return `${base} (${n}, ${dpi})`;
     }
-    return base;
+    return `${base} (${n})`;
 }
 
-/** Build Map(clusterId → estimated DPI days) from a name→clusterId assignment map. */
+/**
+ * Build Map(clusterId → DPI days) from name→clusterId using mean pairwise tree path lengths.
+ * Requires a loaded phylogeny; never uses alignment p-distances.
+ */
 function computeClusterDpiEstimatesFromAssignment(nameToCluster) {
     const estimates = new Map();
     const counts = new Map();
@@ -3563,22 +3644,34 @@ function computeClusterDpiEstimatesFromAssignment(nameToCluster) {
         state.clusterMemberCounts = counts;
         return estimates;
     }
-    const dsr = getGroupDpiDailySubstitutionRate();
     const byCluster = new Map();
     nameToCluster.forEach((cid, name) => {
         if (cid == null || cid === -1) return;
         const seq = findRawSequenceForTreeNode(name);
-        if (!seq || !seq.seq) return;
+        const tipName = seq && seq.name
+            ? normalizeSequenceName(seq.name)
+            : normalizeSequenceName(name);
+        if (!tipName) return;
         if (!byCluster.has(cid)) byCluster.set(cid, []);
-        byCluster.get(cid).push(seq.seq);
+        byCluster.get(cid).push({ name: tipName });
     });
-    byCluster.forEach((seqs, cid) => {
-        counts.set(cid, seqs.length);
-        const api = averagePairwisePDistance(seqs);
-        const dpi = estimateDpiDaysFromApi(api, dsr);
+    byCluster.forEach((ents, cid) => counts.set(cid, ents.length));
+    state.clusterMemberCounts = counts;
+
+    if (!state.tree || !state.tree.root) {
+        return estimates;
+    }
+    const allEntries = [];
+    byCluster.forEach(ents => {
+        for (let i = 0; i < ents.length; i++) allEntries.push(ents[i]);
+    });
+    if (allEntries.length >= 2) {
+        buildKDpisTreeDistCache(allEntries);
+    }
+    byCluster.forEach((ents, cid) => {
+        const dpi = dpiDaysFromTipNameEntries(ents);
         if (dpi != null) estimates.set(cid, dpi);
     });
-    state.clusterMemberCounts = counts;
     return estimates;
 }
 
@@ -3610,15 +3703,15 @@ function formatNoiseLegendLabel() {
     return n > 0 ? `Noise (${n})` : 'Noise';
 }
 
-/** Legend label for a cluster, e.g. "1 (8, 56)" = n sequences, dpi days. */
+/** Legend label for a cluster: "1 (8)" counts only, or "1 (8, 56)" with tree-based dpi. */
 function formatClusterLegendLabel(clusterId) {
     const base = String(clusterId);
+    const n = countSequencesInCluster(clusterId);
     const dpi = state.clusterDpiEstimates ? state.clusterDpiEstimates.get(clusterId) : undefined;
     if (dpi != null && Number.isFinite(dpi)) {
-        const n = countSequencesInCluster(clusterId);
         return `${base} (${n}, ${dpi})`;
     }
-    return base;
+    return `${base} (${n})`;
 }
 
 /** Show dismissable window with cluster DPI estimates for the current MDS/UMAP clustering. */
@@ -3631,6 +3724,10 @@ function showClusterDpiEstimatesWindow(leaves, clusters) {
         alert('No current clustering to estimate. Adjust DBSCAN parameters first.');
         return;
     }
+    if (!state.tree || !state.tree.root) {
+        alert('A phylogeny is required for DPI estimates (mean pairwise tree path distance).');
+        return;
+    }
     const dsr = getGroupDpiDailySubstitutionRate();
     const estimates = computeClusterDpiEstimatesFromLeaves(leaves, clusters);
     // Also include cluster IDs present in the assignment that lack an estimate (singletons).
@@ -3641,7 +3738,7 @@ function showClusterDpiEstimatesWindow(leaves, clusters) {
     }
     const sortedIds = Array.from(ids).sort((a, b) => a - b);
     if (meta) {
-        meta.textContent = `api = mean pairwise p-distance; JC69: d = −(3/4) ln(1 − 4·api/3); dpi = d / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day.`;
+        meta.textContent = `dpi = mean pairwise tree path distance / (2 × dsr) with dsr = ${dsr}. Rounded to nearest day. Alignment p-distances are not used.`;
     }
     if (sortedIds.length === 0) {
         content.innerHTML = '<p style="margin:0;color:#6b7280;">No non-noise clusters available for DPI estimation.</p>';
@@ -3681,17 +3778,12 @@ function showGroupModal() {
         alert("No sequences to group.");
         return;
     }
-    const inp = document.getElementById('inp-group-dsr');
-    if (inp) inp.value = String(getGroupDpiDailySubstitutionRate());
     document.getElementById('group-overlay').style.display = 'flex';
 }
 
 function runGroupTask() {
     const delimiter = document.getElementById('inp-group-delimiter').value || '_';
     const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 3;
-    const dsrRaw = document.getElementById('inp-group-dsr')
-        ? document.getElementById('inp-group-dsr').value
-        : getGroupDpiDailySubstitutionRate();
     
     if (delimiter.length === 0) {
         alert("Please specify a delimiter character.");
@@ -3700,12 +3792,6 @@ function runGroupTask() {
     
     if (fieldNumOneBased < 1) {
         alert("Field number must be at least 1.");
-        return;
-    }
-
-    const dsr = setGroupDpiDailySubstitutionRate(dsrRaw);
-    if (dsr == null) {
-        alert("Daily substitution rate must be a positive number.");
         return;
     }
     
@@ -3871,12 +3957,12 @@ function applyPrune() {
     });
     state.sequenceGroups = renumberedSequenceGroups;
     state.groupNames = renumberedGroupNames;
-    state.groupDpiEstimates = computeGroupDpiEstimates();
     state.refIndex = 0;
     state.subtypeIndex = getDefaultSubtypeIndexForLoadedSequences(state.rawSequences.length);
     state.tree = null;
     state.treeDiameter = null;
     updatePhylogenyDiameterDisplay(null);
+    state.groupDpiEstimates = computeGroupDpiEstimates(); // counts only (no tree)
     state.selection = null;
     recalc();
     updateColorLegend();
@@ -4097,6 +4183,11 @@ function applySubtypeFounder() {
         state.leafClusters = null; // Clear clusters
         state.clusterDpiEstimates = null;
         state.clusterMemberCounts = null;
+        if (state.sequenceGroups && state.groupNames) {
+            state.groupDpiEstimates = computeGroupDpiEstimates(); // counts only (tree cleared)
+        } else {
+            state.groupDpiEstimates = null;
+        }
         updateColorLegend();
     }
     
@@ -4622,7 +4713,6 @@ function maybeRootAndLadderizeAfterInfer() {
 }
 
 function inferTreeNJ() {
-    const startTime = performance.now();
     showOverlay(true);
     dom.overlayMsg.textContent = "Inferring phylogeny...";
     dom.overlaySub.textContent = "Calculating distances and building NJ tree";
@@ -4656,10 +4746,7 @@ function inferTreeNJ() {
             
             // Parse the generated tree (don't auto-reroot)
             parseTree(newick, false, false);
-            
-            const endTime = performance.now();
-            const executionTime = ((endTime - startTime) / 1000).toFixed(2);
-            console.log(`NJ Tree Inference completed in ${executionTime} seconds`);
+
         } catch (err) {
             console.error("Error inferring tree:", err);
             state.pendingRootAndLadderize = false;
@@ -4670,8 +4757,6 @@ function inferTreeNJ() {
 }
 
 async function runFastTreeTask() {
-    const startTime = performance.now();
-    
     if (!state.aioliCLI) {
         alert("FastTree (bioWASM) is not yet initialized. Please wait or refresh.");
         state.pendingRootAndLadderize = false;
@@ -4751,18 +4836,6 @@ async function runFastTreeTask() {
 
         const command = `fasttree ${trimmedFlags} input_tree.fa`;
         
-        // Log FastTree parameters
-        console.log("=== FastTree Parameters ===");
-        console.log(`Sequences: ${nonRefSequences.length} (reference sequence excluded)`);
-        console.log(`Mode: ${isAA ? 'AA' : 'NT'}`);
-        console.log(`AA Model: ${aaModel || 'Default (JTT)'}`);
-        console.log(`NT Model: ${ntModel || 'Default (Jukes-Cantor)'}`);
-        console.log(`Speed: ${speed || 'Default'}`);
-        console.log(`Flags: ${trimmedFlags || '(none)'}`);
-        console.log(`Full Command: ${command}`);
-        console.log(`Flag Array: [${flagArray.join(', ')}]`);
-        console.log("===========================");
-        
         const output = await state.aioliCLI.exec(command);
         
         // FastTree outputs multiple lines - extract the Newick string (usually the last line with parentheses)
@@ -4790,10 +4863,7 @@ async function runFastTreeTask() {
             // Map back to original sequence names (excluding ref)
             state.tempNameMap = nonRefSequences.map(s => s.name);
             parseTree(newick, true, false); // isIndexed=true, shouldReroot=false
-            
-            const endTime = performance.now();
-            const executionTime = ((endTime - startTime) / 1000).toFixed(2);
-            console.log(`FastTree Inference completed in ${executionTime} seconds`);
+
         } else {
             throw new Error("Invalid Newick output from FastTree.");
         }
@@ -4819,7 +4889,7 @@ function exportTree() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "tree.nwk";
+    a.download = buildAlignmentAnnotatedFileName('.nwk');
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -5133,23 +5203,9 @@ function checkFixedScaleSvgOverflow(fixedBranchPerCm) {
 }
 
 /** @returns {boolean} True if export succeeded. */
-/** SVG export filename: alignment basename + _gr-<numGroups>_cl-<numClusters>.svg (clusters exclude noise). */
+/** SVG export filename: alignment basename + _gr-<numGroups>_cl-<numClusters>.svg */
 function buildTreeSvgFileName() {
-    const rawName = state.currentFileName || dom.file?.files?.[0]?.name || 'tree';
-    const baseName = rawName.replace(/\.[^.]+$/, '') || 'tree';
-    let numGroups = 0;
-    if (state.sequenceGroups && state.groupNames) {
-        numGroups = state.groupNames.size;
-    }
-    let numClusters = 0;
-    if (state.leafClusters) {
-        const clusterIds = new Set();
-        state.leafClusters.forEach(clusterId => {
-            if (clusterId !== -1) clusterIds.add(clusterId);
-        });
-        numClusters = clusterIds.size;
-    }
-    return `${baseName}_gr-${numGroups}_cl-${numClusters}.svg`;
+    return buildAlignmentAnnotatedFileName('.svg');
 }
 
 function exportTreeAsSvg(layout, scaleMode, fixedBranchPerCm, dpiParams) {
@@ -5896,7 +5952,7 @@ function finalizeLoad(seqs) {
     snapshotEtdAtLoad();
     updateLoadedFileStatsDisplay();
     updateLoadedFileNameDisplay(state.currentFileName);
-    maybePromptDsrAfterDpiFromFileName(state.currentFileName);
+    updatePhylogenyDiameterDisplay();
     
     // Re-apply startup disabled state, then enable only buttons valid after a fresh load
     disableButtonsOnStartup();
@@ -6507,18 +6563,6 @@ function computePhylogenyTreeDiameter(root) {
     return pairs > 0 ? sum / pairs : 0;
 }
 
-function updatePhylogenyDiameterDisplay(meanDist) {
-    const el = dom.phyloDiameterDisplay || document.getElementById('phylo-diameter-display');
-    if (!el) return;
-    if (meanDist == null || !Number.isFinite(meanDist)) {
-        el.textContent = 'mean=—';
-        el.title = 'Mean pairwise tip-to-tip path length (branch-length units)';
-        return;
-    }
-    el.textContent = `mean=${formatLoadSummaryNumber(meanDist)}`;
-    el.title = `Mean pairwise tip-to-tip path length = ${meanDist} branch-length units`;
-}
-
 function parseTree(newick, isIndexed = false, shouldReroot = true) {
     if(!state.rawSequences.length) {
         alert("Please load sequences first.");
@@ -6612,7 +6656,7 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
         // This prevents making leaf nodes direct children of root
         if (singleChild.children && singleChild.children.length > 0) {
             root = singleChild;
-        delete root.parent;
+            delete root.parent;
             // Rebuild parent references after collapsing root
             function rebuildParents(node, parent = null) {
                 node.parent = parent;
@@ -6623,9 +6667,6 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
                 }
             }
             rebuildParents(root, null);
-            console.log(`Collapsed root: single child with ${singleChild.children.length} children`);
-        } else {
-            console.log(`Keeping root: single child is a leaf, not collapsing`);
         }
     }
     
@@ -6673,6 +6714,13 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
     
     // Enable Reroot button after successful tree inference/loading
     enableButtonsAfterInference();
+
+    // Group DPI uses phylogeny branch lengths — refresh now that a tree exists
+    refreshGroupDpiEstimates();
+    if (state.leafClusters && state.leafClusters.size > 0) {
+        refreshClusterDpiEstimates();
+    }
+    updateColorLegend();
     
     recalc();
     showOverlay(false);
@@ -7112,16 +7160,6 @@ function showProjectionPlot(selectedMethod) {
         epsDefault = epsMax / 2;  // MDS: start at half the maximum
     }
     const epsMin = epsStep;
-    
-    // Console report for projection/clustering debugging (MDS or UMAP)
-    const methodLabel = selectedMethod === 'umap' ? 'UMAP' : 'MDS';
-    const dim1Min = Math.min(...xs);
-    const dim1Max = Math.max(...xs);
-    const dim2Min = Math.min(...ys);
-    const dim2Max = Math.max(...ys);
-    console.log('[' + methodLabel + ' projection] dimension 1 (x): min =', dim1Min, ', max =', dim1Max);
-    console.log('[' + methodLabel + ' projection] dimension 2 (y): min =', dim2Min, ', max =', dim2Max);
-    console.log('[' + methodLabel + ' clustering] maximum radius (epsMax) =', epsMax, ', radius step size (epsStep) =', epsStep);
     
     // Store data for DBSCAN updates
     window.mdsData = { leaves, coords: projectionCoords, subtypeName };
@@ -7671,8 +7709,8 @@ function performUMAP(distanceMatrix, nNeighbors = 15, spread = 1.0, minDist = 0.
 
 // --- k-DPIs: divisive clustering by phylogeny-node bipartitions (max depth / LCA height) ---
 
-/** Session caches: sequence p-distances (DPI labels) and tree path distances (splitting). */
-let kDpisDistCache = null;
+/** Session cache: tree path distances for k-DPIs splits and tree-based DPI. */
+let kDpisDistCache = null; // legacy sequence p-distance cache (unused for DPI)
 let kDpisTreeDistCache = null;
 
 function clearKDpisDistCache() {
@@ -7844,7 +7882,7 @@ function downloadKDpisTreeDistanceMatrixCsv(entries) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log('[k-DPIs] downloaded tree pairwise distance matrix:', names.length, '×', names.length);
+
     return true;
 }
 
@@ -7878,38 +7916,32 @@ function kDpisEntriesToCacheIndices(entries, cache) {
 }
 
 /**
- * DPI annotation for a list of {name,seq} entries.
- * Prefers mean pairwise tree path distance (same metric as the k-DPIs CSV):
- *   dpi = mean_tree_d / (2 × dsr)
- * Falls back to sequence mean p-distance + JC69 if the tree is unavailable.
+ * DPI days from tip-name entries via mean pairwise tree path distance / (2×dsr).
+ * Never uses alignment sequence distances.
  */
-function dpiForKDpisEntries(entries) {
+function dpiDaysFromTipNameEntries(entries) {
     if (!entries || entries.length < 2) return null;
     const meanTree = meanPairwiseTreePathDistance(entries);
-    if (meanTree != null) {
-        return dpiDaysFromTreeDiameter(meanTree);
-    }
-    const api = averagePairwisePDistance(entries.map(e => e.seq));
-    return estimateDpiDaysFromApi(api);
+    if (meanTree == null) return null;
+    return estimateDpiDaysFromMeanTreeDistance(meanTree);
+}
+
+/**
+ * DPI annotation for a list of {name,seq?} entries (mean pairwise tree path distance).
+ *   dpi = mean_tree_d / (2 × dsr)
+ */
+function dpiForKDpisEntries(entries) {
+    return dpiDaysFromTipNameEntries(entries);
 }
 
 /** Unrounded DPI days from mean pairwise tree path distance (diagnostics). */
 function dpiDaysRawFromEntries(entries) {
     if (!entries || entries.length < 2) return null;
     const meanTree = meanPairwiseTreePathDistance(entries);
-    if (meanTree != null) {
-        const dsr = getGroupDpiDailySubstitutionRate();
-        if (!(dsr > 0)) return null;
-        const dpi = meanTree / (2 * dsr);
-        return Number.isFinite(dpi) && dpi >= 0 ? dpi : null;
-    }
-    const api = averagePairwisePDistance(entries.map(e => e.seq));
-    if (api == null || !Number.isFinite(api)) return null;
-    const d = jukesCantorCorrectedDistance(api);
-    if (d == null) return null;
+    if (meanTree == null) return null;
     const dsr = getGroupDpiDailySubstitutionRate();
     if (!(dsr > 0)) return null;
-    const dpi = d / (2 * dsr);
+    const dpi = meanTree / (2 * dsr);
     return Number.isFinite(dpi) && dpi >= 0 ? dpi : null;
 }
 
@@ -8177,16 +8209,28 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
 
 /**
  * Split one leaf in-place; returns true on success.
- * Minimises max(depth₁, depth₂) over internal-node bipartitions.
- * If no valid bipartition exists, or best score exceeds parent max depth,
- * mark unsplittable and return false.
+ * Chooses the bipartition that minimises max(depth₁, depth₂).
+ * Accepts only if max(DPI₁, DPI₂) is not worse than the parent DPI;
+ * otherwise mark unsplittable and return false.
  * @param {{allowNoiseOnly?: boolean}} opts
  */
 function splitKDpisLeaf(leaf, minSize, opts) {
     if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf) || leaf.unsplittable) return false;
-    const parentD = (leaf.diameter != null && Number.isFinite(leaf.diameter)) ? leaf.diameter : null;
     const bip = bestKDpisBipartition(leaf.entries, minSize, opts);
-    if (!bip || (parentD != null && bip.score > parentD + 1e-12)) {
+    if (!bip) {
+        leaf.unsplittable = true;
+        leaf.left = null;
+        leaf.right = null;
+        return false;
+    }
+    const parentDpi = dpiDaysRawFromEntries(leaf.entries);
+    const dpi0 = dpiDaysRawFromEntries(bip.left);
+    const dpi1 = dpiDaysRawFromEntries(bip.right);
+    const maxChildDpi = Math.max(
+        (dpi0 != null && Number.isFinite(dpi0)) ? dpi0 : 0,
+        (dpi1 != null && Number.isFinite(dpi1)) ? dpi1 : 0
+    );
+    if (parentDpi != null && Number.isFinite(parentDpi) && maxChildDpi > parentDpi + 1e-9) {
         leaf.unsplittable = true;
         leaf.left = null;
         leaf.right = null;
@@ -8336,43 +8380,6 @@ function getKDpisIncomingBranchLengths(entries) {
         out.push({ name: entries[i].name, value: len });
     }
     return out;
-}
-
-/**
- * Pendant (incoming) and root-to-tip depth stats for a tip set (tree geometry only).
- * Used to contrast long-branch noise removal with sequence-based DPI.
- */
-function summarizeKDpisTipTreeGeometry(entries) {
-    if (!entries || entries.length === 0) return null;
-    const leafByNormName = getKDpisLeafByNormName();
-    let maxPendant = 0;
-    let sumPendant = 0;
-    let maxRootToTip = 0;
-    let sumRootToTip = 0;
-    let n = 0;
-    const tips = [];
-    for (let i = 0; i < entries.length; i++) {
-        const leaf = leafByNormName.get(entries[i].name);
-        if (!leaf) continue;
-        const pendant = leaf.len != null && Number.isFinite(leaf.len) ? leaf.len : 0;
-        const rtt = leaf.xDepth != null && Number.isFinite(leaf.xDepth) ? leaf.xDepth : pendant;
-        maxPendant = Math.max(maxPendant, pendant);
-        sumPendant += pendant;
-        maxRootToTip = Math.max(maxRootToTip, rtt);
-        sumRootToTip += rtt;
-        n++;
-        tips.push({ name: entries[i].name, pendant, rootToTip: rtt });
-    }
-    if (!n) return null;
-    tips.sort((a, b) => b.pendant - a.pendant);
-    return {
-        n,
-        maxPendant,
-        meanPendant: sumPendant / n,
-        maxRootToTip,
-        meanRootToTip: sumRootToTip / n,
-        tips
-    };
 }
 
 /**
@@ -8591,39 +8598,9 @@ function acceptKDpisClustering(nameToCluster) {
     state.leafClusters = updatedLeafClusters;
     rekeySequenceGroupsToCurrentNames();
     state.lastAcceptedClusterMethod = 'k-DPIs';
-    state.clusterDpiEstimates = computeKDpisTreeClusterDpiEstimates(nameToCluster);
+    refreshClusterDpiEstimates();
     updateColorLegend();
     recalc();
-}
-
-/** Cluster DPI estimates from mean pairwise tree path distance (k-DPIs Accept / legend). */
-function computeKDpisTreeClusterDpiEstimates(nameToCluster) {
-    const estimates = new Map();
-    const counts = new Map();
-    if (!nameToCluster || nameToCluster.size === 0) {
-        state.clusterMemberCounts = counts;
-        return estimates;
-    }
-    const byCluster = new Map();
-    nameToCluster.forEach((cid, name) => {
-        if (cid == null || cid === -1) return;
-        const seq = findRawSequenceForTreeNode(name);
-        if (!seq || !seq.seq) return;
-        if (!byCluster.has(cid)) byCluster.set(cid, []);
-        byCluster.get(cid).push({ name: normalizeSequenceName(seq.name), seq: seq.seq });
-    });
-    const allEntries = [];
-    byCluster.forEach(ents => {
-        for (let i = 0; i < ents.length; i++) allEntries.push(ents[i]);
-    });
-    if (allEntries.length >= 2) buildKDpisTreeDistCache(allEntries);
-    byCluster.forEach((ents, cid) => {
-        counts.set(cid, ents.length);
-        const dpi = dpiForKDpisEntries(ents);
-        if (dpi != null) estimates.set(cid, dpi);
-    });
-    state.clusterMemberCounts = counts;
-    return estimates;
 }
 
 function showKDpisModal() {
@@ -8684,52 +8661,19 @@ function showKDpisModal() {
         clearKDpisDistCache();
         // Before shrinking the tip set: tree mean-pairwise DPI on all sample tips
         let dpiAll = null;
-        let rawAll = null;
-        let meanTreeAll = null;
         if (preNoiseEntries.length > 0 && entries.length >= 2) {
-            meanTreeAll = meanPairwiseTreePathDistance(entries);
+            const meanTreeAll = meanPairwiseTreePathDistance(entries);
             dpiAll = meanTreeAll != null ? dpiDaysFromTreeDiameter(meanTreeAll) : null;
-            rawAll = dpiDaysRawFromEntries(entries);
         }
         if (clusterEntries.length > 0) {
             if (!buildKDpisTreeDistCache(clusterEntries)) {
                 alert('Could not match all sample sequences to tree leaves. Infer or load a tree that includes them.');
                 return makeKDpisClusterRoot([], preNoiseEntries.concat(clusterEntries));
             }
-            buildKDpisDistCache(clusterEntries);
         }
         const root = makeKDpisClusterRoot(clusterEntries, preNoiseEntries);
         if (preNoiseEntries.length > 0) {
-            const dpiCluster = root.dpi;
-            const rawCluster = dpiDaysRawFromEntries(clusterEntries);
-            const meanTreeKeep = meanPairwiseTreePathDistance(clusterEntries);
             root._dpiBeforeNoiseRemoval = dpiAll;
-            const fmt = (x, d) => (x != null && Number.isFinite(x) ? x.toFixed(d) : '—');
-            const pct = (a, b) => (a > 0 && b != null && Number.isFinite(b)
-                ? `${((100 * (a - b)) / a).toFixed(1)}%`
-                : '—');
-            console.log(
-                '[k-DPIs] long-branch noise removal:',
-                preNoiseEntries.length, 'tip(s) → noise;',
-                clusterEntries.length, 'tip(s) remain;',
-                'mean pairwise tree dist',
-                fmt(meanTreeAll, 6), '→', fmt(meanTreeKeep, 6),
-                `(drop ${pct(meanTreeAll, meanTreeKeep)});`,
-                'DPI (tree mean / 2dsr) =', dpiAll,
-                `(raw ${fmt(rawAll, 2)}) →`, dpiCluster,
-                `(raw ${fmt(rawCluster, 2)})`
-            );
-            const geoAll = summarizeKDpisTipTreeGeometry(entries);
-            const geoKeep = summarizeKDpisTipTreeGeometry(clusterEntries);
-            const geoNoise = summarizeKDpisTipTreeGeometry(preNoiseEntries);
-            console.log(
-                '[k-DPIs] tree geometry: max pendant',
-                fmt(geoAll && geoAll.maxPendant, 6), '→', fmt(geoKeep && geoKeep.maxPendant, 6),
-                '; max root-to-tip',
-                fmt(geoAll && geoAll.maxRootToTip, 6), '→', fmt(geoKeep && geoKeep.maxRootToTip, 6),
-                '; noise tips:',
-                (geoNoise && geoNoise.tips ? geoNoise.tips.map(t => `${t.name}(len=${fmt(t.pendant, 6)})`).join(', ') : '—')
-            );
         }
         return root;
     }
@@ -8884,7 +8828,7 @@ function showKDpisModal() {
                 const leaf = findKDpisLeafToSplit(root, minSize);
                 if (!leaf) {
                     if (kDpisHasUnsplittableBlockingLeaves(root, minSize, null)) {
-                        alert('All remaining clusters are unsplittable (no bipartition improves max child distance). Splitting stopped.');
+                        alert('All remaining clusters are unsplittable (no bipartition improves max child DPI). Splitting stopped.');
                     } else {
                         alert('No further split possible (need a leaf large enough to yield a non-noise child).');
                     }
@@ -8974,7 +8918,7 @@ function showKDpisModal() {
                 }
                 refresh();
                 if (stoppedUnsplittable) {
-                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no internal-node bipartition reduces max child depth).');
+                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no internal-node bipartition reduces max child DPI).');
                 }
             } finally {
                 setKDpisBusy(false);
@@ -9074,7 +9018,7 @@ function showHierarchicalModal() {
     }
     
     const maxDepth = state.tree.maxDepth;
-    console.log('[Hierarchical clustering] max root-to-leaf length =', maxDepth);
+
     
     // Set up sliders
     const slider1 = document.getElementById('hier-slider-1');
@@ -9676,7 +9620,7 @@ function calinskiHarabaszTree(optionalLeafClusters) {
         collectMaxBranch(root);
         const halfMax = maxBranch / 2;
         B = (n / 2) * halfMax * halfMax;
-        console.log('Calinski–Harabasz (k=1): numerator =', B, ', W =', W, ', n =', n);
+
     } else {
         clusterToLeaves.forEach((leaves, cid) => {
             const mrca = getMRCA(leaves);
@@ -9691,7 +9635,7 @@ function calinskiHarabaszTree(optionalLeafClusters) {
         });
         if (k === 2) {
             const numerator = B / (k - 1);
-            console.log('Calinski–Harabasz (k=2): numerator =', numerator, ', W =', W, ', n =', n);
+
         }
     }
     if (W <= 0) return Infinity; // best possible clustering
@@ -9712,7 +9656,7 @@ function ballHallTree(optionalLeafClusters) {
     const root = state.tree.root;
     const useCladogram = !!state.tree.useCladogram;
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
 
     function pathToRoot(node) {
         const p = [];
@@ -9806,7 +9750,7 @@ function ballHallAdaptedTree(optionalLeafClusters, opts = {}) {
     const useCladogram = !!state.tree.useCladogram;
 
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
 
     // Determine current number of clusters k (excluding noise -1) as ballHallTree() does.
     const clusterToLeaves = new Map();
@@ -9860,23 +9804,7 @@ function ballHallAdaptedTree(optionalLeafClusters, opts = {}) {
     collectIncludedLeaves(root);
 
     if (denom === 0) return Infinity;
-    const adapted = (numer / denom) / Math.pow(2, k);
-
-    if (opts.log !== false) {
-        console.log(
-            'Ball-Hall-Adapted:',
-            'numerator(k=1)=',
-            numer,
-            'denominator(current k)=',
-            denom,
-            '(k =',
-            k,
-            ')',
-            'adapted=',
-            adapted
-        );
-    }
-    return adapted;
+    return (numer / denom) / Math.pow(2, k);
 }
 
 /** Return nameToCluster map for tree-clade clustering with given threshold and minLeaves (no state change). */
@@ -12531,7 +12459,7 @@ function alignChainsToReferenceSequences(refSeqArr, chains, pdbCode) {
         if (minCol >= 0) {
             const startRefCoord = refCoordAtCol(refSeqArr, minCol);
             const endRefCoord = refCoordAtCol(refSeqArr, maxCol);
-            console.log('PDB chain local alignment: chain=', ch.id, 'startRefCoord=', startRefCoord, 'endRefCoord=', endRefCoord, 'chainStart_0based=', chainStart);
+
             var chainLength = (ch.seq && ch.seq.length) ? ch.seq.length : 0;
             var alignedLength = 0;
             for (var col = minCol; col <= maxCol; col++) {
@@ -12947,7 +12875,7 @@ function computeDistanceBasedEpitope(pdbContent, intrinsicChainId, extrinsicChai
         residueRefs.push({ resSeq: resSeq, refCoords: refCoords });
     });
     var formatted = formatEpitopeAsFileLine(name, residueRefs);
-    if (formatted && formatted.line) console.log(formatted.line);
+    if (formatted && formatted.line)
     return { name: name, cutoff: cutoff, residues: residueRefs, epitopeLine: formatted && formatted.line, regions: formatted && formatted.regions };
 }
 
@@ -13773,7 +13701,7 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                 }
                 if (region) {
                     msg = info + ' — Epitope region: ' + region.start + ' - ' + region.end;
-                    // console.log('[Connector] endpoint: ' + info + ' ref ' + refCoord);
+                    //
                     var cr = container.getBoundingClientRect();
                     pdb3dClickAtom = { x: atom.x, y: atom.y, z: atom.z };
                     pdb3dClickChain = (atom.chain || ' ').trim() || 'A';
