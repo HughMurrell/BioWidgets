@@ -114,19 +114,18 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 - MDS/UMAP: every **eps** tick for the current min neighbors.
 
 #### Hierarchical (tree-clade)
-- New clade when incoming **branch length** exceeds a threshold (DFS). **Min leaves** → noise (`_cl-na`). Accept writes `_cl-*`, tree-based cluster DPI, legend and tip colours. Cancel strips clustering and keeps groups.
+- New clade when incoming **branch length** exceeds a threshold (DFS). **Min leaves** → noise (`_cl-n`). Accept writes `_cl-*`, tree-based cluster DPI, legend and tip colours. Cancel strips clustering and keeps groups.
 
 #### Hierarchical (tree-cut)
 - Three **depth** cutoffs (Level 1 ≤ 2 ≤ 3). Leaves assigned by crossing depth lines (BFS). Min leaves → noise. Accept / Cancel as above.
 
 #### k-DPIs (divisive max-depth)
 - Repeatedly split clusters on the **phylogeny**. Each candidate cut uses an **internal node**: **right** = descendant tips in the cluster, **left** = remainder. Choose the cut that minimises **max(depth₁, depth₂)** (LCA-subtree height).
-- **+** / **−** change k; **Max splits** (default 9) caps **+** and **Auto**. **+** picks the non-noise leaf with largest **DPI** and applies the cut **without** a DPI acceptance check. **Auto** resets to k=1 (re-applying long-branch noise if checked), then splits while some non-noise leaf has **dpi > target**, accepting a cut only if **max(child DPI) ≤ parent DPI** (rounded days).
+- **+** / **−** change k; **Max splits** (default 9) caps **+** and **Auto**. Both apply the best depth bipartition when one exists (cuts at phylogeny nodes whose tip set is a proper subset of the cluster — including single-tip peels — and, if needed, partitions of the cluster-LCA’s children). **+** picks the non-noise leaf with largest **DPI**. **Auto** resets to k=1 (re-applying long-branch noise if checked), then only splits leaves with **dpi > target**, and stops when none remain (or max splits).
 - **Min cluster size** (default 2): leaves with **n < min size** are **noise** and are never split further. Noise-only children are allowed.
 - **Remove long-branch tips as noise** (default on): at open / Reset / Auto start, tips with incoming branch **> Target max depth** (linked to ≈ DPI via **etd = 2 × dsr × DPI**) become pre-noise and are excluded from splitting.
-- On open: downloads `<alignment>_kdpis_tree_distances.csv` (tip×tip tree path distances).
 - Bubble tree: **root left**, remainder **up**, descendants **down** (like the linear phylogeny); leaf label **`n, dpi`**; radius ∝ log(n).
-- Accept: `_cl-<id>` / `_cl-na`, legend **`id (n, dpi)`** and **Noise (n)**. Cancel drops the preview.
+- Accept: `_cl-<id>` / `_cl-n`, legend **`id (n, dpi)`** and **Noise (n)**. Cancel drops the preview.
 
 #### UMAP
 - UMAP on tree pairwise distances → 2D, then **DBSCAN**. Parameters: nNeighbors, Spread, Min Distance, plus eps / Min Neighbors. **Estimate DPI** and **Apply** as for MDS.
@@ -256,7 +255,7 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 | SVG scale | Auto fit; Fixed length/cm; DPI at 1/16 mark (clip, half diamond). |
 | Tree-clade | Edge length threshold; min leaves → noise. |
 | Tree-cut | Three depth cuts; min leaves → noise. |
-| k-DPIs | Min max-child depth; + no DPI gate; Auto ≤ parent DPI; min size → noise; long-branch pre-noise; bubble tree root-left. |
+| k-DPIs | Min max-child depth; Auto only splits DPI &gt; target; + any largest-DPI leaf; min size → noise; long-branch pre-noise; bubble tree root-left. |
 | MDS / UMAP | Tree distances → 2D → DBSCAN; CH / Ball-Hall Auto on eps. |
 | CH | Tree MRCA/root form; ÷ 2<sup>k</sup>. |
 | Ball-Hall-Adapted | BH(1)/BH(k) ÷ 2<sup>k</sup>. |

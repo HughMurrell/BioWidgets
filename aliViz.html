@@ -646,7 +646,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). <strong>+</strong> applies that cut without a DPI acceptance check. <strong>Auto</strong> accepts a cut only if <strong>max(DPI₁, DPI₂) ≤ parent DPI</strong> (rounded days) and stops when every cluster’s tree-based <strong>DPI</strong> ≤ target DPI. <strong>+</strong> and <strong>Auto</strong> pick the leaf with largest <strong>DPI</strong> and may produce noise-only children. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). <strong>+</strong> and <strong>Auto</strong> apply that cut when a bipartition exists. <strong>Auto</strong> only splits leaves with <strong>DPI &gt; target</strong> and stops when none remain (or max splits); <strong>+</strong> splits the largest-DPI leaf of any size ≥ min. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -1922,7 +1922,7 @@ async function init() {
             if (selectedMethod === 'none') {
                 // Clear any current clustering and remove cluster suffixes from names.
                 const delimiter = state.groupDelimiter || '_';
-                const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+                const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
 
                 if (state.rawSequences && state.rawSequences.length > 0) {
                     const newSequenceGroups = state.sequenceGroups ? new Map() : null;
@@ -2487,7 +2487,8 @@ function getDesignatedSubtypeSequence() {
 
 function getClusterSuffixPattern() {
     const delimiter = state.groupDelimiter || '_';
-    return new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    // Match _cl-<id>, legacy _cl-na, or _cl-n (noise)
+    return new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
 }
 
 function normalizeSequenceName(name) {
@@ -2715,7 +2716,7 @@ function applySubtypeToggleReset(hasSubtype) {
 
     // Remove cluster suffixes from sequence names before clearing clustering/grouping state.
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
     state.rawSequences.forEach(seq => {
         if (seq && seq.name) seq.name = seq.name.replace(clusterPattern, '');
     });
@@ -4646,7 +4647,7 @@ function runInferTask() {
     // Clear clustering state and remove cluster annotations before inferring a new tree
     if (state.leafClusters || state.hierarchicalActive) {
         const delimiter = state.groupDelimiter || '_';
-        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
         
         // Remove cluster suffixes from sequence names and keep group coloring by updating sequenceGroups keys
         if (state.rawSequences && state.rawSequences.length > 0) {
@@ -7268,7 +7269,7 @@ function showProjectionPlot(selectedMethod) {
         const chEl = document.getElementById('mds-ch-value');
         if (chEl) {
             const delimiter = state.groupDelimiter || '_';
-            const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+            const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
             const nameToCluster = new Map();
             for (let i = 0; i < leaves.length; i++) {
                 if (clusters[i] === -1) continue;
@@ -7294,7 +7295,7 @@ function showProjectionPlot(selectedMethod) {
     // Auto: maximize selected index over the slider's discrete eps ticks (same values the user can pick).
     const buildNameToCluster = (clusters, leavesArr) => {
         const delimiter = state.groupDelimiter || '_';
-        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
         const nameToCluster = new Map();
         for (let i = 0; i < leavesArr.length; i++) {
             const cid = clusters[i];
@@ -7430,7 +7431,7 @@ function showProjectionPlot(selectedMethod) {
         // Create mapping from leaf name to cluster ID
         // First, create a map from sequence names (without cluster suffix) to cluster IDs
         const delimiter = state.groupDelimiter || '_';
-        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`); // Matches _cl-<number> or _cl-na
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`); // Matches _cl-<number> or _cl-n
         
         // Build map: original sequence name (without cluster suffix) -> cluster ID
         const nameToCluster = new Map();
@@ -7472,9 +7473,9 @@ function showProjectionPlot(selectedMethod) {
                         nameMapping.set(oldName, newName);
                     }
                 } else if (clusterId === -1) {
-                    // For noise, label with _cl-na (not assigned)
+                    // For noise, label with _cl-n (not assigned)
                     const oldName = seq.name;
-                    const newName = originalName + `${delimiter}cl-na`;
+                    const newName = originalName + `${delimiter}cl-n`;
                     seq.name = newName;
                     if (oldName !== newName) {
                         nameMapping.set(oldName, newName);
@@ -7815,77 +7816,6 @@ function buildKDpisTreeDistCache(entries) {
     return kDpisTreeDistCache;
 }
 
-/** Escape a field for CSV (RFC-style quotes when needed). */
-function csvEscapeField(value) {
-    const str = String(value == null ? '' : value);
-    if (/[",\r\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
-    return str;
-}
-
-/**
- * Tip × tip tree path-distance matrix for k-DPIs entries (symmetric, zero diagonal).
- * Uses the current phylogeny; returns { names, matrix } or null if tips cannot be matched.
- */
-function buildKDpisTreePairwiseDistanceMatrix(entries) {
-    if (!entries || entries.length === 0) return null;
-    if (!buildKDpisTreeDistCache(entries)) return null;
-    const { leafNodes, nodeToRootDistance, findLCA } = kDpisTreeDistCache;
-    const n = entries.length;
-    const names = entries.map(e => e.name);
-    const matrix = new Array(n);
-    for (let i = 0; i < n; i++) {
-        matrix[i] = new Array(n);
-        matrix[i][i] = 0;
-    }
-    for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-            const a = leafNodes[i];
-            const b = leafNodes[j];
-            const lca = findLCA(a, b);
-            const d = (nodeToRootDistance.get(a) || 0)
-                + (nodeToRootDistance.get(b) || 0)
-                - 2 * (nodeToRootDistance.get(lca) || 0);
-            const v = Number.isFinite(d) && d > 0 ? d : 0;
-            matrix[i][j] = v;
-            matrix[j][i] = v;
-        }
-    }
-    return { names, matrix };
-}
-
-function buildKDpisTreeDistanceCsvFileName() {
-    const raw = state.currentFileName || dom.file?.files?.[0]?.name || 'alignment';
-    const base = String(raw).replace(/\.[^.]+$/, '').replace(/[^\w.\-]+/g, '_') || 'alignment';
-    return `${base}_kdpis_tree_distances.csv`;
-}
-
-/** Download a symmetric tip×tip tree path-distance matrix as CSV (zero diagonal). */
-function downloadKDpisTreeDistanceMatrixCsv(entries) {
-    const built = buildKDpisTreePairwiseDistanceMatrix(entries);
-    if (!built || !built.names.length) return false;
-    const { names, matrix } = built;
-    const lines = [];
-    lines.push([''].concat(names.map(csvEscapeField)).join(','));
-    for (let i = 0; i < names.length; i++) {
-        const row = [csvEscapeField(names[i])];
-        for (let j = 0; j < names.length; j++) {
-            row.push(i === j ? '0' : String(matrix[i][j]));
-        }
-        lines.push(row.join(','));
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = buildKDpisTreeDistanceCsvFileName();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    return true;
-}
-
 /** Mean pairwise sequence p-distance among global sequence-cache indices (null if < 2). */
 function meanApiFromCacheIndices(indices) {
     if (!kDpisDistCache || !indices || indices.length < 2) return null;
@@ -8020,11 +7950,12 @@ function isBetterKDpisBipScore(cand, best) {
 }
 
 /**
- * Find a bipartition by trying every internal phylogeny node:
- *   right = cluster tips descending from that node
- *   left  = remaining cluster tips
- * Choose the bipartition that minimises max(depth(left), depth(right)),
- * where depth = LCA-subtree height.
+ * Find a bipartition by trying phylogeny nodes whose cluster-tip set is a proper
+ * nonempty subset: right = those tips, left = remainder.
+ * Prefer cuts that minimise max(depth(left), depth(right)) (LCA-subtree height).
+ * Considers internal nodes and leaf nodes (leaf cuts peel a single tip — needed for
+ * cherries, stars, and polytomies). Falls back to partitioning children of the
+ * cluster LCA when needed.
  * Returns { left, right, score } or null.
  */
 function bestKDpisBipartition(entries, minSize, opts) {
@@ -8034,12 +7965,15 @@ function bestKDpisBipartition(entries, minSize, opts) {
     if (n < 2) return null;
     if (!state.tree || !state.tree.root) return null;
 
-    if (!kDpisTreeDistCache) {
+    // Ensure cache covers every entry (rebuild if missing or stale).
+    let cache = kDpisTreeDistCache;
+    let indices = cache ? kDpisEntriesToCacheIndices(entries, cache) : null;
+    if (!indices) {
         if (!buildKDpisTreeDistCache(entries)) return null;
+        cache = kDpisTreeDistCache;
+        indices = kDpisEntriesToCacheIndices(entries, cache);
+        if (!indices) return null;
     }
-    const cache = kDpisTreeDistCache;
-    const indices = kDpisEntriesToCacheIndices(entries, cache);
-    if (!indices) return null;
 
     const clusterTipSet = new Set();
     for (let i = 0; i < n; i++) {
@@ -8070,10 +8004,9 @@ function bestKDpisBipartition(entries, minSize, opts) {
     let bestLeft = null;
     let bestRight = null;
 
-    tipsUnderNode.forEach((rightNames, node) => {
-        if (!node.children || node.children.length === 0) return; // internal nodes only
+    function considerTipNames(rightNames) {
         const rightN = rightNames.length;
-        if (rightN === 0 || rightN === n) return; // must be a proper nonempty subset
+        if (rightN === 0 || rightN === n) return;
 
         const leftEntries = [];
         const rightEntries = [];
@@ -8100,7 +8033,39 @@ function bestKDpisBipartition(entries, minSize, opts) {
             bestLeft = leftEntries;
             bestRight = rightEntries;
         }
+    }
+
+    // Any node (internal or leaf) whose cluster tips form a proper nonempty subset
+    tipsUnderNode.forEach((rightNames) => {
+        considerTipNames(rightNames);
     });
+
+    // Fallback: partition children of the cluster LCA (flat polytomies / odd topologies)
+    if (!bestMeta) {
+        const clusterLeaves = indices.map(i => cache.leafNodes[i]).filter(Boolean);
+        if (clusterLeaves.length >= 2) {
+            let lca = clusterLeaves[0];
+            for (let i = 1; i < clusterLeaves.length; i++) {
+                lca = cache.findLCA(lca, clusterLeaves[i]);
+            }
+            const kids = (lca && lca.children) ? lca.children.filter(Boolean) : [];
+            if (kids.length >= 2 && kids.length <= 20) {
+                const childTipLists = kids.map(ch => tipsUnderNode.get(ch) || []);
+                const m = childTipLists.length;
+                const limit = (1 << m) - 1;
+                for (let mask = 1; mask < limit; mask++) {
+                    const rightNames = [];
+                    for (let b = 0; b < m; b++) {
+                        if (mask & (1 << b)) {
+                            const tips = childTipLists[b];
+                            for (let t = 0; t < tips.length; t++) rightNames.push(tips[t]);
+                        }
+                    }
+                    considerTipNames(rightNames);
+                }
+            }
+        }
+    }
 
     if (!bestMeta || !bestLeft || !bestRight) return null;
     return { left: bestLeft, right: bestRight, score: bestMeta.score };
@@ -8220,31 +8185,30 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
 /**
  * Split one leaf in-place; returns true on success.
  * Chooses the bipartition that minimises max(depth₁, depth₂).
- * By default accepts if max(DPI₁, DPI₂) ≤ parent DPI (rounded days);
- * pass skipDpiAcceptCheck to apply the bipartition regardless (used by +).
- * @param {{allowNoiseOnly?: boolean, skipDpiAcceptCheck?: boolean}} opts
+ * By default accepts if max(depth₁, depth₂) ≤ parent depth; pass skipAcceptCheck
+ * to apply regardless (+ and Auto both skip).
+ * @param {{allowNoiseOnly?: boolean, skipAcceptCheck?: boolean}} opts
  */
 function splitKDpisLeaf(leaf, minSize, opts) {
     if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf) || leaf.unsplittable) return false;
-    const bip = bestKDpisBipartition(leaf.entries, minSize, opts);
+    let bip = bestKDpisBipartition(leaf.entries, minSize, opts);
+    if (!bip) {
+        // Stale tip-cache can make a valid cut look impossible — rebuild and retry once.
+        clearKDpisDistCache();
+        bip = bestKDpisBipartition(leaf.entries, minSize, opts);
+    }
     if (!bip) {
         leaf.unsplittable = true;
         leaf.left = null;
         leaf.right = null;
         return false;
     }
-    if (!(opts && opts.skipDpiAcceptCheck)) {
-        const parentDpi = (leaf.dpi != null && Number.isFinite(leaf.dpi))
-            ? leaf.dpi
-            : dpiForKDpisEntries(leaf.entries);
-        const dpi0 = dpiForKDpisEntries(bip.left);
-        const dpi1 = dpiForKDpisEntries(bip.right);
-        const maxChildDpi = Math.max(
-            (dpi0 != null && Number.isFinite(dpi0)) ? dpi0 : 0,
-            (dpi1 != null && Number.isFinite(dpi1)) ? dpi1 : 0
-        );
-        // Allow equal DPI (≤); reject only when max child is strictly worse.
-        if (parentDpi != null && Number.isFinite(parentDpi) && !(maxChildDpi <= parentDpi)) {
+    if (!(opts && opts.skipAcceptCheck)) {
+        const parentDepth = (leaf.diameter != null && Number.isFinite(leaf.diameter))
+            ? leaf.diameter
+            : diameterForKDpisEntries(leaf.entries);
+        const maxChildDepth = Number.isFinite(bip.score) ? bip.score : 0;
+        if (Number.isFinite(parentDepth) && !(maxChildDepth <= parentDepth + 1e-12)) {
             leaf.unsplittable = true;
             leaf.left = null;
             leaf.right = null;
@@ -8255,6 +8219,12 @@ function splitKDpisLeaf(leaf, minSize, opts) {
     leaf.left = makeKDpisNode(bip.left);
     leaf.right = makeKDpisNode(bip.right);
     return true;
+}
+
+/** Clear unsplittable flags on all leaves (so + can retry after Auto stops). */
+function clearKDpisUnsplittableFlags(root) {
+    const leaves = collectKDpisLeaves(root);
+    for (let i = 0; i < leaves.length; i++) leaves[i].unsplittable = false;
 }
 
 /** Undo a split: clear children. */
@@ -8588,7 +8558,7 @@ function acceptKDpisClustering(nameToCluster) {
         if (clusterId === undefined) return;
         const oldName = seq.name;
         const newName = clusterId === -1
-            ? originalName + `${delimiter}cl-na`
+            ? originalName + `${delimiter}cl-n`
             : originalName + `${delimiter}cl-${clusterId}`;
         seq.name = newName;
         if (oldName !== newName) nameMapping.set(oldName, newName);
@@ -8827,7 +8797,7 @@ function showKDpisModal() {
                 if (minSizeNoise > 0) {
                     parts.push(`${minSizeNoise} below min cluster size ${minSize}`);
                 }
-                noiseHintEl.textContent = `Noise: ${noiseCount} sequence(s) — ${parts.join('; ')} (labelled _cl-na on Accept).`;
+                noiseHintEl.textContent = `Noise: ${noiseCount} sequence(s) — ${parts.join('; ')} (labelled _cl-n on Accept).`;
             } else if (noiseRemovalChk && noiseRemovalChk.checked) {
                 noiseHintEl.textContent = `Long-branch removal on: no tips with incoming branch > target max depth (${maxBranchStr} = 2×dsr×DPI). Leaves with < ${minSize} sequence(s) are also noise.`;
             } else {
@@ -8843,7 +8813,7 @@ function showKDpisModal() {
         const minSize = readMinSize();
         const maxSplits = readMaxSplits();
         if (splitHistory.length >= maxSplits) return;
-        const plusOpts = { allowNoiseOnly: true, skipDpiAcceptCheck: true };
+        const plusOpts = { allowNoiseOnly: true, skipAcceptCheck: true };
         setKDpisBusy(true, 'Working...');
         await yieldToUi();
         try {
@@ -8915,10 +8885,11 @@ function showKDpisModal() {
                 }
                 await yieldToUi();
 
-                // Stop when every cluster's sequence-based DPI (legend/bubbles) is ≤ target DPI.
-                // Bipartitions still minimise max(child LCA depths); only the Auto stop rule uses DPI.
+                // Stop when every cluster's tree-based DPI ≤ target DPI.
+                // Same cut acceptance as +: skip depth gate; fail only if no bipartition.
                 // Pre-noise tips are already excluded from root and are not split.
                 const autoOpts = { requireDpiAbove: targetDpi, allowNoiseOnly: true };
+                const splitOpts = { allowNoiseOnly: true, skipAcceptCheck: true };
                 let stoppedUnsplittable = false;
                 while (steps < maxSteps) {
                     const leaf = findKDpisLeafToSplit(root, minSize, autoOpts);
@@ -8926,7 +8897,7 @@ function showKDpisModal() {
                         stoppedUnsplittable = kDpisHasUnsplittableBlockingLeaves(root, minSize, autoOpts);
                         break;
                     }
-                    if (!splitKDpisLeaf(leaf, minSize, { allowNoiseOnly: true })) {
+                    if (!splitKDpisLeaf(leaf, minSize, splitOpts)) {
                         // Leaf marked unsplittable; try another without counting a split.
                         if (busyMsgEl) busyMsgEl.textContent = 'Working... (skipping unsplittable cluster)';
                         await yieldToUi();
@@ -8939,9 +8910,11 @@ function showKDpisModal() {
                     if (busyMsgEl) busyMsgEl.textContent = `Working... (split ${steps}/${maxSteps})`;
                     await yieldToUi();
                 }
+                // Allow + to retry the same leaves (Auto only considers DPI > target).
+                clearKDpisUnsplittableFlags(root);
                 refresh();
                 if (stoppedUnsplittable) {
-                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no bipartition keeps max child DPI ≤ parent DPI).');
+                    alert('Auto stopped: some clusters still have DPI above the target but could not be bipartitioned on the phylogeny. Try +, or Reset after adjusting min size / long-branch noise.');
                 }
             } finally {
                 setKDpisBusy(false);
@@ -8989,8 +8962,6 @@ function showKDpisModal() {
     };
 
     overlay.style.display = 'flex';
-    // Tip×tip tree path distances for all sample tips (must run in the open click stack)
-    downloadKDpisTreeDistanceMatrixCsv(entries);
     // Partition long-branch outliers as pre-noise first; caches/splits use remaining tips only
     (async () => {
         setKDpisBusy(true, entries.length >= 100
@@ -9271,7 +9242,7 @@ function showHierarchicalModal() {
     document.getElementById('btn-hier-accept').onclick = () => {
         // Update sequence names with cluster numbers (same as MDS/UMAP)
         const delimiter = state.groupDelimiter || '_';
-        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`); // Matches _cl-<number> or _cl-na
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`); // Matches _cl-<number> or _cl-n
         
         // Create mapping from old name to new name
         const nameMapping = new Map();
@@ -9292,9 +9263,9 @@ function showHierarchicalModal() {
                         nameMapping.set(oldName, newName);
                     }
                 } else if (clusterId === -1) {
-                    // For noise, label with _cl-na (not assigned)
+                    // For noise, label with _cl-n (not assigned)
                     const oldName = seq.name;
-                    const newName = originalName + `${delimiter}cl-na`;
+                    const newName = originalName + `${delimiter}cl-n`;
                     seq.name = newName;
                     if (oldName !== newName) {
                         nameMapping.set(oldName, newName);
@@ -9504,7 +9475,7 @@ function showHierarchicalCladeModal() {
     };
     document.getElementById('btn-clade-accept').onclick = () => {
         const delimiter = state.groupDelimiter || '_';
-        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+        const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
         const nameMapping = new Map();
         state.rawSequences.forEach(seq => {
             if (seq.name) {
@@ -9517,7 +9488,7 @@ function showHierarchicalCladeModal() {
                     if (oldName !== newName) nameMapping.set(oldName, newName);
                 } else if (clusterId === -1) {
                     const oldName = seq.name;
-                    const newName = originalName + `${delimiter}cl-na`;
+                    const newName = originalName + `${delimiter}cl-n`;
                     seq.name = newName;
                     if (oldName !== newName) nameMapping.set(oldName, newName);
                 }
@@ -9571,7 +9542,7 @@ function calinskiHarabaszTree(optionalLeafClusters) {
     const root = state.tree.root;
     const useCladogram = !!state.tree.useCladogram;
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
     function pathToRoot(node) {
         const p = [];
         let n = node;
@@ -9679,7 +9650,7 @@ function ballHallTree(optionalLeafClusters) {
     const root = state.tree.root;
     const useCladogram = !!state.tree.useCladogram;
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
 
     function pathToRoot(node) {
         const p = [];
@@ -9773,7 +9744,7 @@ function ballHallAdaptedTree(optionalLeafClusters, opts = {}) {
     const useCladogram = !!state.tree.useCladogram;
 
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
 
     // Determine current number of clusters k (excluding noise -1) as ballHallTree() does.
     const clusterToLeaves = new Map();
@@ -9837,7 +9808,7 @@ function computeCladeClusterMap(threshold, minLeaves) {
     const leafToCluster = new Map();
     let nextClusterId = 2;
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
     const subtypeSeq = getDesignatedSubtypeSequence();
     const subtypeNameWithSuffix = subtypeSeq ? subtypeSeq.name : null;
     const subtypeName = subtypeNameWithSuffix ? subtypeNameWithSuffix.replace(clusterPattern, '') : null;
@@ -9914,7 +9885,7 @@ function computeHierarchicalClusterMap(depth1, depth2, depth3, minLeaves) {
     minLeaves = (minLeaves != null && minLeaves >= 1) ? Math.min(5, Math.max(1, minLeaves)) : 1;
     const root = state.tree.root;
     const delimiter = state.groupDelimiter || '_';
-    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+    const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
     const subtypeSeq = getDesignatedSubtypeSequence();
     const subtypeNameWithSuffix = subtypeSeq ? subtypeSeq.name : null;
     const subtypeName = subtypeNameWithSuffix ? subtypeNameWithSuffix.replace(clusterPattern, '') : null;
@@ -12035,7 +12006,7 @@ function render() {
                 let fillColor = '#374151'; // Default grey
                 // Use original names (without cluster suffix) for subtype comparison and cluster lookup
                 const delimiter = state.groupDelimiter || '_';
-                const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na)$`);
+                const clusterPattern = new RegExp(`${delimiter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}cl-(\\d+|na|n)$`);
                 const originalNodeName = node.name ? node.name.replace(clusterPattern, '') : '';
                 const subtypeOriginalName = (state.subtypeIndex >= 0 && state.subtypeIndex < state.rawSequences.length) 
                     ? state.rawSequences[state.subtypeIndex].name.replace(clusterPattern, '') 
