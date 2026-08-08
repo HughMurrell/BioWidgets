@@ -646,7 +646,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate cuts off the descendant tip set vs the remainder; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). A cut is accepted only if <strong>max(DPI₁, DPI₂)</strong> is not worse than the parent DPI. <strong>Auto</strong> stops when every cluster’s tree-based <strong>DPI</strong> ≤ target DPI. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). <strong>+</strong> applies that cut without a DPI acceptance check. <strong>Auto</strong> accepts a cut only if <strong>max(DPI₁, DPI₂) ≤ parent DPI</strong> (rounded days) and stops when every cluster’s tree-based <strong>DPI</strong> ≤ target DPI. <strong>+</strong> and <strong>Auto</strong> pick the leaf with largest <strong>DPI</strong> and may produce noise-only children. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -8021,8 +8021,8 @@ function isBetterKDpisBipScore(cand, best) {
 
 /**
  * Find a bipartition by trying every internal phylogeny node:
- *   left  = cluster tips descending from that node
- *   right = remaining cluster tips
+ *   right = cluster tips descending from that node
+ *   left  = remaining cluster tips
  * Choose the bipartition that minimises max(depth(left), depth(right)),
  * where depth = LCA-subtree height.
  * Returns { left, right, score } or null.
@@ -8070,18 +8070,18 @@ function bestKDpisBipartition(entries, minSize, opts) {
     let bestLeft = null;
     let bestRight = null;
 
-    tipsUnderNode.forEach((leftNames, node) => {
+    tipsUnderNode.forEach((rightNames, node) => {
         if (!node.children || node.children.length === 0) return; // internal nodes only
-        const leftN = leftNames.length;
-        if (leftN === 0 || leftN === n) return; // must be a proper nonempty subset
+        const rightN = rightNames.length;
+        if (rightN === 0 || rightN === n) return; // must be a proper nonempty subset
 
         const leftEntries = [];
         const rightEntries = [];
-        const leftNameSet = new Set(leftNames);
+        const rightNameSet = new Set(rightNames);
         for (let i = 0; i < n; i++) {
             const e = entries[i];
-            if (leftNameSet.has(e.name)) leftEntries.push(e);
-            else rightEntries.push(e);
+            if (rightNameSet.has(e.name)) rightEntries.push(e);
+            else leftEntries.push(e);
         }
 
         const ok0 = leftEntries.length >= minSize;
@@ -8137,10 +8137,11 @@ function collectKDpisLeaves(root, out) {
 }
 
 /**
- * Choose the current leaf to split: largest max depth, then largest size.
+ * Choose the current leaf to split: largest tree-based DPI, then largest size.
  * Skips leaves already marked unsplittable after a failed split attempt.
+ * Skips leaves with n < minSize (already noise — never split further).
  * Auto mode: pass requireDpiAbove (tree mean-pairwise DPI > target DPI).
- * Manual + mode: omit requireDpiAbove / requireDiameterAbove (split largest max depth).
+ * Manual + mode: omit requireDpiAbove (split largest DPI; pass allowNoiseOnly like Auto).
  * @param {{requireDpiAbove?: number|null, requireDiameterAbove?: number|null, allowNoiseOnly?: boolean}} opts
  */
 function findKDpisLeafToSplit(root, minSize, opts) {
@@ -8148,10 +8149,15 @@ function findKDpisLeafToSplit(root, minSize, opts) {
     const requireDpiAbove = opts && opts.requireDpiAbove != null ? opts.requireDpiAbove : null;
     const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
     const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
-    const minSplitN = (requireDpiAbove != null || requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
+    // Never split noise (n < minSize). With allowNoiseOnly, a leaf of size minSize may
+    // still be split into undersized (noise) children; without it, need minSize+1 so at
+    // least one child can meet minSize.
+    const minSplitN = allowNoiseOnly || requireDpiAbove != null || requireDiameterAbove != null
+        ? Math.max(2, minSize)
+        : Math.max(2, minSize + 1);
     const leaves = collectKDpisLeaves(root);
     let best = null;
-    let maxDiam = -Infinity;
+    let maxKey = -Infinity;
     for (let i = 0; i < leaves.length; i++) {
         const leaf = leaves[i];
         if (leaf.unsplittable) continue;
@@ -8162,11 +8168,13 @@ function findKDpisLeafToSplit(root, minSize, opts) {
             if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
             if (!(leaf.diameter > requireDiameterAbove)) continue;
         } else {
-            if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+            if (leaf.dpi == null || !Number.isFinite(leaf.dpi)) continue;
         }
-        const sortKey = leaf.diameter != null && Number.isFinite(leaf.diameter) ? leaf.diameter : -Infinity;
-        if (sortKey > maxDiam || (sortKey === maxDiam && (!best || leaf.n > best.n))) {
-            maxDiam = sortKey;
+        const sortKey = (requireDiameterAbove != null)
+            ? (leaf.diameter != null && Number.isFinite(leaf.diameter) ? leaf.diameter : -Infinity)
+            : (leaf.dpi != null && Number.isFinite(leaf.dpi) ? leaf.dpi : -Infinity);
+        if (sortKey > maxKey || (sortKey === maxKey && (!best || leaf.n > best.n))) {
+            maxKey = sortKey;
             best = leaf;
         }
     }
@@ -8189,7 +8197,9 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
     const requireDpiAbove = opts && opts.requireDpiAbove != null ? opts.requireDpiAbove : null;
     const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
     const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
-    const minSplitN = (requireDpiAbove != null || requireDiameterAbove != null || allowNoiseOnly) ? 2 : Math.max(2, minSize + 1);
+    const minSplitN = allowNoiseOnly || requireDpiAbove != null || requireDiameterAbove != null
+        ? Math.max(2, minSize)
+        : Math.max(2, minSize + 1);
     const leaves = collectKDpisLeaves(root);
     for (let i = 0; i < leaves.length; i++) {
         const leaf = leaves[i];
@@ -8200,7 +8210,7 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
             if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
             if (!(leaf.diameter > requireDiameterAbove)) continue;
         } else {
-            if (leaf.diameter == null || !Number.isFinite(leaf.diameter)) continue;
+            if (leaf.dpi == null || !Number.isFinite(leaf.dpi)) continue;
         }
         return true;
     }
@@ -8210,9 +8220,9 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
 /**
  * Split one leaf in-place; returns true on success.
  * Chooses the bipartition that minimises max(depth₁, depth₂).
- * Accepts only if max(DPI₁, DPI₂) is not worse than the parent DPI;
- * otherwise mark unsplittable and return false.
- * @param {{allowNoiseOnly?: boolean}} opts
+ * By default accepts if max(DPI₁, DPI₂) ≤ parent DPI (rounded days);
+ * pass skipDpiAcceptCheck to apply the bipartition regardless (used by +).
+ * @param {{allowNoiseOnly?: boolean, skipDpiAcceptCheck?: boolean}} opts
  */
 function splitKDpisLeaf(leaf, minSize, opts) {
     if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf) || leaf.unsplittable) return false;
@@ -8223,18 +8233,23 @@ function splitKDpisLeaf(leaf, minSize, opts) {
         leaf.right = null;
         return false;
     }
-    const parentDpi = dpiDaysRawFromEntries(leaf.entries);
-    const dpi0 = dpiDaysRawFromEntries(bip.left);
-    const dpi1 = dpiDaysRawFromEntries(bip.right);
-    const maxChildDpi = Math.max(
-        (dpi0 != null && Number.isFinite(dpi0)) ? dpi0 : 0,
-        (dpi1 != null && Number.isFinite(dpi1)) ? dpi1 : 0
-    );
-    if (parentDpi != null && Number.isFinite(parentDpi) && maxChildDpi > parentDpi + 1e-9) {
-        leaf.unsplittable = true;
-        leaf.left = null;
-        leaf.right = null;
-        return false;
+    if (!(opts && opts.skipDpiAcceptCheck)) {
+        const parentDpi = (leaf.dpi != null && Number.isFinite(leaf.dpi))
+            ? leaf.dpi
+            : dpiForKDpisEntries(leaf.entries);
+        const dpi0 = dpiForKDpisEntries(bip.left);
+        const dpi1 = dpiForKDpisEntries(bip.right);
+        const maxChildDpi = Math.max(
+            (dpi0 != null && Number.isFinite(dpi0)) ? dpi0 : 0,
+            (dpi1 != null && Number.isFinite(dpi1)) ? dpi1 : 0
+        );
+        // Allow equal DPI (≤); reject only when max child is strictly worse.
+        if (parentDpi != null && Number.isFinite(parentDpi) && !(maxChildDpi <= parentDpi)) {
+            leaf.unsplittable = true;
+            leaf.left = null;
+            leaf.right = null;
+            return false;
+        }
     }
     leaf.unsplittable = false;
     leaf.left = makeKDpisNode(bip.left);
@@ -8418,19 +8433,22 @@ function makeKDpisClusterRoot(clusterEntries, preNoiseEntries) {
     return root;
 }
 
-/** Assign layout coordinates (_x leaf-index, _y depth) for tree drawing. */
+/** Assign layout coordinates for phylogeny-style drawing:
+ *  _x = depth (root at 0 → left), _y = leaf rank (remainder/left child upward, descendants/right downward).
+ */
 function layoutKDpisTree(node, depth, nextLeaf) {
     if (!node) return 0;
     if (isKDpisLeaf(node)) {
-        node._x = nextLeaf.v;
+        node._x = depth;
+        node._y = nextLeaf.v;
         nextLeaf.v += 1;
-        node._y = depth;
         return depth;
     }
+    // Visit left (remainder) first → smaller y (top); right (descendants) → bottom
     const dL = layoutKDpisTree(node.left, depth + 1, nextLeaf);
     const dR = layoutKDpisTree(node.right, depth + 1, nextLeaf);
-    node._x = (node.left._x + node.right._x) / 2;
-    node._y = depth;
+    node._x = depth;
+    node._y = (node.left._y + node.right._y) / 2;
     return Math.max(dL, dR);
 }
 
@@ -8441,7 +8459,9 @@ function forEachKDpisNode(node, fn) {
     if (node.right) forEachKDpisNode(node.right, fn);
 }
 
-/** Draw the split hierarchy as a bubble tree (leaves = current clusters). */
+/** Draw the split hierarchy as a bubble tree (leaves = current clusters).
+ *  Root on the left; remainder child upward; descendant clade downward (matches linear phylogeny).
+ */
 function drawKDpisBubbleTree(root) {
     const canvas = document.getElementById('kdpis-canvas');
     if (!canvas || !root) return;
@@ -8465,22 +8485,23 @@ function drawKDpisBubbleTree(root) {
     }
 
     const maxR = bubbleRadius(maxN);
-    const labelClearance = 14; // space above leaves for "cl N" / "noise"
+    const leafLabelW = 52; // room for "cl N" / "noise" to the right of leaf bubbles
     const captionH = 16;
     // 5% outer margin; inset further so full bubbles (+ leaf labels) stay inside
     const marginX = 0.05 * w;
     const marginY = 0.05 * h;
-    const padX = marginX + maxR;
-    const padTop = marginY + maxR + labelClearance;
+    const padLeft = marginX + maxR;
+    const padRight = marginX + maxR + leafLabelW;
+    const padTop = marginY + maxR;
     const padBot = marginY + maxR + captionH;
-    const usableW = Math.max(1, w - 2 * padX);
+    const usableW = Math.max(1, w - padLeft - padRight);
     const usableH = Math.max(1, h - padTop - padBot);
-    const xScale = leafCount <= 1 ? 0 : usableW / (leafCount - 1);
-    const yScale = maxDepth <= 0 ? 0 : usableH / maxDepth;
+    const xScale = maxDepth <= 0 ? 0 : usableW / maxDepth;
+    const yScale = leafCount <= 1 ? 0 : usableH / (leafCount - 1);
 
     function nodeCanvasPos(node) {
-        const x = padX + (leafCount <= 1 ? usableW / 2 : node._x * xScale);
-        const y = padTop + node._y * yScale;
+        const x = padLeft + node._x * xScale;
+        const y = padTop + (leafCount <= 1 ? usableH / 2 : node._y * yScale);
         return { x, y };
     }
 
@@ -8525,9 +8546,10 @@ function drawKDpisBubbleTree(root) {
         if (leaf) {
             ctx.font = '10px sans-serif';
             ctx.fillStyle = '#4b5563';
-            ctx.textBaseline = 'alphabetic';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
             const leafLabel = (node.clusterId === -1 || node.isNoise) ? 'noise' : `cl ${node.clusterId}`;
-            ctx.fillText(leafLabel, x, y - r - 4);
+            ctx.fillText(leafLabel, x + r + 6, y);
         }
     });
 
@@ -8535,7 +8557,7 @@ function drawKDpisBubbleTree(root) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('Tree of splits · leaves = current clusters · annotation n, dpi · radius ∝ log(n)', marginX, h - marginY * 0.4);
+    ctx.fillText('Splits · root left · remainder up · descendants down · n, dpi · radius ∝ log(n)', marginX, h - marginY * 0.4);
 }
 
 /** Write preview leafClusters from a normalized-name map; update legend/tree colors. */
@@ -8732,7 +8754,7 @@ function showKDpisModal() {
         const minSize = readMinSize();
         const maxSplits = readMaxSplits();
         btnMinus.disabled = splitHistory.length === 0;
-        btnPlus.disabled = splitHistory.length >= maxSplits || !findKDpisLeafToSplit(root, minSize);
+        btnPlus.disabled = splitHistory.length >= maxSplits || !findKDpisLeafToSplit(root, minSize, { allowNoiseOnly: true });
     }
 
     function setKDpisBusy(on, msg) {
@@ -8821,20 +8843,21 @@ function showKDpisModal() {
         const minSize = readMinSize();
         const maxSplits = readMaxSplits();
         if (splitHistory.length >= maxSplits) return;
+        const plusOpts = { allowNoiseOnly: true, skipDpiAcceptCheck: true };
         setKDpisBusy(true, 'Working...');
         await yieldToUi();
         try {
             while (true) {
-                const leaf = findKDpisLeafToSplit(root, minSize);
+                const leaf = findKDpisLeafToSplit(root, minSize, plusOpts);
                 if (!leaf) {
-                    if (kDpisHasUnsplittableBlockingLeaves(root, minSize, null)) {
-                        alert('All remaining clusters are unsplittable (no bipartition improves max child DPI). Splitting stopped.');
+                    if (kDpisHasUnsplittableBlockingLeaves(root, minSize, plusOpts)) {
+                        alert('All remaining clusters are unsplittable (no valid internal-node bipartition). Splitting stopped.');
                     } else {
-                        alert('No further split possible (need a leaf large enough to yield a non-noise child).');
+                        alert('No further split possible.');
                     }
                     break;
                 }
-                if (splitKDpisLeaf(leaf, minSize)) {
+                if (splitKDpisLeaf(leaf, minSize, plusOpts)) {
                     splitHistory.push(leaf);
                     break;
                 }
@@ -8918,7 +8941,7 @@ function showKDpisModal() {
                 }
                 refresh();
                 if (stoppedUnsplittable) {
-                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no internal-node bipartition reduces max child DPI).');
+                    alert('Auto stopped: remaining clusters above the target DPI are unsplittable (no bipartition keeps max child DPI ≤ parent DPI).');
                 }
             } finally {
                 setKDpisBusy(false);
