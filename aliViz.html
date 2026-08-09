@@ -646,7 +646,7 @@
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
         <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). <strong>+</strong> and <strong>Auto</strong> apply that cut when a bipartition exists. <strong>Auto</strong> only splits leaves with <strong>DPI &gt; target</strong> and stops when none remain (or max splits); <strong>+</strong> splits the largest-DPI leaf of any size ≥ min. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Leaves smaller than min size are <strong>noise</strong>. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). Only cuts where <strong>both</strong> children have size ≥ <strong>min cluster size</strong> are considered. <strong>+</strong> and <strong>Auto</strong> apply that cut when a bipartition exists. <strong>Auto</strong> only splits leaves with <strong>DPI &gt; target</strong> and stops when none remain (or max splits); <strong>+</strong> splits the largest-DPI leaf that can still yield two min-sized children. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -1886,6 +1886,9 @@ async function init() {
                 if (!isFinite(days) || days <= 0) days = 14;
                 if (!isFinite(mpd) || mpd <= 0) mpd = getGroupDpiDailySubstitutionRate();
                 dpiParams = { days, mpd };
+            } else if (!scaleFixed) {
+                // AUTO: still overlay DPI scale bar + mark when dpi±N was detected in the filename.
+                dpiParams = getDetectedDpiSvgParamsFromFileName();
             }
             const ok = exportTreeAsSvg(
                 circular ? 'circular' : 'linear',
@@ -4340,6 +4343,22 @@ function applyDpiDaysFromAlignmentFileName(fileName) {
     daysEl.value = String(parsed != null ? parsed : DEFAULT_TREE_SVG_DPI_DAYS);
 }
 
+/**
+ * When the alignment/tree filename contains dpi±N, return { days, mpd } for SVG
+ * DPI overlay (scale bar + mark). Otherwise null.
+ */
+function getDetectedDpiSvgParamsFromFileName() {
+    const fileName = state.currentFileName
+        || (dom.file && dom.file.files && dom.file.files[0] && dom.file.files[0].name)
+        || '';
+    const days = parseDpiDaysFromFileName(fileName);
+    if (days == null || !(days > 0)) return null;
+    const mpdEl = document.getElementById('tree-svg-dpi-mpd');
+    let mpd = mpdEl ? parseFloat(mpdEl.value) : NaN;
+    if (!isFinite(mpd) || mpd <= 0) mpd = getGroupDpiDailySubstitutionRate();
+    return { days, mpd };
+}
+
 /** Seed tree SVG Mutations/day (MPD) from daily substitution rate (dsr) at alignment load. */
 function applyTreeSvgMpdFromDsr(dsr) {
     const mpdEl = document.getElementById('tree-svg-dpi-mpd');
@@ -5281,13 +5300,15 @@ function assignRadialInternalAngles(node) {
 
 /** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so DPI × MPD lands at the plot 1/16 mark.
  *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm).
- *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day. */
+ *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day.
+ *    In 'auto' mode, if dpiParams is set (filename-detected DPI), use the DPI scale-bar length and fit so expected depth stays inside R. */
 function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dpi') scaleMode = 'auto';
     const root = state.tree.root;
     const maxD = state.tree.maxDepth > 0 ? state.tree.maxDepth : 1;
     const R = 260;
     const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
+    const isAutoDpiOverlay = scaleMode === 'auto' && dpiParams != null;
     // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days × mpd). null = auto.
     let scaleBarVal = null;
     let explicitPxPerUnit = null;
@@ -5298,6 +5319,12 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     } else if (scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10))) {
         explicitPxPerUnit = getSvgPxPerBranchUnit(fixedBranchPerCm) * 0.5;
         scaleBarVal = fixedBranchPerCm;
+    } else if (isAutoDpiOverlay) {
+        scaleBarVal = expectedDpiSvgBranchLength(dpiParams.days, dpiParams.mpd);
+        if (scaleBarVal != null && scaleBarVal > 0) {
+            const fitDepth = Math.max(maxD, scaleBarVal);
+            explicitPxPerUnit = R / fitDepth;
+        }
     }
     const circularPxPerUnit = explicitPxPerUnit != null ? explicitPxPerUnit : (R / maxD);
     function radialR(node) {
@@ -5511,7 +5538,8 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
 
 /** @param {'auto'|'fixed'|'dpi'} scaleMode Branch-length scaling: 'auto' fits the tree; 'fixed' uses branch length per 1 cm of plot; 'dpi' scales so DPI × MPD lands at 520/16 px (1/16 of the 520 px branch width).
  *  @param {number|null|undefined} fixedBranchPerCm When scaleMode is 'fixed', branch length units represented by 1 cm of SVG (CSS px/cm).
- *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day. */
+ *  @param {{days:number, mpd:number}|null|undefined} dpiParams When scaleMode is 'dpi', the days-post-infection and mutations-per-day.
+ *    In 'auto' mode, if dpiParams is set (filename-detected DPI), draw the same DPI scale bar + vertical mark and fit the scale so that mark stays inside the branch region. */
 function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     if (scaleMode !== 'fixed' && scaleMode !== 'auto' && scaleMode !== 'dpi') scaleMode = 'auto';
     const padding = 15;
@@ -5520,9 +5548,10 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     const isFixedScale =
         scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10));
     const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
-    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days × mpd). null = auto.
+    const isAutoDpiOverlay = scaleMode === 'auto' && dpiParams != null;
+    // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days × mpd). null = auto pick.
     let scaleBarVal = null;
-    // Custom scale-bar annotation (DPI mode), null = default numeric label.
+    // Custom scale-bar annotation (DPI mode / auto DPI overlay), null = default numeric label.
     let scaleBarLabel = null;
     let xScale;
     if (isDpiScale) {
@@ -5533,7 +5562,19 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
         xScale = getSvgPxPerBranchUnit(fixedBranchPerCm);
         scaleBarVal = fixedBranchPerCm;
     } else {
-        xScale = branchW / maxD;
+        // AUTO: fit the tree into branchW. If a detected DPI is provided, also fit the
+        // expected depth so the DPI vertical mark always lands inside the branch region.
+        const expected = isAutoDpiOverlay
+            ? expectedDpiSvgBranchLength(dpiParams.days, dpiParams.mpd)
+            : null;
+        if (expected != null && expected > 0) {
+            scaleBarVal = expected;
+            scaleBarLabel = `(${dpiParams.days} DPI @ ${dpiParams.mpd} = ${formatPhyloBranchLength(scaleBarVal)})`;
+            const fitDepth = Math.max(maxD, expected);
+            xScale = branchW / fitDepth;
+        } else {
+            xScale = branchW / maxD;
+        }
     }
     const rowH = CONFIG.rowHeight;
     const leftPad = 5;
@@ -5609,7 +5650,8 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
 
     // DPI: vertical dotted line marking the expected root→tip depth (end of the scale bar, at DPI × MPD).
     // Tips to the right mutate faster than expected; tips to the left mutate slower.
-    if (isDpiScale) {
+    // Also drawn in AUTO when a filename DPI was detected (scale fitted so this mark stays visible).
+    if ((isDpiScale || isAutoDpiOverlay) && scaleBarVal != null && scaleBarVal > 0) {
         const expectedX = leftPad + scaleBarVal * xScale;
         parts.push(`<line x1="${expectedX}" y1="0" x2="${expectedX}" y2="${svgH}" stroke="#6b7280" stroke-width="1" stroke-dasharray="3 3"/>\n`);
     }
@@ -7953,16 +7995,15 @@ function isBetterKDpisBipScore(cand, best) {
  * Find a bipartition by trying phylogeny nodes whose cluster-tip set is a proper
  * nonempty subset: right = those tips, left = remainder.
  * Prefer cuts that minimise max(depth(left), depth(right)) (LCA-subtree height).
- * Considers internal nodes and leaf nodes (leaf cuts peel a single tip — needed for
- * cherries, stars, and polytomies). Falls back to partitioning children of the
- * cluster LCA when needed.
+ * Only bipartitions where both sides have size ≥ minSize are considered.
+ * Considers internal nodes and leaf nodes (leaf cuts peel a single tip — only valid
+ * when minSize is 1). Falls back to partitioning children of the cluster LCA when needed.
  * Returns { left, right, score } or null.
  */
 function bestKDpisBipartition(entries, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
-    const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
     const n = entries.length;
-    if (n < 2) return null;
+    if (n < 2 * minSize) return null;
     if (!state.tree || !state.tree.root) return null;
 
     // Ensure cache covers every entry (rebuild if missing or stale).
@@ -8017,17 +8058,15 @@ function bestKDpisBipartition(entries, minSize, opts) {
             else leftEntries.push(e);
         }
 
-        const ok0 = leftEntries.length >= minSize;
-        const ok1 = rightEntries.length >= minSize;
-        if (!ok0 && !ok1 && !allowNoiseOnly) return;
+        // Both children must meet min cluster size (no undersized / noise-only splits).
+        if (leftEntries.length < minSize || rightEntries.length < minSize) return;
 
         const leftLeaves = leftEntries.map(e => cache.leafByNormName.get(e.name)).filter(Boolean);
         const rightLeaves = rightEntries.map(e => cache.leafByNormName.get(e.name)).filter(Boolean);
         const d0 = maxDepthFromTreeLeafNodes(leftLeaves);
         const d1 = maxDepthFromTreeLeafNodes(rightLeaves);
         const score = Math.max(d0, d1);
-        const tier = (ok0 && ok1) ? 0 : ((ok0 || ok1) ? 1 : 2);
-        const meta = { tier, score };
+        const meta = { tier: 0, score };
         if (isBetterKDpisBipScore(meta, bestMeta)) {
             bestMeta = meta;
             bestLeft = leftEntries;
@@ -8104,22 +8143,17 @@ function collectKDpisLeaves(root, out) {
 /**
  * Choose the current leaf to split: largest tree-based DPI, then largest size.
  * Skips leaves already marked unsplittable after a failed split attempt.
- * Skips leaves with n < minSize (already noise — never split further).
+ * Skips leaves with n < 2×minSize (cannot yield two children meeting min size).
  * Auto mode: pass requireDpiAbove (tree mean-pairwise DPI > target DPI).
- * Manual + mode: omit requireDpiAbove (split largest DPI; pass allowNoiseOnly like Auto).
- * @param {{requireDpiAbove?: number|null, requireDiameterAbove?: number|null, allowNoiseOnly?: boolean}} opts
+ * Manual + mode: omit requireDpiAbove (split largest DPI).
+ * @param {{requireDpiAbove?: number|null, requireDiameterAbove?: number|null}} opts
  */
 function findKDpisLeafToSplit(root, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
     const requireDpiAbove = opts && opts.requireDpiAbove != null ? opts.requireDpiAbove : null;
     const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
-    const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
-    // Never split noise (n < minSize). With allowNoiseOnly, a leaf of size minSize may
-    // still be split into undersized (noise) children; without it, need minSize+1 so at
-    // least one child can meet minSize.
-    const minSplitN = allowNoiseOnly || requireDpiAbove != null || requireDiameterAbove != null
-        ? Math.max(2, minSize)
-        : Math.max(2, minSize + 1);
+    // Need room for two children each ≥ minSize.
+    const minSplitN = Math.max(2, 2 * minSize);
     const leaves = collectKDpisLeaves(root);
     let best = null;
     let maxKey = -Infinity;
@@ -8161,10 +8195,7 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
     const requireDpiAbove = opts && opts.requireDpiAbove != null ? opts.requireDpiAbove : null;
     const requireDiameterAbove = opts && opts.requireDiameterAbove != null ? opts.requireDiameterAbove : null;
-    const allowNoiseOnly = !!(opts && opts.allowNoiseOnly);
-    const minSplitN = allowNoiseOnly || requireDpiAbove != null || requireDiameterAbove != null
-        ? Math.max(2, minSize)
-        : Math.max(2, minSize + 1);
+    const minSplitN = Math.max(2, 2 * minSize);
     const leaves = collectKDpisLeaves(root);
     for (let i = 0; i < leaves.length; i++) {
         const leaf = leaves[i];
@@ -8187,7 +8218,7 @@ function kDpisHasUnsplittableBlockingLeaves(root, minSize, opts) {
  * Chooses the bipartition that minimises max(depth₁, depth₂).
  * By default accepts if max(depth₁, depth₂) ≤ parent depth; pass skipAcceptCheck
  * to apply regardless (+ and Auto both skip).
- * @param {{allowNoiseOnly?: boolean, skipAcceptCheck?: boolean}} opts
+ * @param {{skipAcceptCheck?: boolean}} opts
  */
 function splitKDpisLeaf(leaf, minSize, opts) {
     if (!leaf || leaf.n < 2 || !isKDpisLeaf(leaf) || leaf.unsplittable) return false;
@@ -8260,7 +8291,9 @@ function kDpisLeafPhyloY(leaf, tipYOrder) {
  * Build name→clusterId map from current leaves.
  * Non-noise leaves are numbered 1..k by phylogeny tip order: clusters nearer the
  * top of the tree (smaller yRow) get lower IDs; those toward the bottom get higher IDs.
- * Unsplittable leaves remain normal clusters (not noise).
+ * Unsplittable leaves remain normal clusters (not noise) unless they are singletons.
+ * After min-size filtering, every remaining singleton cluster is reclassified as noise
+ * before tree-order ID assignment.
  */
 function kDpisNameToClusterFromRoot(root, minSize) {
     minSize = Math.max(1, parseInt(minSize, 10) || 1);
@@ -8276,6 +8309,14 @@ function kDpisNameToClusterFromRoot(root, minSize) {
         if (leaf.n < minSize) noiseLeaves.push(leaf);
         else clusterLeaves.push(leaf);
     });
+
+    // Reclassify singletons as noise before tree-order renumbering.
+    for (let i = clusterLeaves.length - 1; i >= 0; i--) {
+        if (clusterLeaves[i].n === 1) {
+            noiseLeaves.push(clusterLeaves[i]);
+            clusterLeaves.splice(i, 1);
+        }
+    }
 
     clusterLeaves.sort((a, b) => {
         const ya = kDpisLeafPhyloY(a, tipYOrder);
@@ -8724,7 +8765,7 @@ function showKDpisModal() {
         const minSize = readMinSize();
         const maxSplits = readMaxSplits();
         btnMinus.disabled = splitHistory.length === 0;
-        btnPlus.disabled = splitHistory.length >= maxSplits || !findKDpisLeafToSplit(root, minSize, { allowNoiseOnly: true });
+        btnPlus.disabled = splitHistory.length >= maxSplits || !findKDpisLeafToSplit(root, minSize);
     }
 
     function setKDpisBusy(on, msg) {
@@ -8799,9 +8840,9 @@ function showKDpisModal() {
                 }
                 noiseHintEl.textContent = `Noise: ${noiseCount} sequence(s) — ${parts.join('; ')} (labelled _cl-n on Accept).`;
             } else if (noiseRemovalChk && noiseRemovalChk.checked) {
-                noiseHintEl.textContent = `Long-branch removal on: no tips with incoming branch > target max depth (${maxBranchStr} = 2×dsr×DPI). Leaves with < ${minSize} sequence(s) are also noise.`;
+                noiseHintEl.textContent = `Long-branch removal on: no tips with incoming branch > target max depth (${maxBranchStr} = 2×dsr×DPI).`;
             } else {
-                noiseHintEl.textContent = `Leaves with fewer than ${minSize} sequence(s) are classified as noise.`;
+                noiseHintEl.textContent = '';
             }
         }
         drawKDpisBubbleTree(root);
@@ -8813,15 +8854,15 @@ function showKDpisModal() {
         const minSize = readMinSize();
         const maxSplits = readMaxSplits();
         if (splitHistory.length >= maxSplits) return;
-        const plusOpts = { allowNoiseOnly: true, skipAcceptCheck: true };
+        const plusOpts = { skipAcceptCheck: true };
         setKDpisBusy(true, 'Working...');
         await yieldToUi();
         try {
             while (true) {
-                const leaf = findKDpisLeafToSplit(root, minSize, plusOpts);
+                const leaf = findKDpisLeafToSplit(root, minSize);
                 if (!leaf) {
-                    if (kDpisHasUnsplittableBlockingLeaves(root, minSize, plusOpts)) {
-                        alert('All remaining clusters are unsplittable (no valid internal-node bipartition). Splitting stopped.');
+                    if (kDpisHasUnsplittableBlockingLeaves(root, minSize)) {
+                        alert('All remaining clusters are unsplittable (no valid bipartition with both sides ≥ min size). Splitting stopped.');
                     } else {
                         alert('No further split possible.');
                     }
@@ -8888,8 +8929,8 @@ function showKDpisModal() {
                 // Stop when every cluster's tree-based DPI ≤ target DPI.
                 // Same cut acceptance as +: skip depth gate; fail only if no bipartition.
                 // Pre-noise tips are already excluded from root and are not split.
-                const autoOpts = { requireDpiAbove: targetDpi, allowNoiseOnly: true };
-                const splitOpts = { allowNoiseOnly: true, skipAcceptCheck: true };
+                const autoOpts = { requireDpiAbove: targetDpi };
+                const splitOpts = { skipAcceptCheck: true };
                 let stoppedUnsplittable = false;
                 while (steps < maxSteps) {
                     const leaf = findKDpisLeafToSplit(root, minSize, autoOpts);
@@ -8914,7 +8955,7 @@ function showKDpisModal() {
                 clearKDpisUnsplittableFlags(root);
                 refresh();
                 if (stoppedUnsplittable) {
-                    alert('Auto stopped: some clusters still have DPI above the target but could not be bipartitioned on the phylogeny. Try +, or Reset after adjusting min size / long-branch noise.');
+                    alert('Auto stopped: some clusters still have DPI above the target but could not be bipartitioned with both sides ≥ min size. Try +, or Reset after adjusting min size / long-branch noise.');
                 }
             } finally {
                 setKDpisBusy(false);

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Batch k-DPIs clustering + DPI-scale SVG export (aliViz-compatible).
+Batch k-DPIs clustering + SVG export (aliViz-compatible).
 
 For each Newick tree in an input directory:
   1. Parse DPI from the filename (dpi±N; largest N; default 14)
@@ -8,17 +8,21 @@ For each Newick tree in an input directory:
   3. Pick the smallest group; choose a founder as the tree-path medoid
   4. Reroot on the founder; ladderize by depth (shallow subtrees first)
   5. Run k-DPIs Auto clustering (same bipartition / DPI rules as aliViz)
-  6. Write a linear SVG with DPI mark at 1/16 of the 520 px branch region,
-     plus group/cluster legend
+  6. Write a linear SVG (default: AUTO scale with DPI overlay when dpi±N is in
+     the filename; legacy DPI 1/16 scale via --scale dpi)
+  7. After the directory is processed, write housekeeping.csv (CAPid, Groups, Clusters)
+     and housekeeping.svg (pie chart by cluster-count bins: 1, 2, 3–4, 5–8, …)
 
 Usage:
   python tree_clustering.py INPUT_DIR OUTPUT_DIR
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --delimiter _ --field 3
+  python tree_clustering.py INPUT_DIR OUTPUT_DIR --scale dpi   # legacy DPI scale
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 import re
 import sys
@@ -29,14 +33,15 @@ from typing import Iterable, Optional
 
 
 # --- Constants matching aliViz.html ---
-DEFAULT_DSR = 0.000079
+DEFAULT_DSR = 0.00005
 DEFAULT_DPI_DAYS = 14
 DEFAULT_DELIMITER = "_"
 DEFAULT_FIELD = 3  # 1-based, same as aliViz Group dialog
-DEFAULT_MIN_SIZE = 2
-DEFAULT_MAX_SPLITS = 9
+DEFAULT_MIN_SIZE = 1
+DEFAULT_MAX_SPLITS = 63
+DEFAULT_SCALE_MODE = "auto"  # "auto" (aliViz AUTO) or "dpi" (legacy 1/16 mark)
 BRANCH_W = 520.0
-DPI_MARK_PX = BRANCH_W / 16.0  # 32.5
+DPI_MARK_PX = BRANCH_W / 16.0  # 32.5 — used only by legacy --scale dpi
 ROW_H = 20.0
 NOISE_COLOR = "#9ca3af"
 COLOR_PALETTE = [
@@ -58,6 +63,7 @@ COLOR_PALETTE = [
 
 TREE_EXTENSIONS = {".nwk", ".newick", ".tree", ".tre", ".treefile", ".txt"}
 DPI_RE = re.compile(r"dpi[+-](\d+)", re.IGNORECASE)
+CAP_RE = re.compile(r"(CAP\d+)", re.IGNORECASE)
 CLUSTER_SUFFIX_RE = re.compile(r"_(?:cl-(?:\d+|na|n))$", re.IGNORECASE)
 
 
@@ -356,9 +362,29 @@ def layout_tree(tree: Tree) -> float:
 # Filename / grouping
 # ---------------------------------------------------------------------------
 
-def parse_dpi_from_filename(name: str) -> int:
+def detect_dpi_from_filename(name: str) -> Optional[int]:
+    """Largest dpi±N in filename, or None if absent."""
     matches = [int(m) for m in DPI_RE.findall(name)]
-    return max(matches) if matches else DEFAULT_DPI_DAYS
+    return max(matches) if matches else None
+
+
+def parse_dpi_from_filename(name: str) -> int:
+    detected = detect_dpi_from_filename(name)
+    return detected if detected is not None else DEFAULT_DPI_DAYS
+
+
+def parse_capid_from_filename(name: str) -> str:
+    """Return CAP token from filename (e.g. CAP008), or empty string if absent."""
+    m = CAP_RE.search(name)
+    return m.group(1).upper() if m else ""
+
+
+def capid_sort_key(capid: str) -> tuple[int, str]:
+    """Numeric CAP sort with missing ids last."""
+    m = re.search(r"(\d+)", capid or "")
+    if not m:
+        return (10**12, capid or "")
+    return (int(m.group(1)), capid)
 
 
 def normalize_tip_name(name: str) -> str:
@@ -472,10 +498,9 @@ def best_bipartition(
     tree_root: Node,
     root_dist: dict[Node, float],
     min_size: int,
-    allow_noise_only: bool,
 ) -> Optional[tuple[list[Node], list[Node], float]]:
     n = len(tips)
-    if n < 2:
+    if n < 2 * min_size:
         return None
     tip_set = {t for t in tips}
 
@@ -505,15 +530,13 @@ def best_bipartition(
             return
         right_set = set(right_tips)
         left_tips = [t for t in tips if t not in right_set]
-        ok0 = len(left_tips) >= min_size
-        ok1 = len(right_tips) >= min_size
-        if not ok0 and not ok1 and not allow_noise_only:
+        # Both children must meet min cluster size (no undersized / noise-only splits).
+        if len(left_tips) < min_size or len(right_tips) < min_size:
             return
         d0 = max_depth_of_tips(left_tips, root_dist)
         d1 = max_depth_of_tips(right_tips, root_dist)
         score = max(d0, d1)
-        tier = 0 if (ok0 and ok1) else (1 if (ok0 or ok1) else 2)
-        meta = (tier, score)
+        meta = (0, score)
         if _is_better_bip(meta, best_meta):
             best_meta = meta
             best_left = left_tips
@@ -523,7 +546,7 @@ def best_bipartition(
         consider(under)
 
     # Fallback: partition children of cluster LCA
-    if best_meta is None and len(tips) >= 2:
+    if best_meta is None and len(tips) >= 2 * min_size:
         anc = tips[0]
         for t in tips[1:]:
             anc = lca(anc, t)
@@ -548,9 +571,9 @@ def find_leaf_to_split(
     root: KDpisLeaf,
     min_size: int,
     require_dpi_above: Optional[int],
-    allow_noise_only: bool,
 ) -> Optional[KDpisLeaf]:
-    min_split_n = max(2, min_size) if (require_dpi_above is not None or allow_noise_only) else max(2, min_size + 1)
+    # Need room for two children each ≥ min_size.
+    min_split_n = max(2, 2 * min_size)
     leaves = collect_kdpis_leaves(root)
     best: Optional[KDpisLeaf] = None
     best_key = -math.inf
@@ -575,11 +598,10 @@ def split_leaf(
     root_dist: dict[Node, float],
     dsr: float,
     min_size: int,
-    allow_noise_only: bool,
 ) -> bool:
-    if leaf.n < 2 or not leaf.is_atomic or leaf.unsplittable:
+    if leaf.n < 2 * min_size or not leaf.is_atomic or leaf.unsplittable:
         return False
-    bip = best_bipartition(leaf.tips, tree_root, root_dist, min_size, allow_noise_only)
+    bip = best_bipartition(leaf.tips, tree_root, root_dist, min_size)
     if bip is None:
         leaf.unsplittable = True
         return False
@@ -606,10 +628,23 @@ def assign_cluster_ids(
     min_size: int,
     pre_noise: list[Node],
 ) -> dict[str, int]:
-    """name → cluster id (−1 = noise). Non-noise numbered 1..k by phylogeny tip order."""
+    """name → cluster id (−1 = noise). Non-noise numbered 1..k by phylogeny tip order.
+
+    After min-size filtering, every remaining singleton is reclassified as noise
+    before tree-order ID assignment.
+    """
     leaves = collect_kdpis_leaves(root)
     noise_leaves = [L for L in leaves if L.n < min_size]
     cluster_leaves = [L for L in leaves if L.n >= min_size]
+
+    # Reclassify singletons as noise before tree-order renumbering.
+    kept: list[KDpisLeaf] = []
+    for L in cluster_leaves:
+        if L.n == 1:
+            noise_leaves.append(L)
+        else:
+            kept.append(L)
+    cluster_leaves = kept
 
     def leaf_y(L: KDpisLeaf) -> float:
         ys = [tip_order.get(t.name or "", 10**9) for t in L.tips]
@@ -663,10 +698,10 @@ def run_kdpis_auto(
     k_root = make_kdpis_leaf(cluster_tips, root_dist, dsr)
     steps = 0
     while steps < max_splits:
-        leaf = find_leaf_to_split(k_root, min_size, require_dpi_above=target_dpi, allow_noise_only=True)
+        leaf = find_leaf_to_split(k_root, min_size, require_dpi_above=target_dpi)
         if leaf is None:
             break
-        if not split_leaf(leaf, tree.root, root_dist, dsr, min_size, allow_noise_only=True):
+        if not split_leaf(leaf, tree.root, root_dist, dsr, min_size):
             continue
         steps += 1
 
@@ -720,6 +755,75 @@ def format_branch(x: float) -> str:
     return f"{x:.3e}"
 
 
+def pick_phylo_scale_bar_value(max_depth: float) -> Optional[float]:
+    """Nice scale-bar length ≈ max_depth/3 (aliViz pickPhyloScaleBarValue)."""
+    if max_depth is None or not math.isfinite(max_depth) or max_depth <= 0:
+        return None
+    target = max_depth / 3.0
+    log10 = math.log10(target)
+    if not math.isfinite(log10):
+        return None
+    exp = math.floor(log10)
+    base = 10.0 ** exp
+    f = target / base
+    if f <= 1:
+        nf = 1
+    elif f <= 2:
+        nf = 2
+    elif f <= 5:
+        nf = 5
+    else:
+        nf = 10
+    v = nf * base
+    if v > max_depth:
+        v = base
+        while v > max_depth and v > 0:
+            v /= 10.0
+        if v <= 0:
+            v = max_depth
+    return v
+
+
+def compute_svg_x_scale_dpi(dpi_days: int, dsr: float) -> tuple[float, float, str]:
+    """
+    Legacy DPI scale (aliViz --scale dpi): map expected = DPI×dsr to DPI_MARK_PX (520/16).
+
+    Returns (x_scale, scale_bar_val, scale_bar_label).
+    Kept so callers can revert with --scale dpi.
+    """
+    expected = dpi_days * dsr
+    if expected > 0:
+        x_scale = DPI_MARK_PX / expected
+    else:
+        x_scale = DPI_MARK_PX / (DEFAULT_DPI_DAYS * DEFAULT_DSR)
+        expected = DEFAULT_DPI_DAYS * DEFAULT_DSR
+    label = f"({dpi_days} DPI @ {dsr} = {format_branch(expected)})"
+    return x_scale, expected, label
+
+
+def compute_svg_x_scale_auto(
+    max_depth: float,
+    dpi_days: Optional[int],
+    dsr: float,
+) -> tuple[float, Optional[float], Optional[str], bool]:
+    """
+    AUTO scale (aliViz default): fit tree into BRANCH_W; if dpi_days is set, also fit
+    expected DPI depth so the vertical mark stays visible, and use DPI scale-bar label.
+
+    Returns (x_scale, scale_bar_val, scale_bar_label, draw_dpi_mark).
+    """
+    max_d = max_depth if max_depth > 0 else 1.0
+    expected = (dpi_days * dsr) if (dpi_days is not None and dpi_days > 0 and dsr > 0) else None
+    if expected is not None and expected > 0:
+        fit_depth = max(max_d, expected)
+        x_scale = BRANCH_W / fit_depth
+        label = f"({dpi_days} DPI @ {dsr} = {format_branch(expected)})"
+        return x_scale, expected, label, True
+    x_scale = BRANCH_W / max_d
+    bar = pick_phylo_scale_bar_value(max_d)
+    return x_scale, bar, None, False
+
+
 def build_svg(
     tree: Tree,
     max_depth: float,
@@ -734,14 +838,38 @@ def build_svg(
     cl_dpi: dict[int, Optional[int]],
     cl_count: dict[int, int],
     founder_name: Optional[str],
+    scale_mode: str = DEFAULT_SCALE_MODE,
+    dpi_detected: bool = True,
 ) -> str:
-    expected = dpi_days * dsr
-    x_scale = DPI_MARK_PX / expected if expected > 0 else DPI_MARK_PX / (DEFAULT_DPI_DAYS * DEFAULT_DSR)
+    """
+    Linear tree SVG.
+
+    scale_mode:
+      - "auto" (default): fit tree (+ DPI mark when dpi_detected) into BRANCH_W
+      - "dpi": legacy fixed scale with expected depth at BRANCH_W/16
+    """
+    mode = (scale_mode or DEFAULT_SCALE_MODE).lower()
+    if mode not in ("auto", "dpi"):
+        mode = DEFAULT_SCALE_MODE
+
+    # --- x-scale / scale bar ---
+    # Legacy DPI path retained for --scale dpi (maps DPI×dsr → 520/16 px).
+    if mode == "dpi":
+        x_scale, scale_bar_val, scale_bar_label = compute_svg_x_scale_dpi(dpi_days, dsr)
+        draw_dpi_mark = scale_bar_val is not None and scale_bar_val > 0
+    else:
+        overlay_days = dpi_days if dpi_detected else None
+        x_scale, scale_bar_val, scale_bar_label, draw_dpi_mark = compute_svg_x_scale_auto(
+            max_depth, overlay_days, dsr
+        )
+
     padding = 15.0
     left_pad = 5.0
     tips = tree.tips()
     n_rows = max(1, len(tips))
-    svg_h = n_rows * ROW_H
+    # Extra top row for the scale bar (aliViz parks it on the REF row above the first tip).
+    scale_bar_rows = 1
+    svg_h = (n_rows + scale_bar_rows) * ROW_H
     label_x0 = left_pad + 5 + BRANCH_W + 14
     max_label_w = 420.0
     title_space = 44.0
@@ -755,7 +883,8 @@ def build_svg(
         return left_pad + n.x_depth * x_scale
 
     def ny(n: Node) -> float:
-        return n.y_row * ROW_H + ROW_H / 2.0
+        # Shift tips down one row so row 0 is free for the scale bar.
+        return (n.y_row + scale_bar_rows) * ROW_H + ROW_H / 2.0
 
     def tip_fill(name: Optional[str]) -> str:
         if not name:
@@ -840,11 +969,12 @@ def build_svg(
 
     draw_node(tree.root)
 
-    expected_x = left_pad + expected * x_scale
-    parts.append(
-        f'<line x1="{expected_x}" y1="0" x2="{expected_x}" y2="{svg_h}" '
-        f'stroke="#6b7280" stroke-width="1" stroke-dasharray="3 3"/>\n'
-    )
+    if draw_dpi_mark and scale_bar_val is not None and scale_bar_val > 0:
+        expected_x = left_pad + scale_bar_val * x_scale
+        parts.append(
+            f'<line x1="{expected_x}" y1="0" x2="{expected_x}" y2="{svg_h}" '
+            f'stroke="#6b7280" stroke-width="1" stroke-dasharray="3 3"/>\n'
+        )
 
     parts.append('<g stroke="#374151" fill="none">\n')
     for n in internals:
@@ -900,22 +1030,22 @@ def build_svg(
     draw_labels(tree.root)
     parts.append("</g>\n")
 
-    # Scale bar
-    parts.append(f'<g transform="translate({padding},{padding + title_space})">\n')
-    scale_val = expected
-    px_len = scale_val * x_scale
-    x0, y0 = 5.0, 12.0
-    label = f"({dpi_days} DPI @ {dsr} = {format_branch(scale_val)})"
-    parts.append('<g fill="none" stroke="#111827" stroke-width="2">\n')
-    parts.append(f'<line x1="{x0}" y1="{y0}" x2="{x0 + px_len}" y2="{y0}"/>\n')
-    parts.append(f'<line x1="{x0}" y1="{y0 - 4}" x2="{x0}" y2="{y0 + 4}"/>\n')
-    parts.append(f'<line x1="{x0 + px_len}" y1="{y0 - 4}" x2="{x0 + px_len}" y2="{y0 + 4}"/>\n')
-    parts.append("</g>\n")
-    parts.append(
-        f'<text x="{x0 + px_len + 8}" y="{y0 + 4}" font-family="sans-serif" '
-        f'font-size="11" fill="#111827">{escape_xml(label)}</text>\n'
-    )
-    parts.append("</g>\n")
+    # Scale bar (centred in the top spacer row, above the first tip)
+    if scale_bar_val is not None and scale_bar_val > 0:
+        parts.append(f'<g transform="translate({padding},{padding + title_space})">\n')
+        px_len = scale_bar_val * x_scale
+        x0, y0 = 5.0, ROW_H / 2.0
+        label = scale_bar_label if scale_bar_label else format_branch(scale_bar_val)
+        parts.append('<g fill="none" stroke="#111827" stroke-width="2">\n')
+        parts.append(f'<line x1="{x0}" y1="{y0}" x2="{x0 + px_len}" y2="{y0}"/>\n')
+        parts.append(f'<line x1="{x0}" y1="{y0 - 4}" x2="{x0}" y2="{y0 + 4}"/>\n')
+        parts.append(f'<line x1="{x0 + px_len}" y1="{y0 - 4}" x2="{x0 + px_len}" y2="{y0 + 4}"/>\n')
+        parts.append("</g>\n")
+        parts.append(
+            f'<text x="{x0 + px_len + 8}" y="{y0}" font-family="sans-serif" '
+            f'font-size="11" fill="#111827" dominant-baseline="middle">{escape_xml(label)}</text>\n'
+        )
+        parts.append("</g>\n")
 
     # Legend
     legend_x = plot_w
@@ -980,7 +1110,6 @@ def build_svg(
     )
     parts.extend(leg)
     parts.append("</svg>")
-    # Filename annotation is external; embed gr/cl in title already via caller
     _ = (num_groups, num_clusters)
     return "".join(parts)
 
@@ -998,11 +1127,13 @@ def process_tree_file(
     min_size: int,
     max_splits: int,
     remove_long_branches: bool,
-) -> Path:
+    scale_mode: str = DEFAULT_SCALE_MODE,
+) -> tuple[Path, dict[str, object]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     tree = parse_newick(text)
     set_parents(tree.root)
 
+    dpi_detected = detect_dpi_from_filename(path.name) is not None
     dpi_days = parse_dpi_from_filename(path.name)
     tip_names = [t.name for t in tree.tips() if t.name]
     name_to_gid, gid_to_label, members = group_tips(tip_names, delimiter, field)
@@ -1066,9 +1197,199 @@ def process_tree_file(
         cl_dpi=cl_dpi,
         cl_count=cl_count,
         founder_name=founder_name,
+        scale_mode=scale_mode,
+        dpi_detected=dpi_detected,
     )
     out_path.write_text(svg, encoding="utf-8")
-    return out_path
+    record = {
+        "CAPid": parse_capid_from_filename(path.name),
+        "Groups": num_groups,
+        "Clusters": num_clusters,
+    }
+    return out_path, record
+
+
+def write_housekeeping_csv(out_dir: Path, records: list[dict[str, object]]) -> Path:
+    """Write housekeeping.csv sorted by CAPid (numeric)."""
+    rows = sorted(records, key=lambda r: capid_sort_key(str(r.get("CAPid") or "")))
+    path = out_dir / "housekeeping.csv"
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["CAPid", "Groups", "Clusters"])
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({
+                "CAPid": row.get("CAPid") or "",
+                "Groups": row.get("Groups", 0),
+                "Clusters": row.get("Clusters", 0),
+            })
+    return path
+
+
+def _pie_slice_path(cx: float, cy: float, r: float, a0: float, a1: float) -> str:
+    """SVG path for a pie slice from angle a0 to a1 (radians, 0 = east, CCW)."""
+    if abs(a1 - a0) >= 2 * math.pi - 1e-9:
+        # Full circle as two semicircles
+        x1 = cx + r
+        y1 = cy
+        return (
+            f"M {cx} {cy} L {x1} {y1} "
+            f"A {r} {r} 0 1 0 {cx - r} {cy} "
+            f"A {r} {r} 0 1 0 {x1} {y1} Z"
+        )
+    x0 = cx + r * math.cos(a0)
+    y0 = cy + r * math.sin(a0)
+    x1 = cx + r * math.cos(a1)
+    y1 = cy + r * math.sin(a1)
+    large = 1 if (a1 - a0) > math.pi else 0
+    return f"M {cx} {cy} L {x0} {y0} A {r} {r} 0 {large} 1 {x1} {y1} Z"
+
+
+def cluster_count_bin_label(n_clusters: int) -> str:
+    """
+    Bin label for cluster count: 1, 2, 3–4, 5–8, 9–16, … (powers of two).
+    Counts ≤0 are binned with 1.
+    """
+    n = max(1, int(n_clusters))
+    if n == 1:
+        return "1"
+    if n == 2:
+        return "2"
+    hi = 4
+    while n > hi:
+        hi *= 2
+    lo = hi // 2 + 1
+    return f"{lo}-{hi}"
+
+
+def cluster_count_bin_sort_key(label: str) -> int:
+    """Order bins: 1, 2, 3-4, 5-8, …"""
+    m = re.match(r"^(\d+)-", label)
+    if m:
+        return int(m.group(1))
+    m2 = re.match(r"^(\d+)$", label)
+    return int(m2.group(1)) if m2 else 10**9
+
+
+def write_housekeeping_pie_svg(out_dir: Path, records: list[dict[str, object]]) -> Path:
+    """
+    Write housekeeping.svg: pie chart of CAP samples by cluster-count bins
+    (1, 2, 3–4, 5–8, 9–16, …).
+    """
+    counts: dict[str, int] = defaultdict(int)
+    for row in records:
+        try:
+            n_cl = int(row.get("Clusters") or 0)
+        except (TypeError, ValueError):
+            n_cl = 0
+        counts[cluster_count_bin_label(n_cl)] += 1
+
+    # Only non-empty bins, ordered
+    bins = sorted(counts.keys(), key=cluster_count_bin_sort_key)
+    slices = [(lab, counts[lab]) for lab in bins if counts[lab] > 0]
+    total = sum(c for _, c in slices)
+
+    palette = [
+        "#3b82f6",
+        "#10b981",
+        "#f59e0b",
+        "#8b5cf6",
+        "#06b6d4",
+        "#f97316",
+        "#6366f1",
+        "#14b8a6",
+        "#a855f7",
+        "#22c55e",
+        "#64748b",
+    ]
+
+    def bin_color(idx: int) -> str:
+        return palette[idx % len(palette)]
+
+    legend_rows = max(len(slices), 1)
+    w = 520.0
+    h = max(360.0, 80.0 + legend_rows * 24.0 + 40.0)
+    cx, cy, r = 180.0, max(180.0, h / 2.0), 120.0
+
+    parts: list[str] = []
+    parts.append('<?xml version="1.0" encoding="UTF-8"?>\n')
+    parts.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
+        f'viewBox="0 0 {w} {h}">\n'
+    )
+    parts.append(f'<rect width="{w}" height="{h}" fill="white"/>\n')
+    parts.append(
+        '<text x="24" y="28" font-family="sans-serif" font-size="16" font-weight="700" '
+        'fill="#111827">CAP samples by cluster-count bin</text>\n'
+    )
+
+    if total == 0:
+        parts.append(
+            '<text x="24" y="80" font-family="sans-serif" font-size="13" fill="#6b7280">'
+            "No CAP records to plot.</text>\n"
+        )
+    elif len(slices) == 1:
+        color = bin_color(0)
+        parts.append(
+            f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}" '
+            f'stroke="#ffffff" stroke-width="2"/>\n'
+        )
+        parts.append(
+            f'<text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="middle" '
+            f'font-family="sans-serif" font-size="18" font-weight="700" fill="#ffffff">'
+            f"100%</text>\n"
+        )
+    else:
+        start = -math.pi / 2
+        angle = start
+        for i, (lab, cnt) in enumerate(slices):
+            frac = cnt / total
+            a0 = angle
+            a1 = angle + frac * 2 * math.pi
+            color = bin_color(i)
+            parts.append(
+                f'<path d="{_pie_slice_path(cx, cy, r, a0, a1)}" '
+                f'fill="{color}" stroke="#ffffff" stroke-width="2"/>\n'
+            )
+            if frac >= 0.04:
+                mid = (a0 + a1) / 2.0
+                lx = cx + (r * 0.55) * math.cos(mid)
+                ly = cy + (r * 0.55) * math.sin(mid)
+                pct = 100.0 * frac
+                parts.append(
+                    f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" '
+                    f'dominant-baseline="middle" font-family="sans-serif" font-size="12" '
+                    f'font-weight="700" fill="#ffffff">{pct:.0f}%</text>\n'
+                )
+            angle = a1
+
+    # Legend
+    lx0, ly0 = 340.0, 70.0
+    sw = 16.0
+    parts.append('<g font-family="sans-serif" font-size="13" fill="#374151">\n')
+    y = ly0
+    for i, (lab, cnt) in enumerate(slices):
+        color = bin_color(i)
+        pct = (100.0 * cnt / total) if total else 0.0
+        if "-" in lab:
+            desc = f"Clusters {lab}: {cnt} ({pct:.0f}%)"
+        else:
+            desc = f"Clusters = {lab}: {cnt} ({pct:.0f}%)"
+        parts.append(
+            f'<rect x="{lx0}" y="{y}" width="{sw}" height="{sw}" fill="{color}" '
+            f'stroke="#d1d5db" rx="2"/>\n'
+        )
+        parts.append(f'<text x="{lx0 + sw + 8}" y="{y + 13}">{escape_xml(desc)}</text>\n')
+        y += 24.0
+    parts.append(
+        f'<text x="{lx0}" y="{y + 16}" font-size="12" fill="#6b7280">'
+        f"n = {total} CAP sample(s)</text>\n"
+    )
+    parts.append("</g>\n")
+    parts.append("</svg>\n")
+
+    path = out_dir / "housekeeping.svg"
+    path.write_text("".join(parts), encoding="utf-8")
+    return path
 
 
 def iter_tree_files(input_dir: Path) -> list[Path]:
@@ -1081,7 +1402,7 @@ def iter_tree_files(input_dir: Path) -> list[Path]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Batch k-DPIs clustering + DPI-scale SVG export (aliViz-compatible)."
+        description="Batch k-DPIs clustering + SVG export (aliViz-compatible)."
     )
     ap.add_argument("input_dir", type=Path, help="Directory of Newick tree files")
     ap.add_argument("output_dir", type=Path, help="Directory for output SVG files")
@@ -1092,9 +1413,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=DEFAULT_FIELD,
         help="1-based name field for grouping (default 3, same as aliViz)",
     )
-    ap.add_argument("--dsr", type=float, default=DEFAULT_DSR, help="Daily substitution rate")
-    ap.add_argument("--min-size", type=int, default=DEFAULT_MIN_SIZE, help="Min cluster size")
-    ap.add_argument("--max-splits", type=int, default=DEFAULT_MAX_SPLITS, help="Max k-DPIs splits")
+    ap.add_argument("--dsr", type=float, default=DEFAULT_DSR, help=f"Daily substitution rate (default {DEFAULT_DSR})")
+    ap.add_argument("--min-size", type=int, default=DEFAULT_MIN_SIZE, help=f"Min cluster size (default {DEFAULT_MIN_SIZE})")
+    ap.add_argument("--max-splits", type=int, default=DEFAULT_MAX_SPLITS, help=f"Max k-DPIs splits (default {DEFAULT_MAX_SPLITS})")
+    ap.add_argument(
+        "--scale",
+        choices=("auto", "dpi"),
+        default=DEFAULT_SCALE_MODE,
+        help="SVG branch scale: auto (default, fit tree + DPI mark) or dpi (legacy 1/16 mark)",
+    )
     ap.add_argument(
         "--no-long-branch-noise",
         action="store_true",
@@ -1115,9 +1442,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     ok, fail = 0, 0
+    records: list[dict[str, object]] = []
     for path in files:
         try:
-            out = process_tree_file(
+            out, record = process_tree_file(
                 path,
                 out_dir,
                 delimiter=args.delimiter,
@@ -1126,13 +1454,18 @@ def main(argv: Optional[list[str]] = None) -> int:
                 min_size=args.min_size,
                 max_splits=args.max_splits,
                 remove_long_branches=not args.no_long_branch_noise,
+                scale_mode=args.scale,
             )
-            print(f"OK  {path.name} -> {out.name}")
+            records.append(record)
+            print(f"OK  {path.name} -> {out.name}  ({record['CAPid'] or '—'} gr={record['Groups']} cl={record['Clusters']})")
             ok += 1
         except Exception as exc:
             print(f"FAIL {path.name}: {exc}", file=sys.stderr)
             fail += 1
 
+    hk = write_housekeeping_csv(out_dir, records)
+    pie = write_housekeeping_pie_svg(out_dir, records)
+    print(f"Housekeeping: {hk.name} ({len(records)} record(s)), {pie.name}")
     print(f"Done: {ok} written, {fail} failed → {out_dir}")
     return 0 if fail == 0 else 2
 
