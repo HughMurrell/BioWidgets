@@ -937,7 +937,7 @@
         <div class="help-row"><span class="help-key">Sort</span> <span>Sort by current grouping, or by name if no grouping (REF and SUBTYPE remain first)</span></div>
         <div class="help-row"><span class="help-key">Group</span> <span>Group sequences using field in Seq names</span></div>
         <div class="help-row"><span class="help-key">Prune</span> <span>Remove sequences from deselected groups</span></div>
-        <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder sequence as consensus of a group</span></div>
+        <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder from a group (default: smallest group id; medoid or consensus)</span></div>
         <div class="help-row"><span class="help-key">dsr</span> <span>Set daily substitution rate used for tree-based DPI estimates</span></div>
         <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny (requires founder; optional root &amp; ladderize)</span></div>
         <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
@@ -3982,19 +3982,15 @@ function showSubtypeModal() {
     
     const hasGroups = !!(state.sequenceGroups && state.groupNames && state.groupNames.size > 0);
     if (hasGroups) {
-        // Sort groups alphabetically by value
-        const groupEntries = Array.from(state.groupNames.entries()).sort((a, b) => {
-            const valA = a[1] || '';
-            const valB = b[1] || '';
-            return valA.localeCompare(valB);
-        });
-        
-        groupEntries.forEach(([groupId, groupValue], index) => {
+        // Display by group id (0,1,… from sorted labels). Default = smallest group id (unique; not smallest size).
+        const groupEntries = Array.from(state.groupNames.entries()).sort((a, b) => a[0] - b[0]);
+        const defaultGroupId = groupEntries[0][0];
+
+        groupEntries.forEach(([groupId, groupValue]) => {
             const option = document.createElement('option');
             option.value = groupId.toString();
             option.textContent = groupValue || `Group ${groupId}`;
-            // Make the first group selected by default
-            if (index === 0) option.selected = true;
+            if (groupId === defaultGroupId) option.selected = true;
             select.appendChild(option);
         });
     }
