@@ -12,11 +12,14 @@ For each Newick tree in an input directory:
      the filename; legacy DPI 1/16 scale via --scale dpi)
   7. After the directory is processed, write housekeeping.csv (CAPid, Groups, Clusters)
      and housekeeping.svg (pie chart by cluster-count bins: 1, 2, 3–4, 5–8, …)
+  8. Optional --fasta-dir: read matching FASTA, append _cl-<n> / _cl-n to names,
+     write annotated FASTA to output_dir and show annotated names on the tree SVG
 
 Usage:
   python tree_clustering.py INPUT_DIR OUTPUT_DIR
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --delimiter _ --field 3
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --scale dpi   # legacy DPI scale
+  python tree_clustering.py INPUT_DIR OUTPUT_DIR --fasta-dir FASTA_DIR
 """
 
 from __future__ import annotations
@@ -62,9 +65,9 @@ COLOR_PALETTE = [
 ]
 
 TREE_EXTENSIONS = {".nwk", ".newick", ".tree", ".tre", ".treefile", ".txt"}
+FASTA_EXTENSIONS = (".fasta", ".fa", ".fas", ".fna")
 DPI_RE = re.compile(r"dpi[+-](\d+)", re.IGNORECASE)
 CAP_RE = re.compile(r"(CAP\d+)", re.IGNORECASE)
-CLUSTER_SUFFIX_RE = re.compile(r"_(?:cl-(?:\d+|na|n))$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -387,8 +390,117 @@ def capid_sort_key(capid: str) -> tuple[int, str]:
     return (int(m.group(1)), capid)
 
 
-def normalize_tip_name(name: str) -> str:
-    return CLUSTER_SUFFIX_RE.sub("", name or "")
+def cluster_suffix_pattern(delimiter: str = DEFAULT_DELIMITER) -> re.Pattern[str]:
+    """Match trailing cluster suffix (aliViz: delimiter + cl-<id>|na|n)."""
+    return re.compile(rf"{re.escape(delimiter)}cl-(?:\d+|na|n)$", re.IGNORECASE)
+
+
+def normalize_tip_name(name: str, delimiter: str = DEFAULT_DELIMITER) -> str:
+    return cluster_suffix_pattern(delimiter).sub("", name or "")
+
+
+def cluster_suffix(cluster_id: int, delimiter: str = DEFAULT_DELIMITER) -> str:
+    if cluster_id == -1:
+        return f"{delimiter}cl-n"
+    return f"{delimiter}cl-{cluster_id}"
+
+
+def annotate_name_with_cluster(
+    name: str,
+    cluster_id: int,
+    delimiter: str = DEFAULT_DELIMITER,
+) -> str:
+    base = normalize_tip_name(name, delimiter)
+    return base + cluster_suffix(cluster_id, delimiter)
+
+
+def build_cluster_name_mapping(
+    name_to_cl: dict[str, int],
+    delimiter: str = DEFAULT_DELIMITER,
+) -> dict[str, str]:
+    """Map normalized base name → annotated name with cluster suffix."""
+    return {
+        nm: annotate_name_with_cluster(nm, cid, delimiter)
+        for nm, cid in name_to_cl.items()
+    }
+
+
+def apply_cluster_names_to_tree(tree: Tree, name_map: dict[str, str], delimiter: str) -> None:
+    """Rename tree tips using normalized-name lookup."""
+    for tip in tree.tips():
+        if not tip.name:
+            continue
+        base = normalize_tip_name(tip.name, delimiter)
+        if base in name_map:
+            tip.name = name_map[base]
+
+
+def find_fasta_file(stem: str, fasta_dir: Path) -> Optional[Path]:
+    """Locate FASTA with same basename as the tree file."""
+    for ext in FASTA_EXTENSIONS:
+        path = fasta_dir / f"{stem}{ext}"
+        if path.is_file():
+            return path
+    return None
+
+
+def read_fasta(path: Path) -> list[tuple[str, str]]:
+    """Return list of (sequence name, sequence) from a FASTA file."""
+    records: list[tuple[str, str]] = []
+    header: Optional[str] = None
+    seq_parts: list[str] = []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(">"):
+            if header is not None:
+                records.append((header, "".join(seq_parts)))
+            header = line[1:].strip().split()[0]
+            seq_parts = []
+        else:
+            seq_parts.append(line)
+    if header is not None:
+        records.append((header, "".join(seq_parts)))
+    return records
+
+
+def write_fasta(path: Path, records: list[tuple[str, str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as fh:
+        for name, seq in records:
+            fh.write(f">{name}\n")
+            fh.write(f"{seq}\n")
+
+
+def annotate_fasta_records(
+    records: list[tuple[str, str]],
+    name_to_cl: dict[str, int],
+    delimiter: str = DEFAULT_DELIMITER,
+) -> list[tuple[str, str]]:
+    """Append cluster suffix to each sequence name (noise → cl-n)."""
+    out: list[tuple[str, str]] = []
+    for name, seq in records:
+        base = normalize_tip_name(name, delimiter)
+        cid = name_to_cl.get(base)
+        if cid is None:
+            out.append((name, seq))
+        else:
+            out.append((annotate_name_with_cluster(name, cid, delimiter), seq))
+    return out
+
+
+def write_annotated_fasta(
+    fasta_path: Path,
+    out_dir: Path,
+    name_to_cl: dict[str, int],
+    delimiter: str = DEFAULT_DELIMITER,
+) -> Path:
+    records = read_fasta(fasta_path)
+    annotated = annotate_fasta_records(records, name_to_cl, delimiter)
+    out_path = out_dir / fasta_path.name
+    write_fasta(out_path, annotated)
+    return out_path
 
 
 def group_tips(
@@ -1128,6 +1240,7 @@ def process_tree_file(
     max_splits: int,
     remove_long_branches: bool,
     scale_mode: str = DEFAULT_SCALE_MODE,
+    fasta_dir: Optional[Path] = None,
 ) -> tuple[Path, dict[str, object]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     tree = parse_newick(text)
@@ -1174,6 +1287,24 @@ def process_tree_file(
         max_splits=max_splits,
         remove_long_branches=remove_long_branches,
     )
+
+    # Optional FASTA + tree tip names: stamp cluster suffixes (aliViz Accept style).
+    fasta_out: Optional[Path] = None
+    if fasta_dir is not None:
+        name_map = build_cluster_name_mapping(name_to_cl, delimiter)
+        apply_cluster_names_to_tree(tree, name_map, delimiter)
+        if founder_name:
+            fbase = normalize_tip_name(founder_name, delimiter)
+            if fbase in name_map:
+                founder_name = name_map[fbase]
+        fasta_in = find_fasta_file(path.stem, fasta_dir)
+        if fasta_in is None:
+            raise FileNotFoundError(
+                f"No FASTA found for {path.name} in {fasta_dir} "
+                f"(tried {', '.join(FASTA_EXTENSIONS)})"
+            )
+        fasta_out = write_annotated_fasta(fasta_in, out_dir, name_to_cl, delimiter)
+
     # Re-layout after clustering (topology unchanged; y_row already set)
     max_depth = layout_tree(tree)
 
@@ -1206,6 +1337,8 @@ def process_tree_file(
         "Groups": num_groups,
         "Clusters": num_clusters,
     }
+    if fasta_out is not None:
+        record["Fasta"] = fasta_out.name
     return out_path, record
 
 
@@ -1427,12 +1560,24 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="Disable removal of tips with incoming branch > etd",
     )
+    ap.add_argument(
+        "--fasta-dir",
+        type=Path,
+        default=None,
+        metavar="FASTA_DIR",
+        help="Optional directory of FASTA files (same basename as each tree); "
+        "writes cluster-annotated FASTA to output_dir",
+    )
     args = ap.parse_args(argv)
 
     in_dir: Path = args.input_dir
     out_dir: Path = args.output_dir
+    fasta_dir: Optional[Path] = args.fasta_dir
     if not in_dir.is_dir():
         print(f"Error: input_dir is not a directory: {in_dir}", file=sys.stderr)
+        return 1
+    if fasta_dir is not None and not fasta_dir.is_dir():
+        print(f"Error: fasta_dir is not a directory: {fasta_dir}", file=sys.stderr)
         return 1
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1455,9 +1600,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                 max_splits=args.max_splits,
                 remove_long_branches=not args.no_long_branch_noise,
                 scale_mode=args.scale,
+                fasta_dir=fasta_dir,
             )
             records.append(record)
-            print(f"OK  {path.name} -> {out.name}  ({record['CAPid'] or '—'} gr={record['Groups']} cl={record['Clusters']})")
+            extra = ""
+            if record.get("Fasta"):
+                extra = f", fasta={record['Fasta']}"
+            print(
+                f"OK  {path.name} -> {out.name}  "
+                f"({record['CAPid'] or '—'} gr={record['Groups']} cl={record['Clusters']}{extra})"
+            )
             ok += 1
         except Exception as exc:
             print(f"FAIL {path.name}: {exc}", file=sys.stderr)
