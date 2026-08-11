@@ -19,7 +19,7 @@
 \usepackage{fancyhdr}
 \usepackage{adjustbox}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,calc}
+\usetikzlibrary{arrows.meta,positioning,calc,shapes.geometric}
 
 \hypersetup{
   colorlinks=true,
@@ -78,12 +78,14 @@
 \maketitle
 
 \begin{abstract}
-\texttt{tree\_clustering.py} is a command-line batch tool that mirrors the
-k-DPIs clustering workflow of the aliViz web application.
+\texttt{tree\_clustering.py} is a command-line batch tool that implements a
+k-DPI clustering workflow.
 For each Newick phylogeny in an input directory it parses days-post-infection
 (DPI) from the filename, groups tip names, selects a founder tip from the
-smallest group id, reroots and ladderizes the tree, runs automatic k-DPIs
+smallest group id, reroots and ladderizes the tree, runs automatic k-DPI
 bipartition clustering, and writes an annotated linear SVG tree plot.
+With \texttt{--as-is}, founder selection, reroot, and ladderize are skipped so
+clustering uses the loaded topology unchanged.
 Optionally it annotates a matching FASTA alignment.
 After processing a directory it writes a housekeeping CSV and a pie-chart SVG
 summarising cluster-count distributions across CAP samples.
@@ -99,32 +101,31 @@ algorithms implemented in the script.
 % -----------------------------------------------------------------------------
 
 \subsection{Purpose}
-The script automates the same scientific workflow that a user would perform
-interactively in aliViz:
+The script batch-processes phylogenetic trees with a fixed pipeline:
 \begin{enumerate}[nosep]
   \item load a phylogenetic tree;
   \item group sequences by a name field;
   \item reroot on a founder;
   \item ladderize;
-  \item run k-DPIs Auto clustering;
+  \item run k-DPI Auto clustering;
   \item export a DPI-aware tree SVG (and optionally annotate FASTA).
 \end{enumerate}
 It is intended for batch analysis of many participant trees (typically CAP
 cohort Newick files) with consistent parameters.
 
-\subsection{Relationship to aliViz}
-Behaviour is intended to match aliViz where practical:
+\subsection{Conventions}
+Notable defaults and design choices:
 \begin{itemize}[nosep]
-  \item same default grouping (delimiter \texttt{\_}, field~3);
-  \item same k-DPIs bipartition objective
-        ($\min\max(\mathrm{depth}_1,\mathrm{depth}_2)$)
+  \item default grouping uses delimiter \texttt{\_} and field~3;
+  \item k-DPI bipartition objective
+        $\min\max(\mathrm{depth}_1,\mathrm{depth}_2)$
         with both children required to meet minimum cluster size;
-  \item same DPI estimator from mean pairwise tree-path distance;
-  \item same cluster / noise naming convention (\texttt{\_cl-}$n$ / \texttt{\_cl-n});
-  \item SVG layout inspired by aliViz linear AUTO / DPI export.
+  \item DPI from mean pairwise tree-path distance;
+  \item cluster / noise naming \texttt{\_cl-}$x$ / \texttt{\_cl-n};
+  \item linear SVG export with AUTO or legacy DPI branch scaling.
 \end{itemize}
-One intentional difference: founder selection uses the \emph{tree-path medoid}
-of the group with the smallest group id (not Hamming distance on an alignment).
+Founder selection uses the \emph{tree-path medoid} of the group with the
+smallest group id.
 
 \subsection{Requirements}
 \begin{itemize}[nosep]
@@ -167,7 +168,7 @@ python3 tree_clustering.py INPUT_DIR OUTPUT_DIR [options]
 \texttt{--delimiter} & \texttt{\_} &
   Character splitting tip names into fields for grouping. \\
 \texttt{--field} & $3$ &
-  1-based field index used as the group label (aliViz Group dialog). \\
+  1-based field index used as the group label. \\
 \texttt{--dsr} & $5\times10^{-5}$ &
   Daily substitution rate (mutations / site / day). \\
 \texttt{--min-size} & $1$ &
@@ -184,6 +185,9 @@ python3 tree_clustering.py INPUT_DIR OUTPUT_DIR [options]
 \texttt{--no-long-branch-noise} & off &
   Disable removal of tips whose incoming branch exceeds
   $\mathrm{etd}=2\times\mathrm{dsr}\times\mathrm{DPI}$. \\
+\texttt{--as-is} & off &
+  Skip founder selection, reroot, and ladderize; cluster and draw the input
+  tree topology as loaded (no \texttt{[Founder]} highlight). \\
 \bottomrule
 \end{longtable}
 
@@ -192,7 +196,7 @@ python3 tree_clustering.py INPUT_DIR OUTPUT_DIR [options]
 # Minimal batch run
 python3 tree_clustering.py trees_in/ trees_out/
 
-# Match aliViz grouping and annotate FASTA
+# Default grouping and annotate FASTA
 python3 tree_clustering.py trees_in/ trees_out/ \
   --delimiter _ --field 3 \
   --fasta-dir fasta_in/
@@ -200,6 +204,9 @@ python3 tree_clustering.py trees_in/ trees_out/ \
 # Legacy DPI 1/16 scale, no long-branch pre-noise
 python3 tree_clustering.py trees_in/ trees_out/ \
   --scale dpi --no-long-branch-noise
+
+# Cluster without founder / reroot / ladderize
+python3 tree_clustering.py trees_in/ trees_out/ --as-is
 \end{lstlisting}
 
 % -----------------------------------------------------------------------------
@@ -227,7 +234,7 @@ CAP identifiers for housekeeping are parsed with \verb|(CAP\d+)|
 \subsection{Tip name grouping}
 Tip names are split on \texttt{--delimiter}. Field \texttt{--field}
 (1-based) becomes the group label. Existing cluster suffixes of the form
-\texttt{\_cl-}$n$, \texttt{\_cl-na}, or \texttt{\_cl-n} are stripped before
+\texttt{\_cl-}$x$, \texttt{\_cl-na}, or \texttt{\_cl-n} are stripped before
 grouping.
 
 Example (delimiter \texttt{\_}, field~$3$):
@@ -245,7 +252,7 @@ into \texttt{OUTPUT\_DIR}.
 If \texttt{--fasta-dir} is set, a matching FASTA
 (\texttt{$S$.fasta} / \texttt{.fa} / \texttt{.fas} / \texttt{.fna}) is required.
 An annotated copy is written to \texttt{OUTPUT\_DIR} under the same filename,
-with headers ending in \texttt{\_cl-}$n$ or \texttt{\_cl-n} (noise).
+with headers ending in \texttt{\_cl-}$x$ or \texttt{\_cl-n} (noise).
 Tree tip labels in the SVG are annotated the same way when FASTA annotation
 is enabled.
 
@@ -266,17 +273,23 @@ After all trees are processed:
 % -----------------------------------------------------------------------------
 
 For each tree file the script executes the following stages in order.
+With \texttt{--as-is}, the founder, reroot, and ladderize stages are omitted
+(Sections~\ref{sec:founder}--\ref{sec:ladder}); layout, clustering, annotation,
+and SVG export still run on the loaded rooting and tip order.
 
 \begin{enumerate}
   \item \textbf{Parse} Newick into an in-memory tree; set parent pointers.
   \item \textbf{Parse DPI} from the filename (Section~\ref{sec:dpi}).
   \item \textbf{Group} tip names (Section~\ref{sec:group}).
   \item \textbf{Founder}: take the group with the smallest group id; choose the
-        tree-path medoid (Section~\ref{sec:founder}).
-  \item \textbf{Reroot} on the founder (Section~\ref{sec:reroot}).
-  \item \textbf{Ladderize} by subtree depth, ascending (Section~\ref{sec:ladder}).
+        tree-path medoid (Section~\ref{sec:founder})
+        (\emph{skipped} if \texttt{--as-is}).
+  \item \textbf{Reroot} on the founder (Section~\ref{sec:reroot})
+        (\emph{skipped} if \texttt{--as-is}).
+  \item \textbf{Ladderize} by subtree depth, ascending (Section~\ref{sec:ladder})
+        (\emph{skipped} if \texttt{--as-is}).
   \item \textbf{Layout} assign root-to-node depths and tip row indices.
-  \item \textbf{k-DPIs Auto} clustering (Section~\ref{sec:kdpis}).
+  \item \textbf{k-DPI Auto} clustering (Section~\ref{sec:kdpis}).
   \item \textbf{Assign} cluster IDs; reclassify singletons as noise;
         number non-noise clusters $1..k$ by tip order (Section~\ref{sec:assign}).
   \item \textbf{Optional FASTA / tip annotation} (Section~\ref{sec:fasta}).
@@ -329,7 +342,9 @@ Finally, write housekeeping CSV and pie chart.
   % Wrap connector: end of row 1 down/left into start of row 2
   \draw[arr] (n4.south) -- ++(0,-0.38) -| (n5.north);
 \end{tikzpicture}
-\caption{High-level data flow of \texttt{tree\_clustering.py}.}
+\caption{High-level data flow of \texttt{tree\_clustering.py}
+  (default path). With \texttt{--as-is}, the founder medoid and
+  reroot\,+\,ladderize stages are skipped.}
 \label{fig:pipeline}
 \end{figure}
 
@@ -372,8 +387,8 @@ Days-post-infection for a tip set is
   =\mathrm{round}\!\left(\frac{\overline{\delta}(T)}{2\,\mathrm{dsr}}\right).
   \label{eq:dpi}
 \end{equation}
-This matches the aliViz tree-based DPI estimator
-($\mathrm{dpi}=\overline{\delta}/(2\times\mathrm{dsr})$).
+Equivalent form:
+$\mathrm{dpi}=\overline{\delta}/(2\times\mathrm{dsr})$.
 
 \subsection{Expected early tip distance}
 Under a strict-clock star model,
@@ -432,6 +447,11 @@ founders).
 \label{sec:founder}
 % -----------------------------------------------------------------------------
 
+Unless \texttt{--as-is} is set, the script chooses a founder tip and then
+reroots and ladderizes (Sections~\ref{sec:reroot}--\ref{sec:ladder}).
+With \texttt{--as-is}, those steps are skipped and clustering proceeds on the
+loaded topology.
+
 Let $G^\star$ be the group with the smallest group id
 (group ids are unique, so this choice is unambiguous).
 Among tips $T^\star$ of $G^\star$, the founder $f$ is the
@@ -472,11 +492,11 @@ For each node $u$, define subtree max depth recursively:
   \end{cases}
 \]
 Children of every internal node are then sorted by ascending $D(c)$
-(``shallow subtrees first''), matching aliViz depth ladderize mode.
+(``shallow subtrees first'').
 Tip display order (top to bottom) follows this child order after layout.
 
 % -----------------------------------------------------------------------------
-\section{k-DPIs Auto clustering}
+\section{k-DPI Auto clustering}
 \label{sec:kdpis}
 % -----------------------------------------------------------------------------
 
@@ -485,8 +505,8 @@ Unless \texttt{--no-long-branch-noise} is set, tips with
 $\ell(t)>\mathrm{etd}$ are removed from clustering and later labelled noise.
 If all tips would be removed, the filter is abandoned and all tips are kept.
 
-\subsection{Bubble tree}
-Clustering maintains a binary partition tree of tip sets (``k-DPIs leaves'').
+\subsection{Partition tree}
+Clustering maintains a binary partition tree of tip sets (``k-DPI leaves'').
 Each atomic node stores tip set $T$,
 $\widehat{\mathrm{DPI}}(T)$ from~\eqref{eq:dpi}, and $\mathrm{depth}(T)$.
 
@@ -519,6 +539,84 @@ Repeat until no eligible leaf remains or \texttt{max-splits} is reached:
   \item count one successful split.
 \end{enumerate}
 
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\sffamily\footnotesize,
+  node distance=0.58cm,
+  box/.style={
+    draw=#1!55!black,
+    fill=#1!10,
+    rounded corners=3pt,
+    align=center,
+    inner xsep=6pt,
+    inner ysep=5pt,
+    text width=4.2cm,
+    minimum height=0.88cm,
+    line width=0.7pt
+  },
+  box/.default=Teal,
+  decision/.style={
+    diamond,
+    aspect=2.35,
+    draw=RoyalBlue!60!black,
+    fill=RoyalBlue!8,
+    align=center,
+    inner sep=1pt,
+    text width=3.2cm,
+    font=\sffamily\scriptsize,
+    line width=0.7pt
+  },
+  arr/.style={
+    -{Latex[length=2.2mm, width=2mm]},
+    line width=0.95pt,
+    draw=black!55
+  },
+  yes/.style={font=\sffamily\scriptsize\bfseries, text=ForestGreen!70!black},
+  no/.style={font=\sffamily\scriptsize\bfseries, text=BurntOrange!80!black}
+]
+  \node[box=MidnightBlue] (start) {Start Auto\\(tips after pre-noise)};
+  \node[box=Teal, below=of start] (init) {One partition leaf containing all tips};
+  \node[decision, below=0.85cm of init] (eligible) {Eligible leaf?\\DPI $>$ target,\; size $\ge 2m$,\; splits $<$ max};
+
+  % Exit right when finished (keep clear of the unsplittable column)
+  \node[box=OliveGreen, right=1.35cm of eligible] (assign) {Assign IDs\\(+ singleton $\to$ noise)};
+  \node[box=BurntOrange, below=of assign] (done) {Done};
+
+  % Loop body down the centre
+  \node[box=Teal, below=0.95cm of eligible] (pick) {Pick leaf with largest DPI};
+  \node[decision, below=0.85cm of pick] (bip) {Best bipartition exists?\\(both sides $\ge m$)};
+  \node[box=ProcessBlue, below=0.9cm of bip] (split) {Split leaf into $L$, $R$;\quad steps $\leftarrow$ steps$+1$};
+  % Unsplittable to the right of the query; return goes down then left to join
+  \node[box=Gray, right=2.6cm of bip] (unspl) {Mark leaf\\unsplittable};
+
+  \draw[arr] (start) -- (init);
+  \draw[arr] (init) -- (eligible);
+  \draw[arr] (eligible) -- node[no, above] {no} (assign);
+  \draw[arr] (assign) -- (done);
+
+  \draw[arr] (eligible) -- node[yes, right, pos=0.4] {yes} (pick);
+  \draw[arr] (pick) -- (bip);
+  \draw[arr] (bip) -- node[yes, right, pos=0.4] {yes} (split);
+  \draw[arr] (bip.east) -- node[no, above] {no} (unspl.west);
+
+  % Meet under Split; unspl goes fully down to that depth, then left to join
+  \coordinate (meet) at ([yshift=-0.55cm]split.south);
+  \coordinate (railbot) at ([xshift=-1.35cm]eligible.west |- meet);
+  \draw (split.south) -- (meet);
+  \draw (unspl.south) -- (unspl.south |- meet) -- (meet);
+  \draw[arr] (meet) -- (railbot) -- (railbot |- eligible.west) -- (eligible.west);
+\end{tikzpicture}
+\caption{AUTO k-DPI clustering loop.
+  An eligible partition leaf has DPI above the filename target, size at least
+  $2m$ ($m=\texttt{min-size}$), and is not marked unsplittable.
+  Each successful bipartition increments the split counter; the loop also stops
+  when \texttt{max-splits} is reached.
+  After the loop, Section~\ref{sec:assign} assigns cluster IDs and reclassifies
+  singletons as noise.}
+\label{fig:kdpi-auto}
+\end{figure}
+
 % -----------------------------------------------------------------------------
 \section{Cluster assignment and noise}
 \label{sec:assign}
@@ -538,7 +636,7 @@ After Auto finishes, atomic leaves are classified as follows:
 Display / FASTA suffixes:
 \begin{itemize}[nosep]
   \item noise ($\mathrm{id}=-1$): \texttt{\_cl-n}
-  \item cluster $n\ge 1$: \texttt{\_cl-}$n$
+  \item cluster $x\ge 1$: \texttt{\_cl-}$x$
 \end{itemize}
 
 % -----------------------------------------------------------------------------
@@ -550,7 +648,7 @@ When \texttt{--fasta-dir DIR} is supplied:
 \begin{enumerate}
   \item Locate \verb|DIR/$S$.{fasta,fa,fas,fna}| for tree stem $S$.
   \item For each FASTA header, strip any old cluster suffix, look up the
-        cluster id, and append \texttt{\_cl-}$n$ or \texttt{\_cl-n}.
+        cluster id, and append \texttt{\_cl-}$x$ or \texttt{\_cl-n}.
   \item Write the annotated FASTA to \texttt{OUTPUT\_DIR} (same basename).
   \item Rename tree tip labels correspondingly so the SVG shows annotated names.
 \end{enumerate}
@@ -564,8 +662,7 @@ If no matching FASTA exists, that tree fails with an error
 
 \subsection{Layout}
 After clustering, tips are drawn top-to-bottom in ladderized order.
-An extra top spacer row holds the scale bar (analogous to aliViz placing the
-scale on the reference row above the first tip).
+An extra top spacer row holds the scale bar above the first tip.
 Horizontal position of a node is
 \[
   x=5+d(u)\cdot x_{\mathrm{scale}}.
@@ -598,7 +695,7 @@ $L_c=\mathrm{lca}(T_c)$, draw a \emph{solid} vertical line at
 (clamped into the branch region if needed), spanning only the vertical extent
 of $T_c$'s tip rows, coloured with the cluster palette colour of $c$.
 No text annotation is attached to these lines.
-Tip diamonds use half the historical aliViz size (half-diagonal $5$~px);
+Tip diamonds use half-diagonal $5$~px;
 target lines use stroke width~$2$.
 
 \subsection{Colours and legend}
@@ -613,7 +710,7 @@ target lines use stroke width~$2$.
 \subsection{Example plots}
 Figures~\ref{fig:ex-cl1} and~\ref{fig:ex-cl4} show real batch outputs produced by
 \texttt{tree\_clustering.py} (AUTO scale). Both trees were rerooted on a founder,
-ladderized by depth, clustered with k-DPIs Auto, and drawn with per-cluster target
+ladderized by depth, clustered with k-DPI Auto, and drawn with per-cluster target
 bars and a group/cluster legend.
 
 \begin{figure}[htbp]
@@ -647,7 +744,7 @@ bars and a group/cluster legend.
   $s{=}11$ tips, max depth $\approx 0.0174$).
   Filename DPI is~$32$, with scale bar \texttt{(32 DPI @ 5e-05)}.
   One time-point group is present (\texttt{gr-1}).
-  k-DPIs Auto produced four non-noise clusters (\texttt{cl-4}) plus two noise tips:
+  k-DPI Auto produced four non-noise clusters (\texttt{cl-4}) plus two noise tips:
   tip diamonds and solid target bars use palette colours~$1$--$4$;
   noise diamonds are grey.
   Each target bar sits at that cluster's $\mathrm{lca}+\tau$ and covers only
@@ -655,7 +752,7 @@ bars and a group/cluster legend.
   to the right.
   Tip name colours track the group; the founder is highlighted in magenta with
   \texttt{[Founder]}.
-  Tip suffixes \texttt{\_cl-}$n$ / \texttt{\_cl-n} match optional FASTA annotation.}
+  Tip suffixes \texttt{\_cl-}$x$ / \texttt{\_cl-n} match optional FASTA annotation.}
 \label{fig:ex-cl4}
 \end{figure}
 
@@ -744,7 +841,6 @@ leaves.
 Path & Role \\
 \midrule
 \texttt{tree\_clustering.py} & Implementation (this guide) \\
-\texttt{aliViz.html} & Interactive reference UI \\
 \texttt{latex/tree\_clustering\_guide.tex} & This document \\
 \texttt{latex/images/} & Example SVG/PDF figures \\
 \texttt{latex/Makefile} & Build PDF via \texttt{pdflatex} \\
@@ -756,7 +852,6 @@ Path & Role \\
 \section{Versioning note}
 % -----------------------------------------------------------------------------
 
-Defaults and SVG styling evolve with the aliViz / BioWidgets codebase.
 If script and document disagree, treat \texttt{tree\_clustering.py} as
 authoritative and update this guide accordingly.
 

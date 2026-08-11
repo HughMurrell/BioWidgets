@@ -4958,6 +4958,74 @@ function getSvgLeafTipFill(nodeName) {
     return fillColor;
 }
 
+/**
+ * Map phylogeny internal node → cluster id for LCAs of non-noise clusters with ≥2 tips.
+ * Matches tree_clustering.py: those nodes use r=5 in cluster colour; other internals r=1.
+ */
+function buildClusterLcaInternalNodeMap() {
+    const map = new Map();
+    if (!state.tree || !state.tree.root || !state.leafClusters || state.leafClusters.size === 0) {
+        return map;
+    }
+    function ensureParents(node, parent) {
+        if (!node) return;
+        node.parent = parent || null;
+        if (node.children) {
+            for (let i = 0; i < node.children.length; i++) {
+                ensureParents(node.children[i], node);
+            }
+        }
+    }
+    ensureParents(state.tree.root, null);
+
+    const leafByNorm = new Map();
+    function collectLeaves(node) {
+        if (!node) return;
+        if (!node.children || node.children.length === 0) {
+            if (node.name) leafByNorm.set(normalizeSequenceName(node.name), node);
+            return;
+        }
+        node.children.forEach(collectLeaves);
+    }
+    collectLeaves(state.tree.root);
+
+    function findLCA(a, b) {
+        const ancestors = new Set();
+        let cur = a;
+        while (cur) {
+            ancestors.add(cur);
+            cur = cur.parent;
+        }
+        cur = b;
+        while (cur) {
+            if (ancestors.has(cur)) return cur;
+            cur = cur.parent;
+        }
+        return state.tree.root;
+    }
+
+    const byCl = new Map();
+    state.leafClusters.forEach((cid, name) => {
+        if (cid === -1 || cid == null) return;
+        const leaf = leafByNorm.get(normalizeSequenceName(name));
+        if (!leaf) return;
+        if (!byCl.has(cid)) byCl.set(cid, []);
+        byCl.get(cid).push(leaf);
+    });
+
+    byCl.forEach((tips, cid) => {
+        if (!tips || tips.length < 2) return;
+        let anc = tips[0];
+        for (let i = 1; i < tips.length; i++) {
+            anc = findLCA(anc, tips[i]);
+        }
+        if (anc && anc.children && anc.children.length > 0) {
+            map.set(anc, cid);
+        }
+    });
+    return map;
+}
+
 function findRawSequenceForTreeNode(nodeName) {
     if (!nodeName || !state.rawSequences || !state.rawSequences.length) return null;
     const direct = state.rawSequences.find(s => s.name === nodeName);
@@ -5470,6 +5538,31 @@ function buildTreeSvgCircular(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
 
     parts.push('</g>\n');
 
+    // Internal nodes: r=1 grey; cluster LCAs r=5 in cluster colour (same as linear / batch SVG).
+    {
+        const clusterLcaNodes = buildClusterLcaInternalNodeMap();
+        const internals = [];
+        function collectInternals(node) {
+            if (!node || node.hidden) return;
+            if (node.children && node.children.length > 0) {
+                internals.push(node);
+                node.children.forEach(collectInternals);
+            }
+        }
+        collectInternals(root);
+        parts.push('<g>\n');
+        internals.forEach(node => {
+            const p = radXY(node);
+            const cid = clusterLcaNodes.get(node);
+            if (cid !== undefined && cid !== null) {
+                parts.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="5" fill="${getClusterColor(cid)}" stroke="none"/>\n`);
+            } else {
+                parts.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="1" fill="#374151" stroke="none"/>\n`);
+            }
+        });
+        parts.push('</g>\n');
+    }
+
     parts.push('<g fill="none">\n');
     leaves.forEach(node => {
         const th = node._svgAngle;
@@ -5678,11 +5771,17 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     }
 
     parts.push(`<g stroke="#374151" fill="none">\n`);
+    const clusterLcaNodes = buildClusterLcaInternalNodeMap();
     markerInternalNodes.forEach(node => {
         const x = nx(node);
         const y = ny(node);
         if (x > clipRightEdge) return;
-        parts.push(`<circle cx="${x}" cy="${y}" r="3" fill="#374151" stroke="none"/>\n`);
+        const cid = clusterLcaNodes.get(node);
+        if (cid !== undefined && cid !== null) {
+            parts.push(`<circle cx="${x}" cy="${y}" r="5" fill="${getClusterColor(cid)}" stroke="none"/>\n`);
+        } else {
+            parts.push(`<circle cx="${x}" cy="${y}" r="1" fill="#374151" stroke="none"/>\n`);
+        }
     });
     markerLeafNodes.forEach(node => {
         const x = nx(node);
@@ -11992,6 +12091,7 @@ function render() {
         const padding = 15;
         const availableW = dom.cvsTree.width - padding;
         const xScale = state.tree.maxDepth > 0 ? (availableW / state.tree.maxDepth) : 1;
+        const clusterLcaNodes = buildClusterLcaInternalNodeMap();
 
         const drawNode = (node) => {
             if(node.hidden) return;
@@ -12023,11 +12123,19 @@ function render() {
                     ctxTree.stroke();
                 }
                 
-                // Draw circle for internal node
-                ctxTree.fillStyle = '#374151';
-                ctxTree.beginPath();
-                ctxTree.arc(x, y, 3, 0, 2 * Math.PI);
-                ctxTree.fill();
+                // Internal node marker: r=1 grey; cluster LCA r=5 in cluster colour
+                const cid = clusterLcaNodes.get(node);
+                if (cid !== undefined && cid !== null) {
+                    ctxTree.fillStyle = getClusterColor(cid);
+                    ctxTree.beginPath();
+                    ctxTree.arc(x, y, 5, 0, 2 * Math.PI);
+                    ctxTree.fill();
+                } else {
+                    ctxTree.fillStyle = '#374151';
+                    ctxTree.beginPath();
+                    ctxTree.arc(x, y, 1, 0, 2 * Math.PI);
+                    ctxTree.fill();
+                }
             } else {
                 // Leaf node - draw dotted line to names
                 ctxTree.save();

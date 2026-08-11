@@ -7,6 +7,7 @@ For each Newick tree in an input directory:
   2. Group tip names by delimiter/field (defaults match aliViz: '_' field 3)
   3. Pick the group with the smallest group id; choose a founder as the tree-path medoid
   4. Reroot on the founder; ladderize by depth (shallow subtrees first)
+     (skipped with --as-is: cluster the input tree topology unchanged)
   5. Run k-DPIs Auto clustering (same bipartition / DPI rules as aliViz)
   6. Write a linear SVG (default: AUTO scale with DPI overlay when dpi±N is in
      the filename; legacy DPI 1/16 scale via --scale dpi)
@@ -20,6 +21,7 @@ Usage:
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --delimiter _ --field 3
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --scale dpi   # legacy DPI scale
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --fasta-dir FASTA_DIR
+  python tree_clustering.py INPUT_DIR OUTPUT_DIR --as-is   # skip founder/reroot/ladderize
 """
 
 from __future__ import annotations
@@ -1110,14 +1112,26 @@ def build_svg(
 
     # Per-cluster target marks: solid vertical line at LCA depth + target,
     # spanning only that cluster's tip rows (cluster colour; no labels).
+    by_cl: dict[int, list[Node]] = defaultdict(list)
+    for tip in tips:
+        if not tip.name:
+            continue
+        cid = name_to_cl.get(normalize_tip_name(tip.name))
+        if cid is not None and cid != -1:
+            by_cl[cid].append(tip)
+
+    cluster_lca: dict[Node, int] = {}
+    for cid in sorted(by_cl.keys()):
+        cl_tips = by_cl[cid]
+        if len(cl_tips) < 2:
+            continue
+        anc = cl_tips[0]
+        for t in cl_tips[1:]:
+            anc = lca(anc, t)
+        if not anc.is_leaf:
+            cluster_lca[anc] = cid
+
     if target_len is not None and target_len > 0:
-        by_cl: dict[int, list[Node]] = defaultdict(list)
-        for tip in tips:
-            if not tip.name:
-                continue
-            cid = name_to_cl.get(normalize_tip_name(tip.name))
-            if cid is not None and cid != -1:
-                by_cl[cid].append(tip)
         for cid in sorted(by_cl.keys()):
             cl_tips = by_cl[cid]
             if not cl_tips:
@@ -1149,7 +1163,13 @@ def build_svg(
         x, y = nx(n), ny(n)
         if x > clip_right:
             continue
-        parts.append(f'<circle cx="{x}" cy="{y}" r="3" fill="#374151" stroke="none"/>\n')
+        cid = cluster_lca.get(n)
+        if cid is not None:
+            parts.append(
+                f'<circle cx="{x}" cy="{y}" r="5" fill="{cluster_color(cid)}" stroke="none"/>\n'
+            )
+        else:
+            parts.append(f'<circle cx="{x}" cy="{y}" r="1" fill="#374151" stroke="none"/>\n')
     d = 5.0
     for n in leaves_draw:
         x, y = nx(n), ny(n)
@@ -1297,6 +1317,7 @@ def process_tree_file(
     remove_long_branches: bool,
     scale_mode: str = DEFAULT_SCALE_MODE,
     fasta_dir: Optional[Path] = None,
+    as_is: bool = False,
 ) -> tuple[Path, dict[str, object]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     tree = parse_newick(text)
@@ -1309,25 +1330,31 @@ def process_tree_file(
     if not members:
         raise ValueError(f"No tips could be grouped with delimiter={delimiter!r} field={field}")
 
-    # Founder = tree-path medoid of the group with the smallest group id
-    sgid = smallest_group_id(members)
-    assert sgid is not None
-    tip_by_name = {normalize_tip_name(t.name): t for t in tree.tips() if t.name}
-    group_nodes = [tip_by_name[nm] for nm in members[sgid] if nm in tip_by_name]
-    if not group_nodes:
-        raise ValueError("Smallest group has no matching tree tips")
-    root_dist = node_to_root_distance(tree.root)
-    founder = tree_medoid(group_nodes, root_dist)
-    founder_name = founder.name
+    founder_name: Optional[str] = None
+    if as_is:
+        # Cluster the loaded topology: no founder medoid, reroot, or ladderize.
+        max_depth = layout_tree(tree)
+        set_parents(tree.root)
+        root_dist = node_to_root_distance(tree.root)
+    else:
+        # Founder = tree-path medoid of the group with the smallest group id
+        sgid = smallest_group_id(members)
+        assert sgid is not None
+        tip_by_name = {normalize_tip_name(t.name): t for t in tree.tips() if t.name}
+        group_nodes = [tip_by_name[nm] for nm in members[sgid] if nm in tip_by_name]
+        if not group_nodes:
+            raise ValueError("Group with smallest id has no matching tree tips")
+        root_dist = node_to_root_distance(tree.root)
+        founder = tree_medoid(group_nodes, root_dist)
+        founder_name = founder.name
 
-    tree = reroot_on_leaf(tree, founder)
-    # Re-find founder tip after reroot (object identity preserved if same Node)
-    ladderize_by_depth(tree)
-    max_depth = layout_tree(tree)
-    set_parents(tree.root)
-    root_dist = node_to_root_distance(tree.root)
+        tree = reroot_on_leaf(tree, founder)
+        ladderize_by_depth(tree)
+        max_depth = layout_tree(tree)
+        set_parents(tree.root)
+        root_dist = node_to_root_distance(tree.root)
 
-    # Group DPI after reroot/ladderize
+    # Group DPI (after optional reroot/ladderize)
     tip_by_name = {normalize_tip_name(t.name): t for t in tree.tips() if t.name}
     group_counts = {gid: len(mems) for gid, mems in members.items()}
     group_dpi: dict[int, Optional[int]] = {}
@@ -1617,6 +1644,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Disable removal of tips with incoming branch > etd",
     )
     ap.add_argument(
+        "--as-is",
+        action="store_true",
+        help="Skip founder selection, reroot, and ladderize; cluster the input tree as loaded",
+    )
+    ap.add_argument(
         "--fasta-dir",
         type=Path,
         default=None,
@@ -1657,6 +1689,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 remove_long_branches=not args.no_long_branch_noise,
                 scale_mode=args.scale,
                 fasta_dir=fasta_dir,
+                as_is=args.as_is,
             )
             records.append(record)
             extra = ""
