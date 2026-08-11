@@ -38,7 +38,7 @@ from typing import Iterable, Optional
 
 
 # --- Constants matching aliViz.html ---
-DEFAULT_DSR = 0.00005
+DEFAULT_DSR = 6.5e-5
 DEFAULT_DPI_DAYS = 14
 DEFAULT_DELIMITER = "_"
 DEFAULT_FIELD = 3  # 1-based, same as aliViz Group dialog

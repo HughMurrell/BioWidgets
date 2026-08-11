@@ -169,8 +169,9 @@ python3 tree_clustering.py INPUT_DIR OUTPUT_DIR [options]
   Character splitting tip names into fields for grouping. \\
 \texttt{--field} & $3$ &
   1-based field index used as the group label. \\
-\texttt{--dsr} & $5\times10^{-5}$ &
-  Daily substitution rate (mutations / site / day). \\
+\texttt{--dsr} & $6.5\times10^{-5}$ &
+  Daily substitution rate (mutations / site / day);
+  see Section~\ref{sec:dsr}. \\
 \texttt{--min-size} & $1$ &
   Minimum allowed size of each child after a bipartition.
   Singletons are still reclassified as noise at assignment. \\
@@ -184,7 +185,8 @@ python3 tree_clustering.py INPUT_DIR OUTPUT_DIR [options]
   When set, tip names and FASTA headers are annotated with cluster suffixes. \\
 \texttt{--no-long-branch-noise} & off &
   Disable removal of tips whose incoming branch exceeds
-  $\mathrm{etd}=2\times\mathrm{dsr}\times\mathrm{DPI}$. \\
+  $\mathrm{etd}$ (expected pairwise tip distance;
+  $\mathrm{etd}=2\times\mathrm{dsr}\times\mathrm{DPI}$). \\
 \texttt{--as-is} & off &
   Skip founder selection, reroot, and ladderize; cluster and draw the input
   tree topology as loaded (no \texttt{[Founder]} highlight). \\
@@ -239,7 +241,7 @@ grouping.
 
 Example (delimiter \texttt{\_}, field~$3$):
 \begin{center}
-\texttt{CAP008\_2000\_G1\_a} $\rightarrow$ group \texttt{G1}.
+\texttt{C002\_CAP008\_2000\_env\_pb-AGTCGATC} $\rightarrow$ group \texttt{2000}.
 \end{center}
 
 \subsection{Per-tree outputs}
@@ -390,13 +392,18 @@ Days-post-infection for a tip set is
 Equivalent form:
 $\mathrm{dpi}=\overline{\delta}/(2\times\mathrm{dsr})$.
 
-\subsection{Expected early tip distance}
-Under a strict-clock star model,
+\subsection{Expected pairwise tip distance (etd)}
+\label{sec:etd}
+Under a strict-clock star model, the \emph{expected pairwise tip distance}
+(\texttt{etd}) is the expected tree path length between two randomly chosen tips
+after $\mathrm{DPI}$ days:
 \begin{equation}
   \mathrm{etd}=2\times\mathrm{dsr}\times\mathrm{DPI}.
   \label{eq:etd}
 \end{equation}
-Long-branch pre-noise removes tips whose incoming length exceeds $\mathrm{etd}$.
+(The leading factor of~$2$ accounts for mutations accruing independently on both
+lineages from their common ancestor.)
+Long-branch pre-noise removes tips whose incoming branch exceeds $\mathrm{etd}$.
 The SVG / scale-bar \emph{target length} used for vertical marks is the one-sided
 quantity
 \begin{equation}
@@ -404,6 +411,28 @@ quantity
   \label{eq:tau}
 \end{equation}
 (half of $\mathrm{etd}$), i.e.\ expected root$\to$tip depth for $\mathrm{DPI}$ days.
+
+\subsection{Default daily substitution rate}
+\label{sec:dsr}
+The default \texttt{dsr} is $6.5\times10^{-5}$ substitutions per site per day.
+It is obtained from early-infection parameters assembled by Keele~\emph{et~al.}\
+\cite{Keele2008}: reverse-transcriptase error rate
+$\mu=2.16\times10^{-5}$ per site per replication, generation time
+$t_{\mathrm{gen}}=2$~days, and basic reproductive ratio $R_0=6$, via
+\begin{equation}
+  \mathrm{dsr}=\frac{\mu\,R_0}{t_{\mathrm{gen}}}
+  =\frac{(2.16\times10^{-5})\times 6}{2}
+  =6.48\times10^{-5}
+  \approx 6.5\times10^{-5}.
+  \label{eq:dsr}
+\end{equation}
+Here $\mu/t_{\mathrm{gen}}$ is the baseline lineage clock (one replication per
+generation), and the factor $R_0$ treats Keele's expanding early-infection
+regime as raising the \emph{effective} daily substitution rate used when
+converting tree path length into days
+($\widehat{\mathrm{DPI}}=\overline{\delta}/(2\times\mathrm{dsr})$,
+$\mathrm{etd}=2\times\mathrm{dsr}\times\mathrm{DPI}$).
+Override with \texttt{--dsr} if a different calibration is preferred.
 
 % -----------------------------------------------------------------------------
 \section{DPI from filename}
@@ -787,7 +816,7 @@ Only non-empty bins appear as pie slices, ordered by lower endpoint.
 \toprule
 Parameter & Default \\
 \midrule
-Daily substitution rate (\texttt{dsr}) & $0.00005$ \\
+Daily substitution rate (\texttt{dsr}) & $6.5\times10^{-5}$ \\
 DPI if absent from filename & $14$ \\
 Group delimiter / field & \texttt{\_} / $3$ \\
 Min cluster size & $1$ \\
@@ -815,17 +844,17 @@ Long-branch pre-noise & enabled \\
 \section{Worked numerical sketch}
 % -----------------------------------------------------------------------------
 
-Suppose $\mathrm{dsr}=5\times10^{-5}$ and filename DPI $=14$. Then
+Suppose $\mathrm{dsr}=6.5\times10^{-5}$ and filename DPI $=14$. Then
 \[
-  \tau=14\times5\times10^{-5}=7\times10^{-4},\qquad
-  \mathrm{etd}=1.4\times10^{-3}.
+  \tau=14\times6.5\times10^{-5}=9.1\times10^{-4},\qquad
+  \mathrm{etd}=1.82\times10^{-3}.
 \]
 A tip set with mean pairwise path distance
 $\overline{\delta}=2.1\times10^{-3}$ has
 \[
   \widehat{\mathrm{DPI}}
-  =\mathrm{round}\!\left(\frac{2.1\times10^{-3}}{2\times5\times10^{-5}}\right)
-  =\mathrm{round}(21)=21>14,
+  =\mathrm{round}\!\left(\frac{2.1\times10^{-3}}{2\times6.5\times10^{-5}}\right)
+  =\mathrm{round}(16.15)=16>14,
 \]
 so Auto will attempt to split it (subject to size and bipartition constraints).
 After a successful split into children with DPI $\le 14$, Auto stops on those
@@ -884,5 +913,18 @@ Index & Hex \\
 \end{center}
 Group colours start at palette index~$1$ (group $g$ $\rightarrow$ index
 $(g+1)\bmod 14$). Noise uses \hexswatch{palNoise}{9ca3af}.
+
+\begin{thebibliography}{1}
+
+\bibitem{Keele2008}
+Brandon~F. Keele, Elena~E. Giorgi, Jesus~F. Salazar-Gonzalez, Julie~M. Decker,
+Kimmy~T. Pham, Maria~G. Salazar, Chuanxi Sun, et~al.
+\newblock Identification and characterization of transmitted and early founder
+virus envelopes in primary {HIV}-1 infection.
+\newblock {\em Proceedings of the National Academy of Sciences of the United
+States of America}, 105(21):7552--7557, 2008.
+\newblock doi:\href{https://doi.org/10.1073/pnas.0802203105}{10.1073/pnas.0802203105}.
+
+\end{thebibliography}
 
 \end{document}
