@@ -257,7 +257,7 @@
         <div class="control-group">
             <label style="display:inline-flex; align-items:baseline; gap:8px;">
                 Phylogeny
-                <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Daily substitution rate (dsr) and target DPI (days)">dsr=0.000079, target-dpi=14</span>
+                <span id="phylo-diameter-display" style="font-size:11px; font-weight:500; text-transform:none; letter-spacing:normal; color:#6b7280;" title="Daily substitution rate (dsr) and target DPI (days)">dsr=0.000065, target-dpi=14</span>
             </label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-dsr" type="button" title="Set daily substitution rate used for DPI estimates">dsr</button>
@@ -548,7 +548,7 @@
                         </label>
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563;">
                             <span class="tree-svg-dpi-hint">Mutations/day:</span>
-                            <input type="number" id="tree-svg-dpi-mpd" value="0.000079" min="0" step="any" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
+                            <input type="number" id="tree-svg-dpi-mpd" value="0.000065" min="0" step="any" disabled style="font-size: 12px; padding: 2px 6px; width: 7em;">
                         </label>
                     </div>
                 </div>
@@ -660,17 +660,15 @@
             </div>
             <div style="display: flex; align-items: center; gap: 6px;">
                 <label style="font-size: 12px; color: #374151;" for="kdpis-min-size">Min cluster size:</label>
-                <input type="number" id="kdpis-min-size" value="2" min="1" step="1" style="width: 4em; padding: 2px 6px; font-size: 12px;">
+                <input type="number" id="kdpis-min-size" value="1" min="1" step="1" style="width: 4em; padding: 2px 6px; font-size: 12px;">
             </div>
             <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer;">
                 <input type="checkbox" id="chk-kdpis-remove-branch-outliers" checked>
-                Remove long-branch tips as noise (incoming branch &gt; target mean dist from ≈ DPI)
+                Remove long-branch tips as noise (incoming branch &gt; target mean dist from Target DPI)
             </label>
             <div style="display: flex; align-items: center; gap: 6px;">
-                <label style="font-size: 12px; color: #374151;" for="kdpis-target-diameter">Target max depth:</label>
-                <input type="number" id="kdpis-target-diameter" value="0.002212" min="0" step="any" style="width: 7em; padding: 2px 6px; font-size: 12px;">
-                <label style="font-size: 12px; color: #374151;" for="kdpis-target-dpi">≈ DPI:</label>
-                <input type="number" id="kdpis-target-dpi" value="14" min="0" step="1" style="width: 5em; padding: 2px 6px; font-size: 12px;" title="Target max depth ≈ 2 × dsr × DPI">
+                <label style="font-size: 12px; color: #374151;" for="kdpis-target-dpi">Target DPI =</label>
+                <input type="number" id="kdpis-target-dpi" value="14" min="0" step="1" style="width: 5em; padding: 2px 6px; font-size: 12px;" title="Auto stops when every cluster DPI ≤ this target (etd = 2 × dsr × DPI)">
                 <button type="button" id="btn-kdpis-reset" style="padding: 4px 10px; font-size: 12px;" title="Clear splits and return to one cluster">Reset</button>
                 <button type="button" id="btn-kdpis-auto" style="padding: 4px 10px; font-size: 12px;">Auto</button>
             </div>
@@ -785,7 +783,7 @@
         </p>
         <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
             <label style="text-transform: none; font-size: 13px; color: #374151;" for="inp-dsr">dsr (substitutions / site / day)</label>
-            <input type="number" id="inp-dsr" value="0.000079" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
+            <input type="number" id="inp-dsr" value="0.000065" min="0" step="any" style="width: 100%; padding: 5px; font-size: 13px;">
         </div>
         <p id="dsr-etd-hint" style="font-size: 12px; color: #6b7280; margin: 10px 0 0 0;"></p>
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -1204,6 +1202,7 @@ const state = {
     groupMemberCounts: null, // Map from group ID to sequence count (set when grouping; stable across cluster renames)
     groupDpiDailySubstitutionRate: null, // Session dsr for DPI/etd; reset to default on page load
     etdAtLoad: null, // Expected mean pairwise tip distance snapshot from alignment load (2×dsr×DPI; star-clock)
+    kDpiTargetDays: null, // Target DPI days remembered from last k-DPI Accept (drives SVG cluster target bars)
     treeDiameter: null, // Mean pairwise tip-to-tip path length of current phylogeny (branch-length units)
     clusterDpiEstimates: null, // Map cluster ID → DPI days from mean pairwise tree path length
     clusterMemberCounts: null, // Map from cluster ID to sequence count (set with cluster DPI estimates)
@@ -2375,6 +2374,7 @@ function clearAlignment() {
     state.pastedNameCounter = 1;
     state.currentFileName = null;
     state.etdAtLoad = null;
+    state.kDpiTargetDays = null;
     state.founderSequenceName = null;
     updateLoadedFileNameDisplay('');
     updateLoadedFileStatsDisplay();
@@ -2412,6 +2412,7 @@ function clearTreeOnly() {
     state.leafClusters = null; // Clear clusters when tree is cleared
     state.clusterDpiEstimates = null;
     state.clusterMemberCounts = null;
+    state.kDpiTargetDays = null;
     // Group counts stay; DPI requires a phylogeny
     if (state.sequenceGroups && state.groupNames) {
         state.groupDpiEstimates = computeGroupDpiEstimates();
@@ -2639,6 +2640,14 @@ function getCurrentDpiDaysForDisplay() {
     return DEFAULT_TREE_SVG_DPI_DAYS;
 }
 
+/** Target DPI for SVG cluster bars: last k-DPI Accept value, else filename / SVG DPI field. */
+function getTargetDpiDaysForClusterBars() {
+    if (state.kDpiTargetDays != null && Number.isFinite(state.kDpiTargetDays) && state.kDpiTargetDays >= 0) {
+        return Math.round(state.kDpiTargetDays);
+    }
+    return getCurrentDpiDaysForDisplay();
+}
+
 /**
  * Expected mean pairwise tip-to-tip distance (etd) early in infection (strict-clock star):
  *   etd = 2 × dsr × DPI
@@ -2702,10 +2711,13 @@ function updatePhylogenyDiameterDisplay(meanDist) {
     }
     const dsr = getGroupDpiDailySubstitutionRate();
     const dsrStr = formatLoadSummaryNumber(dsr);
-    const targetDpi = getCurrentDpiDaysForDisplay();
+    const targetDpi = getTargetDpiDaysForClusterBars();
     const targetDpiStr = (targetDpi != null && Number.isFinite(targetDpi)) ? String(Math.round(targetDpi)) : '—';
+    const targetSrc = (state.kDpiTargetDays != null && Number.isFinite(state.kDpiTargetDays))
+        ? 'last k-DPI Accept'
+        : 'filename dpi±N or SVG DPI field';
     el.textContent = `dsr=${dsrStr}, target-dpi=${targetDpiStr}`;
-    el.title = `dsr = ${dsr} substitutions/site/day; target-dpi = ${targetDpiStr} days (from filename dpi±N or SVG DPI field; used for etd = 2×dsr×DPI)`;
+    el.title = `dsr = ${dsr} substitutions/site/day; target-dpi = ${targetDpiStr} days (${targetSrc}; used for etd = 2×dsr×DPI and SVG cluster bars)`;
 }
 
 function applySubtypeToggleReset(hasSubtype) {
@@ -3310,7 +3322,7 @@ function runCollapseTask() {
 // --- Group Sequences by Name Field ---
 
 /** Default daily substitution rate for group DPI / etd estimates. */
-const DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE = 0.000079;
+const DEFAULT_GROUP_DPI_DAILY_SUBSTITUTION_RATE = 0.000065;
 
 /** Reset dsr to the built-in default (no persistence across page reloads). */
 function initGroupDpiDailySubstitutionRate() {
@@ -4959,13 +4971,12 @@ function getSvgLeafTipFill(nodeName) {
 }
 
 /**
- * Map phylogeny internal node → cluster id for LCAs of non-noise clusters with ≥2 tips.
- * Matches tree_clustering.py: those nodes use r=5 in cluster colour; other internals r=1.
+ * Group non-noise cluster tip nodes from state.leafClusters.
+ * Returns { byCl: Map(cid → leafNode[]), findLCA, leafByNorm } or null.
  */
-function buildClusterLcaInternalNodeMap() {
-    const map = new Map();
+function buildClusterTipGroups() {
     if (!state.tree || !state.tree.root || !state.leafClusters || state.leafClusters.size === 0) {
-        return map;
+        return null;
     }
     function ensureParents(node, parent) {
         if (!node) return;
@@ -5012,13 +5023,30 @@ function buildClusterLcaInternalNodeMap() {
         if (!byCl.has(cid)) byCl.set(cid, []);
         byCl.get(cid).push(leaf);
     });
+    return { byCl, findLCA, leafByNorm };
+}
 
-    byCl.forEach((tips, cid) => {
+/** LCA of a tip list (single tip → itself). */
+function clusterTipsLca(tips, findLCA) {
+    if (!tips || tips.length === 0) return null;
+    let anc = tips[0];
+    for (let i = 1; i < tips.length; i++) {
+        anc = findLCA(anc, tips[i]);
+    }
+    return anc;
+}
+
+/**
+ * Map phylogeny internal node → cluster id for LCAs of non-noise clusters with ≥2 tips.
+ * Matches tree_clustering.py: those nodes use r=5 in cluster colour; other internals r=1.
+ */
+function buildClusterLcaInternalNodeMap() {
+    const map = new Map();
+    const groups = buildClusterTipGroups();
+    if (!groups) return map;
+    groups.byCl.forEach((tips, cid) => {
         if (!tips || tips.length < 2) return;
-        let anc = tips[0];
-        for (let i = 1; i < tips.length; i++) {
-            anc = findLCA(anc, tips[i]);
-        }
+        const anc = clusterTipsLca(tips, groups.findLCA);
         if (anc && anc.children && anc.children.length > 0) {
             map.set(anc, cid);
         }
@@ -5638,6 +5666,30 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
         scaleMode === 'fixed' && fixedBranchPerCm != null && isFinite(parseFloat(fixedBranchPerCm, 10));
     const isDpiScale = scaleMode === 'dpi' && dpiParams != null;
     const isAutoDpiOverlay = scaleMode === 'auto' && dpiParams != null;
+
+    // Target length τ = targetDPI × dsr (same as tree_clustering.py). Prefer last k-DPI Accept.
+    let targetLen = null;
+    {
+        const days = getTargetDpiDaysForClusterBars();
+        const mpd = (dpiParams && dpiParams.mpd > 0)
+            ? dpiParams.mpd
+            : getGroupDpiDailySubstitutionRate();
+        if (days != null && days > 0 && mpd > 0) {
+            targetLen = expectedDpiSvgBranchLength(days, mpd);
+        }
+    }
+
+    const clusterGroups = buildClusterTipGroups();
+    const clusterMarkDepths = [];
+    if (clusterGroups && targetLen != null && targetLen > 0) {
+        clusterGroups.byCl.forEach((tips) => {
+            const anc = clusterTipsLca(tips, clusterGroups.findLCA);
+            if (anc && Number.isFinite(anc.xDepth)) {
+                clusterMarkDepths.push(anc.xDepth + targetLen);
+            }
+        });
+    }
+
     // Branch-length value to force onto the scale bar (fixed: per-cm value; DPI: days × mpd). null = auto pick.
     let scaleBarVal = null;
     // Custom scale-bar annotation (DPI mode / auto DPI overlay), null = default numeric label.
@@ -5651,19 +5703,20 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
         xScale = getSvgPxPerBranchUnit(fixedBranchPerCm);
         scaleBarVal = fixedBranchPerCm;
     } else {
-        // AUTO: fit the tree into branchW. If a detected DPI is provided, also fit the
-        // expected depth so the DPI vertical mark always lands inside the branch region.
+        // AUTO: fit tree (+ DPI mark + per-cluster LCA+τ marks) into branchW.
         const expected = isAutoDpiOverlay
             ? expectedDpiSvgBranchLength(dpiParams.days, dpiParams.mpd)
             : null;
+        let fitDepth = maxD;
         if (expected != null && expected > 0) {
             scaleBarVal = expected;
             scaleBarLabel = `(${dpiParams.days} DPI @ ${dpiParams.mpd} = ${formatPhyloBranchLength(scaleBarVal)})`;
-            const fitDepth = Math.max(maxD, expected);
-            xScale = branchW / fitDepth;
-        } else {
-            xScale = branchW / maxD;
+            fitDepth = Math.max(fitDepth, expected);
         }
+        if (clusterMarkDepths.length > 0) {
+            fitDepth = Math.max(fitDepth, Math.max(...clusterMarkDepths));
+        }
+        xScale = branchW / fitDepth;
     }
     const rowH = CONFIG.rowHeight;
     const leftPad = 5;
@@ -5737,6 +5790,34 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     }
     drawNode(state.tree.root);
 
+    // Per-cluster target bars (tree_clustering.py style): solid vertical line at
+    // LCA depth + τ, spanning only that cluster's tip rows, cluster colour, no labels.
+    if (clusterGroups && targetLen != null && targetLen > 0) {
+        const sortedCids = Array.from(clusterGroups.byCl.keys()).sort((a, b) => a - b);
+        sortedCids.forEach((cid) => {
+            const tips = clusterGroups.byCl.get(cid);
+            if (!tips || tips.length === 0) return;
+            const anc = clusterTipsLca(tips, clusterGroups.findLCA);
+            if (!anc || !Number.isFinite(anc.xDepth)) return;
+            let markX = leftPad + (anc.xDepth + targetLen) * xScale;
+            if (markX < leftPad) return;
+            markX = Math.min(markX, clipRightEdge);
+            const ys = tips.map((t) => ny(t));
+            let y0 = Math.min(...ys);
+            let y1 = Math.max(...ys);
+            if (!(y1 >= y0)) return;
+            if (Math.abs(y1 - y0) < 1e-9) {
+                y0 -= rowH / 4;
+                y1 += rowH / 4;
+            }
+            const color = getClusterColor(cid);
+            parts.push(
+                `<line x1="${markX}" y1="${y0}" x2="${markX}" y2="${y1}" ` +
+                `stroke="${color}" stroke-width="2"/>\n`
+            );
+        });
+    }
+
     // DPI: vertical dotted line marking the expected root→tip depth (end of the scale bar, at DPI × MPD).
     // Tips to the right mutate faster than expected; tips to the left mutate slower.
     // Also drawn in AUTO when a filename DPI was detected (scale fitted so this mark stays visible).
@@ -5787,7 +5868,8 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
         const x = nx(node);
         const y = ny(node);
         const tipFill = getSvgLeafTipFill(node.name);
-        const d = 10;
+        // Match tree_clustering.py: tip diamond half-diagonal 5 px; internals r=1 / cluster-LCA r=5
+        const d = 5;
         const nf = isTreeLeafNonFunctional(node.name);
         if (x > clipRightEdge) {
             appendSvgClippedLeafHalfDiamond(parts, clipRightEdge, y, tipFill, d, nf);
@@ -6086,6 +6168,7 @@ function finalizeLoad(seqs) {
     }
 
     annotateSequencesFunctionality(state.rawSequences, state.isAASequence);
+    state.kDpiTargetDays = null;
     applyDpiDaysFromAlignmentFileName(state.currentFileName);
     snapshotEtdAtLoad();
     updateLoadedFileStatsDisplay();
@@ -8682,8 +8765,10 @@ function applyKDpisPreview(nameToCluster) {
     recalc();
 }
 
-/** Accept: stamp _cl-* suffixes like other clustering methods. */
-function acceptKDpisClustering(nameToCluster) {
+/** Accept: stamp _cl-* suffixes like other clustering methods.
+ *  @param {Map} nameToCluster
+ *  @param {number|null|undefined} targetDpiDays Target DPI from the dialog (remembered for SVG bars). */
+function acceptKDpisClustering(nameToCluster, targetDpiDays) {
     const delimiter = state.groupDelimiter || '_';
     const clusterPattern = getClusterSuffixPattern();
     const nameMapping = new Map();
@@ -8726,6 +8811,12 @@ function acceptKDpisClustering(nameToCluster) {
     state.leafClusters = updatedLeafClusters;
     rekeySequenceGroupsToCurrentNames();
     state.lastAcceptedClusterMethod = 'k-DPIs';
+    if (targetDpiDays != null && Number.isFinite(targetDpiDays) && targetDpiDays >= 0) {
+        state.kDpiTargetDays = Math.round(targetDpiDays);
+        const daysEl = document.getElementById('tree-svg-dpi-days');
+        if (daysEl) daysEl.value = String(state.kDpiTargetDays);
+        updatePhylogenyDiameterDisplay();
+    }
     refreshClusterDpiEstimates();
     updateColorLegend();
     recalc();
@@ -8755,7 +8846,6 @@ function showKDpisModal() {
     const btnAccept = document.getElementById('btn-kdpis-accept');
     const minSizeEl = document.getElementById('kdpis-min-size');
     const maxSplitsEl = document.getElementById('kdpis-max-splits');
-    const targetDiamEl = document.getElementById('kdpis-target-diameter');
     const targetDpiEl = document.getElementById('kdpis-target-dpi');
     const noiseHintEl = document.getElementById('kdpis-noise-hint');
     const busyEl = document.getElementById('kdpis-busy');
@@ -8768,7 +8858,6 @@ function showKDpisModal() {
     const splitHistory = []; // stack of nodes that were split (for undo / join)
     let currentNameToCluster = new Map();
     let busy = false;
-    let syncingTargetFields = false;
 
     function partitionForClustering() {
         if (noiseRemovalChk && noiseRemovalChk.checked) {
@@ -8807,8 +8896,8 @@ function showKDpisModal() {
     }
 
     function readMinSize() {
-        const v = minSizeEl ? parseInt(minSizeEl.value, 10) : 2;
-        return Math.max(1, Number.isFinite(v) ? v : 2);
+        const v = minSizeEl ? parseInt(minSizeEl.value, 10) : 1;
+        return Math.max(1, Number.isFinite(v) ? v : 1);
     }
 
     function readMaxSplits() {
@@ -8821,32 +8910,14 @@ function showKDpisModal() {
             const v = parseFloat(targetDpiEl.value);
             if (Number.isFinite(v) && v >= 0) return Math.round(v);
         }
-        return dpiDaysFromTreeDiameter(readTargetDiameter());
+        const fromTree = getCurrentDpiDaysForDisplay();
+        return fromTree != null ? fromTree : 14;
     }
 
+    /** Expected tip–tip depth (etd) from target DPI: 2 × dsr × DPI. Used for long-branch noise. */
     function readTargetDiameter() {
-        const v = targetDiamEl ? parseFloat(targetDiamEl.value) : NaN;
-        const fallback = getDefaultKDpisTargetDiameter();
-        return Number.isFinite(v) && v >= 0 ? v : fallback;
-    }
-
-    function syncTargetDpiFromDiameter() {
-        if (!targetDpiEl || syncingTargetFields) return;
-        syncingTargetFields = true;
-        const diam = readTargetDiameter();
-        const dpi = dpiDaysFromTreeDiameter(diam);
-        targetDpiEl.value = dpi != null ? String(dpi) : '';
-        syncingTargetFields = false;
-    }
-
-    function syncTargetDiameterFromDpi() {
-        if (!targetDiamEl || !targetDpiEl || syncingTargetFields) return;
-        syncingTargetFields = true;
-        const dpiRaw = parseFloat(targetDpiEl.value);
-        const dpi = Number.isFinite(dpiRaw) && dpiRaw >= 0 ? dpiRaw : 0;
-        const diam = expectedTreeDiameter(dpi, getGroupDpiDailySubstitutionRate());
-        targetDiamEl.value = diam != null ? String(diam) : '';
-        syncingTargetFields = false;
+        const diam = expectedTreeDiameter(readTargetDpi(), getGroupDpiDailySubstitutionRate());
+        return diam != null ? diam : getDefaultKDpisTargetDiameter();
     }
 
     function yieldToUi() {
@@ -8869,40 +8940,26 @@ function showKDpisModal() {
             busyEl.style.display = on ? 'flex' : 'none';
             if (on && busyMsgEl) busyMsgEl.textContent = msg || 'Working...';
         }
-        [btnMinus, btnPlus, btnAuto, btnReset, btnCancel, btnAccept, minSizeEl, maxSplitsEl, targetDiamEl, targetDpiEl, noiseRemovalChk].forEach(el => {
+        [btnMinus, btnPlus, btnAuto, btnReset, btnCancel, btnAccept, minSizeEl, maxSplitsEl, targetDpiEl, noiseRemovalChk].forEach(el => {
             if (el) el.disabled = !!on;
         });
         if (!on && root) updatePlusMinusEnabled();
     }
 
-    if (minSizeEl) minSizeEl.value = String(Math.max(1, parseInt(minSizeEl.value, 10) || 2));
+    if (minSizeEl) minSizeEl.value = String(Math.max(1, parseInt(minSizeEl.value, 10) || 1));
     if (maxSplitsEl) maxSplitsEl.value = String(Math.max(0, parseInt(maxSplitsEl.value, 10) || 9));
-    if (targetDiamEl) targetDiamEl.value = String(getDefaultKDpisTargetDiameter());
-    syncTargetDpiFromDiameter();
+    if (targetDpiEl) {
+        const initDpi = (state.kDpiTargetDays != null && Number.isFinite(state.kDpiTargetDays))
+            ? Math.round(state.kDpiTargetDays)
+            : getCurrentDpiDaysForDisplay();
+        targetDpiEl.value = String(initDpi != null ? initDpi : 14);
+    }
 
     function resetKDpisToOneCluster() {
         if (!root || busy) return;
         splitHistory.length = 0;
         root = buildClusterRoot();
         refresh();
-    }
-
-    // Parameter edits only update linked fields / labels — do not reset the bubble tree until Reset or Auto.
-    if (targetDiamEl) {
-        const onTargetDiamEdit = () => {
-            if (busy || syncingTargetFields) return;
-            syncTargetDpiFromDiameter();
-        };
-        targetDiamEl.addEventListener('input', onTargetDiamEdit);
-        targetDiamEl.addEventListener('change', onTargetDiamEdit);
-    }
-    if (targetDpiEl) {
-        const onTargetDpiEdit = () => {
-            if (busy || syncingTargetFields) return;
-            syncTargetDiameterFromDpi();
-        };
-        targetDpiEl.addEventListener('input', onTargetDpiEdit);
-        targetDpiEl.addEventListener('change', onTargetDpiEdit);
     }
 
     function refresh(opts) {
@@ -9003,7 +9060,6 @@ function showKDpisModal() {
             if (busy) return;
             const minSize = readMinSize();
             const targetDpi = readTargetDpi();
-            syncTargetDiameterFromDpi();
             const maxSteps = readMaxSplits();
             setKDpisBusy(true, 'Working...');
             await yieldToUi();
@@ -9092,7 +9148,7 @@ function showKDpisModal() {
 
     document.getElementById('btn-kdpis-accept').onclick = () => {
         if (busy) return;
-        acceptKDpisClustering(currentNameToCluster);
+        acceptKDpisClustering(currentNameToCluster, readTargetDpi());
         clearKDpisDistCache();
         overlay.style.display = 'none';
     };

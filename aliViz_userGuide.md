@@ -10,11 +10,15 @@ Toolbar controls below appear in the **same left-to-right order** as in the app.
 
 These values appear in the Phylogeny header and in several tools:
 
-- **target-dpi** — Days post infection used for SVG DPI scale and for **etd**. Parsed from the alignment **filename** (`dpi+N` / `dpi-N`, case-insensitive; largest `N` if several; default **14** if none). Updates on prune, NT→AA conversion, and when you edit DPI days in the SVG export dialog.
-- **dsr** — Daily substitution rate (default **7.9×10⁻⁵**). Resets on page reload. Set with the **dsr** button. Used for tree-based DPI and **etd**.
-- **etd** — Expected mean pairwise tip distance under an early-infection / strict-clock star model: **etd = 2 × dsr × target-dpi**. Seeds the default **Target max depth** in k-DPIs.
+- **target-dpi** — Days post infection used for **etd**, k-DPI Auto stopping, and SVG **cluster target bars**. Defaults from the alignment **filename** (`dpi+N` / `dpi-N`, case-insensitive; largest `N` if several; default **14** if none). After a successful **k-DPIs → Accept**, the dialog’s **Target DPI** is remembered for subsequent SVG plots (and shown in the Phylogeny header). Also updates on prune, NT→AA conversion, and when you edit DPI days in the SVG export dialog (until the next k-DPI Accept overrides it).
+- **dsr** — Daily substitution rate (default **6.5×10⁻⁵** substitutions/site/day). Resets on page reload. Set with the **dsr** button. Used for tree-based DPI, **etd**, and SVG target-bar length **τ = target-dpi × dsr**.
+- **etd** — Expected mean pairwise tip distance under an early-infection / strict-clock star model: **etd = 2 × dsr × target-dpi**. Used as the long-branch noise threshold in k-DPIs (incoming branch **> etd**).
 - **Tree-based DPI** — For a set of tips: **dpi = mean pairwise tree path distance / (2 × dsr)** (rounded to nearest day for labels). **Alignment sequence distances are never used for DPI.**
-- **Default dsr** — The built-in **7.9×10⁻⁵** comes from `EarlyMutationRateEstimate.py` (regression of MaxDepth vs DPI on CL=1 SVG exports). Re-run that script on your own SVG set to refresh the estimate.
+- **Default dsr** — The built-in **6.5×10⁻⁵** comes from early-infection parameters assembled by Keele *et al.* (2008): reverse-transcriptase error rate **μ = 2.16×10⁻⁵** per site per replication, generation time **t_gen = 2** days, and basic reproductive ratio **R₀ = 6**, via
+
+  **dsr = (μ × R₀) / t_gen = (2.16×10⁻⁵ × 6) / 2 ≈ 6.5×10⁻⁵**.
+
+  Here **μ / t_gen** is the baseline lineage clock (one replication per generation), and the factor **R₀** treats Keele’s expanding early-infection regime as raising the *effective* daily substitution rate used when converting tree path length into days (**dpî = δ̄ / (2 × dsr)**, **etd = 2 × dsr × DPI**). Override with the **dsr** button if a different calibration is preferred.
 
 **Functionality tags** (set on every load):
 
@@ -22,7 +26,7 @@ These values appear in the Phylogeny header and in several tools:
 - **NT:** translate frame 1, then apply the AA rules.
 - Load summary above the filename: **`s=…, f=…, nf=…`** (all sequences). SVG title lines use **`s,f,nf` for tree leaves only** (REF, subtype, PDB excluded).
 - Tree tips are cluster-coloured diamonds; **non-functional** tips get a **red oval**. Red is reserved for that marker (not used in the group/cluster palette).
-
+- On exported **linear** SVGs with clusters: grey dots at ordinary internal nodes; larger filled dots at each cluster’s LCA (cluster colour); solid vertical **target bars** at **LCA depth + τ** (**τ = target-dpi × dsr**), spanning that cluster’s tip rows.
 ---
 
 ## 1. Info
@@ -74,8 +78,7 @@ These values appear in the Phylogeny header and in several tools:
 Header shows **`dsr=…, target-dpi=…`**.
 
 ### dsr
-- Set the session daily substitution rate. **Use default** restores **7.9×10⁻⁵**. Applying refreshes tree-based group/cluster DPI labels when a tree is present.
-
+- Set the session daily substitution rate. **Use default** restores **6.5×10⁻⁵** (Keele *et al.* 2008; see Shared concepts). Applying refreshes tree-based group/cluster DPI labels when a tree is present, and reseeds SVG Mutations/day from the new dsr.
 ### Infer
 - **Requires a founder** (button stays disabled until then).
 - Builds or loads a phylogeny for sample sequences (excludes REF, subtype when present, and PDB chains; includes founder).
@@ -120,13 +123,13 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 - Three **depth** cutoffs (Level 1 ≤ 2 ≤ 3). Leaves assigned by crossing depth lines (BFS). Min leaves → noise. Accept / Cancel as above.
 
 #### k-DPIs (divisive max-depth)
-- Repeatedly split clusters on the **phylogeny**. Each candidate cut uses an **internal node**: **right** = descendant tips in the cluster, **left** = remainder. Choose the cut that minimises **max(depth₁, depth₂)** (LCA-subtree height).
-- **+** / **−** change k; **Max splits** (default 9) caps **+** and **Auto**. Both apply the best depth bipartition when one exists (cuts at phylogeny nodes whose tip set is a proper subset of the cluster — including single-tip peels — and, if needed, partitions of the cluster-LCA’s children). **+** picks the non-noise leaf with largest **DPI**. **Auto** resets to k=1 (re-applying long-branch noise if checked), then only splits leaves with **dpi > target**, and stops when none remain (or max splits).
-- **Min cluster size** (default 2): leaves with **n < min size** are **noise** and are never split further. Noise-only children are allowed.
-- **Remove long-branch tips as noise** (default on): at open / Reset / Auto start, tips with incoming branch **> Target max depth** (linked to ≈ DPI via **etd = 2 × dsr × DPI**) become pre-noise and are excluded from splitting.
+- Repeatedly split clusters on the **phylogeny**. Each candidate cut uses an **internal node**: **right** = descendant tips in the cluster, **left** = remainder. Choose the cut that minimises **max(depth₁, depth₂)** (LCA-subtree height). Only cuts where **both** children have size ≥ **min cluster size** are considered (a peel of a single tip therefore requires leaf size ≥ **2 × min size**).
+- **Target DPI** (dialog field; default from filename `dpi±N` or **14**): **Auto** only splits leaves with **dpi > Target DPI** and stops when every remaining cluster has **dpi ≤ Target DPI** (or **Max splits** is reached). Changing Target DPI does **not** recluster by itself — use **Reset**, then **Auto** (or **+**) with the new target, then **Accept**.
+- **+** / **−** change k; **Max splits** (default **9**) caps **+** and **Auto**. Both apply the best depth bipartition when one exists. **+** picks the non-noise leaf with largest **DPI** that can still yield two min-sized children.
+- **Min cluster size** (default **1**): after splitting, leaves with **n < min size** become **noise** (`_cl-n`) and are never split further. Singletons are therefore noise when min size &gt; 1; with the default of 1 they remain ordinary clusters.
+- **Remove long-branch tips as noise** (default on): at open / Reset / Auto start, tips with incoming branch **> etd** (**etd = 2 × dsr × Target DPI**) become pre-noise and are excluded from splitting.
 - Bubble tree: **root left**, remainder **up**, descendants **down** (like the linear phylogeny); leaf label **`n, dpi`**; radius ∝ log(n).
-- Accept: `_cl-<id>` / `_cl-n`, legend **`id (n, dpi)`** and **Noise (n)**. Cancel drops the preview.
-
+- **Accept:** writes `_cl-<id>` / `_cl-n`, legend **`id (n, dpi)`** and **Noise (n)**, and **remembers Target DPI** for subsequent SVG cluster target bars (Phylogeny header **target-dpi** updates). **Cancel** drops the preview without changing the remembered target.
 #### UMAP
 - UMAP on tree pairwise distances → 2D, then **DBSCAN**. Parameters: nNeighbors, Spread, Min Distance, plus eps / Min Neighbors. **Estimate DPI** and **Apply** as for MDS.
 
@@ -160,15 +163,15 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 - **Circular** — Radial orthogonal layout (half scale per unit vs linear).
 
 **Scale** (branch region ≈ 520 px; 1/16 mark at 32.5 px)
-- **Auto** — Fit the tree to the plot.
+- **Auto** — Fit the tree to the plot. If the filename contains `dpi±N`, also draws a DPI scale annotation and fits so that mark (and any cluster target bars) stay in view.
 - **Fixed** — Branch length per 1 cm (dropdown). Overflow aborts with a suggestion to pick a larger value or Auto.
-- **DPI** — Place expected depth **DPI × Mutations/day** at the 1/16 mark. DPI days default from filename; Mutations/day seeded from session **dsr**. Never aborts on overflow (clips at the right border; linear clipped tips use a **right-half diamond**; non-functional tips keep the red oval). Gray dotted line at expected depth.
+- **DPI** — Place expected depth **DPI × Mutations/day** at the 1/16 mark. DPI days default from filename (or last k-DPI Accept when that has updated the SVG DPI field); Mutations/day seeded from session **dsr**. Never aborts on overflow (clips at the right border; linear clipped tips use a **right-half diamond**; non-functional tips keep the red oval). Gray dotted line at expected depth.
 
 **SVG extras**
 - Title: filename; second line = infer method, leaf **`s,f,nf`**, max depth, last cluster method.
 - Scale bar on the tree panel (fixed: 1 cm; DPI: 32.5 px linear / 16.25 px circular).
 - Legend panel: groups and clusters (numeric cluster IDs).
-
+- **Linear + clusters:** per-cluster solid target bars at **LCA + τ** with **τ = target-dpi × dsr** (target-dpi from last **k-DPI Accept** when set, otherwise filename / SVG DPI field). Bars use the cluster colour and span only that cluster’s tip rows. Small grey markers on ordinary internal nodes; larger cluster-coloured markers on each cluster LCA.
 ---
 
 ## 5. Reset
@@ -245,17 +248,18 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 |---------|---------|
 | Load sanitize | A–Z, `-`, `*` kept; else → `X`. |
 | Functionality | AA: M…`*`, no internal `*`; NT: frame-1 translate then same; `s,f,nf` above filename. |
-| DPI / etd | dpi = mean tree path / (2×dsr); etd = 2×dsr×target-dpi; dsr via **dsr** button. |
+| DPI / etd | dpi = mean tree path / (2×dsr); etd = 2×dsr×target-dpi; default dsr = 6.5×10⁻⁵ (Keele 2008: μ R₀ / t_gen); dsr via **dsr** button. |
 | Group | Name field → group; legend gains tree DPI after phylogeny. |
 | Collapse | Integer count from name field; weights consensus/medoid. |
 | Founder | Consensus (new row) or medoid (existing name + `[Founder]`). |
 | Infer | NJ / FastTree / Load Newick; optional root on founder + ladderize by depth. |
 | Reroot | On subtype or founder. |
 | Ladderize | By depth or by weight. |
-| SVG scale | Auto fit; Fixed length/cm; DPI at 1/16 mark (clip, half diamond). |
+| SVG scale | Auto fit (+ optional filename DPI overlay); Fixed length/cm; DPI at 1/16 mark (clip, half diamond). |
+| SVG cluster bars | Linear: LCA + τ, τ = target-dpi × dsr; target-dpi from last k-DPI Accept when set. |
 | Tree-clade | Edge length threshold; min leaves → noise. |
 | Tree-cut | Three depth cuts; min leaves → noise. |
-| k-DPIs | Min max-child depth; Auto only splits DPI &gt; target; + any largest-DPI leaf; min size → noise; long-branch pre-noise; bubble tree root-left. |
+| k-DPIs | Min max-child depth; Target DPI field; Auto only splits DPI &gt; target; Reset+recluster after changing target; Accept remembers target for SVG bars; min size default 1 → noise; long-branch pre-noise via etd; bubble tree root-left. |
 | MDS / UMAP | Tree distances → 2D → DBSCAN; CH / Ball-Hall Auto on eps. |
 | CH | Tree MRCA/root form; ÷ 2<sup>k</sup>. |
 | Ball-Hall-Adapted | BH(1)/BH(k) ÷ 2<sup>k</sup>. |
