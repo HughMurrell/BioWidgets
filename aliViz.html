@@ -5037,6 +5037,28 @@ function clusterTipsLca(tips, findLCA) {
 }
 
 /**
+ * Mean pairwise tree path distance among tip nodes (null if fewer than 2 tips).
+ * Uses node.xDepth (root distance) and findLCA.
+ */
+function meanPairwisePathAmongTips(tips, findLCA) {
+    if (!tips || tips.length < 2 || !findLCA) return null;
+    let sum = 0;
+    let pairs = 0;
+    for (let i = 0; i < tips.length; i++) {
+        const d1 = tips[i] && Number.isFinite(tips[i].xDepth) ? tips[i].xDepth : 0;
+        for (let j = i + 1; j < tips.length; j++) {
+            const d2 = tips[j] && Number.isFinite(tips[j].xDepth) ? tips[j].xDepth : 0;
+            const lca = findLCA(tips[i], tips[j]);
+            const dLca = (lca && Number.isFinite(lca.xDepth)) ? lca.xDepth : 0;
+            const d = d1 + d2 - 2 * dLca;
+            sum += (Number.isFinite(d) && d > 0) ? d : 0;
+            pairs++;
+        }
+    }
+    return pairs > 0 ? sum / pairs : null;
+}
+
+/**
  * Map phylogeny internal node → cluster id for LCAs of non-noise clusters with ≥2 tips.
  * Matches tree_clustering.py: those nodes use r=5 in cluster colour; other internals r=1.
  */
@@ -5681,11 +5703,16 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
 
     const clusterGroups = buildClusterTipGroups();
     const clusterMarkDepths = [];
-    if (clusterGroups && targetLen != null && targetLen > 0) {
+    if (clusterGroups) {
         clusterGroups.byCl.forEach((tips) => {
             const anc = clusterTipsLca(tips, clusterGroups.findLCA);
-            if (anc && Number.isFinite(anc.xDepth)) {
+            if (!anc || !Number.isFinite(anc.xDepth)) return;
+            if (targetLen != null && targetLen > 0) {
                 clusterMarkDepths.push(anc.xDepth + targetLen);
+            }
+            const mpd = meanPairwisePathAmongTips(tips, clusterGroups.findLCA);
+            if (mpd != null && mpd > 0) {
+                clusterMarkDepths.push(anc.xDepth + mpd / 2);
             }
         });
     }
@@ -5790,18 +5817,15 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
     }
     drawNode(state.tree.root);
 
-    // Per-cluster target bars (tree_clustering.py style): solid vertical line at
-    // LCA depth + τ, spanning only that cluster's tip rows, cluster colour, no labels.
-    if (clusterGroups && targetLen != null && targetLen > 0) {
+    // Per-cluster bars: dashed = mean pairwise depth (LCA + δ̄/2); solid = target (LCA + τ).
+    // Clusters that need no further split have dpi ≤ target, so the dashed bar sits at or left of the solid bar.
+    if (clusterGroups) {
         const sortedCids = Array.from(clusterGroups.byCl.keys()).sort((a, b) => a - b);
         sortedCids.forEach((cid) => {
             const tips = clusterGroups.byCl.get(cid);
             if (!tips || tips.length === 0) return;
             const anc = clusterTipsLca(tips, clusterGroups.findLCA);
             if (!anc || !Number.isFinite(anc.xDepth)) return;
-            let markX = leftPad + (anc.xDepth + targetLen) * xScale;
-            if (markX < leftPad) return;
-            markX = Math.min(markX, clipRightEdge);
             const ys = tips.map((t) => ny(t));
             let y0 = Math.min(...ys);
             let y1 = Math.max(...ys);
@@ -5811,10 +5835,20 @@ function buildTreeSvgLinear(scaleMode = 'auto', fixedBranchPerCm, dpiParams) {
                 y1 += rowH / 4;
             }
             const color = getClusterColor(cid);
-            parts.push(
-                `<line x1="${markX}" y1="${y0}" x2="${markX}" y2="${y1}" ` +
-                `stroke="${color}" stroke-width="2"/>\n`
-            );
+            function drawClusterBar(depthOffset, dashed) {
+                if (!Number.isFinite(depthOffset) || depthOffset < 0) return;
+                let markX = leftPad + (anc.xDepth + depthOffset) * xScale;
+                if (markX < leftPad) return;
+                markX = Math.min(markX, clipRightEdge);
+                const dash = dashed ? ' stroke-dasharray="6 4"' : '';
+                parts.push(
+                    `<line x1="${markX}" y1="${y0}" x2="${markX}" y2="${y1}" ` +
+                    `stroke="${color}" stroke-width="2"${dash}/>\n`
+                );
+            }
+            const mpd = meanPairwisePathAmongTips(tips, clusterGroups.findLCA);
+            if (mpd != null && mpd > 0) drawClusterBar(mpd / 2, true);
+            if (targetLen != null && targetLen > 0) drawClusterBar(targetLen, false);
         });
     }
 

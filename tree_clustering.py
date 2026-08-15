@@ -254,6 +254,23 @@ def mean_pairwise_path(tips: list[Node], root_dist: dict[Node, float]) -> Option
     return total / pairs if pairs else None
 
 
+def mean_pairwise_xdepth(tips: list[Node]) -> Optional[float]:
+    """Mean pairwise path using node.x_depth (after layout_tree)."""
+    n = len(tips)
+    if n < 2:
+        return None
+    total = 0.0
+    pairs = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            anc = lca(tips[i], tips[j])
+            d = tips[i].x_depth + tips[j].x_depth - 2.0 * anc.x_depth
+            if math.isfinite(d) and d > 0:
+                total += d
+            pairs += 1
+    return total / pairs if pairs else None
+
+
 def dpi_days_from_mean(mean_d: Optional[float], dsr: float = DEFAULT_DSR) -> Optional[int]:
     if mean_d is None or not (dsr > 0):
         return None
@@ -971,23 +988,26 @@ def build_svg(
     # Legacy DPI path retained for --scale dpi (maps DPI×dsr → 520/16 px).
     target_len = (dpi_days * dsr) if (dpi_days > 0 and dsr > 0) else None
 
-    # For AUTO fit, also reserve room for per-cluster marks at LCA + target.
+    # For AUTO fit, reserve room for per-cluster marks (solid LCA+τ and dashed LCA+δ̄/2).
     cluster_mark_depths: list[float] = []
-    if target_len is not None and target_len > 0:
-        by_cl_fit: dict[int, list[Node]] = defaultdict(list)
-        for tip in tree.tips():
-            if not tip.name:
-                continue
-            cid = name_to_cl.get(normalize_tip_name(tip.name))
-            if cid is not None and cid != -1:
-                by_cl_fit[cid].append(tip)
-        for cid, cl_tips in by_cl_fit.items():
-            if not cl_tips:
-                continue
-            anc = cl_tips[0]
-            for t in cl_tips[1:]:
-                anc = lca(anc, t)
+    by_cl_fit: dict[int, list[Node]] = defaultdict(list)
+    for tip in tree.tips():
+        if not tip.name:
+            continue
+        cid = name_to_cl.get(normalize_tip_name(tip.name))
+        if cid is not None and cid != -1:
+            by_cl_fit[cid].append(tip)
+    for cid, cl_tips in by_cl_fit.items():
+        if not cl_tips:
+            continue
+        anc = cl_tips[0]
+        for t in cl_tips[1:]:
+            anc = lca(anc, t)
+        if target_len is not None and target_len > 0:
             cluster_mark_depths.append(anc.x_depth + target_len)
+        mpd = mean_pairwise_xdepth(cl_tips)
+        if mpd is not None and mpd > 0:
+            cluster_mark_depths.append(anc.x_depth + mpd / 2.0)
 
     if mode == "dpi":
         x_scale, scale_bar_val, scale_bar_label = compute_svg_x_scale_dpi(dpi_days, dsr)
@@ -1063,7 +1083,7 @@ def build_svg(
     max_d_str = format_branch(max_depth)
     subtitle = (
         f"Infer: loaded tree | s={len(tips)} | Max depth: {max_d_str} | "
-        f"Cluster: k-DPIs | founder={escape_xml(founder_name or '—')}"
+        f"Cluster Method: k-DPI"
     )
 
     parts: list[str] = []
@@ -1110,8 +1130,9 @@ def build_svg(
 
     draw_node(tree.root)
 
-    # Per-cluster target marks: solid vertical line at LCA depth + target,
-    # spanning only that cluster's tip rows (cluster colour; no labels).
+    # Per-cluster bars: dashed = mean pairwise depth (LCA + δ̄/2);
+    # solid = target (LCA + τ). Clusters that need no further split have
+    # dpi ≤ target, so the dashed bar sits at or left of the solid bar.
     by_cl: dict[int, list[Node]] = defaultdict(list)
     for tip in tips:
         if not tip.name:
@@ -1131,32 +1152,40 @@ def build_svg(
         if not anc.is_leaf:
             cluster_lca[anc] = cid
 
-    if target_len is not None and target_len > 0:
-        for cid in sorted(by_cl.keys()):
-            cl_tips = by_cl[cid]
-            if not cl_tips:
-                continue
-            anc = cl_tips[0]
-            for t in cl_tips[1:]:
-                anc = lca(anc, t)
-            mark_x = left_pad + (anc.x_depth + target_len) * x_scale
+    for cid in sorted(by_cl.keys()):
+        cl_tips = by_cl[cid]
+        if not cl_tips:
+            continue
+        anc = cl_tips[0]
+        for t in cl_tips[1:]:
+            anc = lca(anc, t)
+        ys = [ny(t) for t in cl_tips]
+        y0, y1 = min(ys), max(ys)
+        if y1 < y0:
+            continue
+        if abs(y1 - y0) < 1e-9:
+            y0 -= ROW_H / 4.0
+            y1 += ROW_H / 4.0
+        color = cluster_color(cid)
+
+        def draw_cluster_bar(depth_offset: float, dashed: bool) -> None:
+            if not math.isfinite(depth_offset) or depth_offset < 0:
+                return
+            mark_x = left_pad + (anc.x_depth + depth_offset) * x_scale
             if mark_x < left_pad:
-                continue
-            # Keep mark visible inside the branch region when LCA+target exceeds max depth.
+                return
             mark_x = min(mark_x, clip_right)
-            ys = [ny(t) for t in cl_tips]
-            y0, y1 = min(ys), max(ys)
-            if y1 < y0:
-                continue
-            # Single-tip cluster: short segment centred on the tip
-            if abs(y1 - y0) < 1e-9:
-                y0 -= ROW_H / 4.0
-                y1 += ROW_H / 4.0
-            color = cluster_color(cid)
+            dash = ' stroke-dasharray="6 4"' if dashed else ""
             parts.append(
                 f'<line x1="{mark_x}" y1="{y0}" x2="{mark_x}" y2="{y1}" '
-                f'stroke="{color}" stroke-width="2"/>\n'
+                f'stroke="{color}" stroke-width="2"{dash}/>\n'
             )
+
+        mpd = mean_pairwise_xdepth(cl_tips)
+        if mpd is not None and mpd > 0:
+            draw_cluster_bar(mpd / 2.0, True)
+        if target_len is not None and target_len > 0:
+            draw_cluster_bar(target_len, False)
 
     parts.append('<g stroke="#374151" fill="none">\n')
     for n in internals:

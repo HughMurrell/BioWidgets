@@ -295,8 +295,8 @@ and SVG export still run on the loaded rooting and tip order.
   \item \textbf{Assign} cluster IDs; reclassify singletons as noise;
         number non-noise clusters $1..k$ by tip order (Section~\ref{sec:assign}).
   \item \textbf{Optional FASTA / tip annotation} (Section~\ref{sec:fasta}).
-  \item \textbf{SVG export} with AUTO or DPI scale and per-cluster target lines
-        (Section~\ref{sec:svg}).
+  \item \textbf{SVG export} with AUTO or DPI scale and per-cluster bars
+        (solid target, dashed mean pairwise; Section~\ref{sec:svg}).
 \end{enumerate}
 Finally, write housekeeping CSV and pie chart.
 
@@ -703,10 +703,11 @@ Branch region width is $W=520$~px.
 Fit depth
 \[
   D_{\mathrm{fit}}=\max\bigl(D_{\mathrm{tree}},\,\tau,\,
-  \max_c\bigl(d(\mathrm{lca}_c)+\tau\bigr)\bigr)
+  \max_c\bigl(d(\mathrm{lca}_c)+\tau\bigr),\,
+  \max_c\bigl(d(\mathrm{lca}_c)+\overline{\delta}_c/2\bigr)\bigr)
 \]
-where the last term runs over non-noise clusters $c$ (so every cluster target
-mark remains inside the plot). Then
+where the last two maxima run over non-noise clusters $c$ (so every cluster
+target bar and mean-pairwise bar remains inside the plot). Then
 $x_{\mathrm{scale}}=W/D_{\mathrm{fit}}$.
 When DPI was detected in the filename, the scale-bar label is
 \texttt{($N$ DPI @ dsr)}.
@@ -715,17 +716,39 @@ When DPI was detected in the filename, the scale-bar label is
 Place $\tau$ at $W/16=32.5$~px:
 $x_{\mathrm{scale}}=(W/16)/\tau$.
 
-\subsection{Per-cluster target lines}
+\subsection{Per-cluster bars}
+\label{sec:cluster-bars}
 For each non-noise cluster $c$ with tip set $T_c$ and
-$L_c=\mathrm{lca}(T_c)$, draw a \emph{solid} vertical line at
+$L_c=\mathrm{lca}(T_c)$, two vertical lines are drawn in the cluster palette
+colour of $c$, spanning only the vertical extent of $T_c$'s tip rows
+(clamped into the branch region if needed). No text annotation is attached.
+
+\paragraph{Solid target bar.}
+At expected one-sided depth $\tau=\mathrm{DPI}\times\mathrm{dsr}$:
 \[
-  x_c=5+\bigl(d(L_c)+\tau\bigr)\,x_{\mathrm{scale}}
+  x_c^{\mathrm{target}}=5+\bigl(d(L_c)+\tau\bigr)\,x_{\mathrm{scale}}.
 \]
-(clamped into the branch region if needed), spanning only the vertical extent
-of $T_c$'s tip rows, coloured with the cluster palette colour of $c$.
-No text annotation is attached to these lines.
+This is the Auto stopping threshold: a cluster with
+$\widehat{\mathrm{DPI}}>\mathrm{DPI}$ still needs splitting.
+
+\paragraph{Dashed mean-pairwise bar.}
+Let $\overline{\delta}_c$ be the mean pairwise tree-path distance among tips
+in $T_c$ (undefined for a singleton, so no dashed bar is drawn).
+Place a dashed line (stroke-dasharray $6\,4$) at the equivalent one-sided
+depth $\overline{\delta}_c/2$:
+\[
+  x_c^{\mathrm{mpd}}=5+\bigl(d(L_c)+\overline{\delta}_c/2\bigr)\,x_{\mathrm{scale}}.
+\]
+Because
+$\widehat{\mathrm{DPI}}_c=\mathrm{round}(\overline{\delta}_c/(2\times\mathrm{dsr}))$,
+the dashed bar sits at or to the \emph{left} of the solid bar precisely when
+the cluster does not need a further split
+($\widehat{\mathrm{DPI}}_c\le\mathrm{DPI}$).
+A dashed bar to the \emph{right} of the solid bar flags a cluster that still
+exceeds the target.
+
 Tip diamonds use half-diagonal $5$~px;
-target lines use stroke width~$2$.
+both cluster bars use stroke width~$2$.
 
 \subsection{Colours and legend}
 \begin{itemize}[nosep]
@@ -739,8 +762,8 @@ target lines use stroke width~$2$.
 \subsection{Example plots}
 Figures~\ref{fig:ex-cl1} and~\ref{fig:ex-cl4} show real batch outputs produced by
 \texttt{tree\_clustering.py} (AUTO scale). Both trees were rerooted on a founder,
-ladderized by depth, clustered with k-DPI Auto, and drawn with per-cluster target
-bars and a group/cluster legend.
+ladderized by depth, clustered with k-DPI Auto, and drawn with per-cluster
+bars (solid target, dashed mean pairwise) and a group/cluster legend.
 
 \begin{figure}[htbp]
 \centering
@@ -754,7 +777,9 @@ bars and a group/cluster legend.
   All tips form one non-noise cluster, so diamonds share cluster colour~1.
   A solid vertical target bar in that colour is drawn at
   $\mathrm{lca}+\tau$ (here the founder-rerooted root), spanning only the
-  cluster tip rows.
+  cluster tip rows; a dashed bar at $\mathrm{lca}+\overline{\delta}/2$ shows
+  the observed mean pairwise depth.
+  When Auto has finished, the dashed bar should sit at or left of the solid bar.
   Tip labels use the group colour palette; the founder tip is marked
   \texttt{[Founder]} in magenta and sits as the outgroup after rerooting.
   The top spacer row holds the scale bar; the right-hand legend lists the single
@@ -774,11 +799,13 @@ bars and a group/cluster legend.
   Filename DPI is~$32$, with scale bar \texttt{(32 DPI @ 5e-05)}.
   One time-point group is present (\texttt{gr-1}).
   k-DPI Auto produced four non-noise clusters (\texttt{cl-4}) plus two noise tips:
-  tip diamonds and solid target bars use palette colours~$1$--$4$;
+  tip diamonds and cluster bars use palette colours~$1$--$4$;
   noise diamonds are grey.
-  Each target bar sits at that cluster's $\mathrm{lca}+\tau$ and covers only
+  Each cluster has a solid target bar at $\mathrm{lca}+\tau$ and a dashed
+  mean-pairwise bar at $\mathrm{lca}+\overline{\delta}/2$, covering only
   the vertical span of its tips---so later (deeper) clusters have marks further
   to the right.
+  Finished clusters have the dashed bar at or left of the solid bar.
   Tip name colours track the group; the founder is highlighted in magenta with
   \texttt{[Founder]}.
   Tip suffixes \texttt{\_cl-}$x$ / \texttt{\_cl-n} match optional FASTA annotation.}

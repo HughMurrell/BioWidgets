@@ -26,7 +26,7 @@ These values appear in the Phylogeny header and in several tools:
 - **NT:** translate frame 1, then apply the AA rules.
 - Load summary above the filename: **`s=…, f=…, nf=…`** (all sequences). SVG title lines use **`s,f,nf` for tree leaves only** (REF, subtype, PDB excluded).
 - Tree tips are cluster-coloured diamonds; **non-functional** tips get a **red oval**. Red is reserved for that marker (not used in the group/cluster palette).
-- On exported **linear** SVGs with clusters: grey dots at ordinary internal nodes; larger filled dots at each cluster’s LCA (cluster colour); solid vertical **target bars** at **LCA depth + τ** (**τ = target-dpi × dsr**), spanning that cluster’s tip rows.
+- On exported **linear** SVGs with clusters: grey dots at ordinary internal nodes; larger filled dots at each cluster’s LCA (cluster colour); two vertical bars per cluster spanning that cluster’s tip rows — **solid** target at **LCA + τ** (**τ = target-dpi × dsr**), and **dashed** observed mean pairwise at **LCA + δ̄/2**. A finished cluster (**dpi ≤ target**) has the dashed bar at or to the left of the solid bar.
 ---
 
 ## 1. Info
@@ -171,7 +171,11 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 - Title: filename; second line = infer method, leaf **`s,f,nf`**, max depth, last cluster method.
 - Scale bar on the tree panel (fixed: 1 cm; DPI: 32.5 px linear / 16.25 px circular).
 - Legend panel: groups and clusters (numeric cluster IDs).
-- **Linear + clusters:** per-cluster solid target bars at **LCA + τ** with **τ = target-dpi × dsr** (target-dpi from last **k-DPI Accept** when set, otherwise filename / SVG DPI field). Bars use the cluster colour and span only that cluster’s tip rows. Small grey markers on ordinary internal nodes; larger cluster-coloured markers on each cluster LCA.
+- **Linear + clusters:** two bars per cluster, both in the cluster colour, spanning only that cluster’s tip rows:
+  - **Solid** — target at **LCA + τ** with **τ = target-dpi × dsr** (target-dpi from last **k-DPI Accept** when set, otherwise filename / SVG DPI field).
+  - **Dashed** — observed mean pairwise tree path **δ̄**, drawn at **LCA + δ̄/2** (same units as τ, because **dpi = δ̄ / (2 × dsr)**). Singletons have no pairwise distance, so no dashed bar.
+  - **Check:** clusters that do not need a further split (**dpi ≤ target**) have the dashed bar **at or to the left of** the solid bar; a dashed bar to the right means the cluster still exceeds the target.
+  Small grey markers on ordinary internal nodes; larger cluster-coloured markers on each cluster LCA.
 ---
 
 ## 5. Reset
@@ -256,7 +260,7 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 | Reroot | On subtype or founder. |
 | Ladderize | By depth or by weight. |
 | SVG scale | Auto fit (+ optional filename DPI overlay); Fixed length/cm; DPI at 1/16 mark (clip, half diamond). |
-| SVG cluster bars | Linear: LCA + τ, τ = target-dpi × dsr; target-dpi from last k-DPI Accept when set. |
+| SVG cluster bars | Linear: solid LCA + τ (τ = target-dpi × dsr); dashed LCA + δ̄/2 (mean pairwise). Finished clusters have dashed at or left of solid. |
 | Tree-clade | Edge length threshold; min leaves → noise. |
 | Tree-cut | Three depth cuts; min leaves → noise. |
 | k-DPIs | Min max-child depth; Target DPI field; Auto only splits DPI &gt; target; Reset+recluster after changing target; Accept remembers target for SVG bars; min size default 1 → noise; long-branch pre-noise via etd; bubble tree root-left. |
