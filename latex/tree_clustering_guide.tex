@@ -101,6 +101,17 @@ algorithms implemented in the script.
 % -----------------------------------------------------------------------------
 
 \subsection{Purpose}
+This Python script enables the clustering of tips in the phylogenetic tree of
+an early viral outbreak when the user has an estimate of the number of days
+post infection (DPI) of the sample that generated the tree.
+The code makes use of an estimated daily substitution rate (DSR) to cluster
+tips that do not break the user-supplied DPI threshold.
+The algorithm continues to split clusters of tips until half the mean pairwise
+distance of a cluster is less than the DPI yardstick.
+In so doing the algorithm will automatically generate $k$ clusters and so we
+name it the k-DPI clustering algorithm.
+
+\subsection{Pipeline}
 The script batch-processes phylogenetic trees with a fixed pipeline:
 \begin{enumerate}[nosep]
   \item load a phylogenetic tree;
@@ -267,7 +278,7 @@ After all trees are processed:
   \item[\texttt{housekeeping.svg}]
     Pie chart of CAP samples binned by cluster count:
     $1$, $2$, $3$--$4$, $5$--$8$, $9$--$16$, \ldots\
-    (empty bins omitted).
+    (empty bins omitted); see Section~\ref{sec:pie} and Figure~\ref{fig:housekeeping}.
 \end{description}
 
 % -----------------------------------------------------------------------------
@@ -768,12 +779,12 @@ bars (solid target, dashed mean pairwise) and a group/cluster legend.
 \begin{figure}[htbp]
 \centering
 \adjustbox{max height=0.55\textheight, max width=\textwidth, center}{%
-  \includegraphics{images/CAP338_cl1.pdf}%
+  \includegraphics{images/CAP280_cl1.pdf}%
 }
 \caption{Single-cluster example
-  (\texttt{C002\_CAP338\_2000\_\ldots{}dpi+25\_gr-1\_cl-1.svg};
-  $s{=}14$ tips, max depth $\approx 0.00157$).
-  Filename DPI is~$25$, with scale bar \texttt{(25 DPI @ 5e-05)}.
+  (\texttt{C002\_CAP280\_2000\_\ldots{}dpi+87\_gr-1\_cl-1.svg};
+  $s{=}63$ tips, max depth $\approx 0.00803$).
+  Filename DPI is~$87$, with scale bar \texttt{(87 DPI @ 6.5e-05)}.
   All tips form one non-noise cluster, so diamonds share cluster colour~1.
   A solid vertical target bar in that colour is drawn at
   $\mathrm{lca}+\tau$ (here the founder-rerooted root), spanning only the
@@ -791,14 +802,14 @@ bars (solid target, dashed mean pairwise) and a group/cluster legend.
 \begin{figure}[htbp]
 \centering
 \adjustbox{max height=0.55\textheight, max width=\textwidth, center}{%
-  \includegraphics{images/CAP333_cl4.pdf}%
+  \includegraphics{images/CAP222_cl4.pdf}%
 }
 \caption{Multi-cluster example
-  (\texttt{C002\_CAP333\_2000\_\ldots{}dpi+32\_gr-1\_cl-4.svg};
-  $s{=}11$ tips, max depth $\approx 0.0174$).
-  Filename DPI is~$32$, with scale bar \texttt{(32 DPI @ 5e-05)}.
-  One time-point group is present (\texttt{gr-1}).
-  k-DPI Auto produced four non-noise clusters (\texttt{cl-4}) plus two noise tips:
+  (\texttt{C002\_CAP222\_1110\_\ldots{}dpi+14\_gr-1\_cl-4.svg};
+  $s{=}56$ tips, max depth $\approx 0.03106$).
+  Filename DPI is~$14$, with scale bar \texttt{(14 DPI @ 6.5e-05)}.
+  One time-point group is present (\texttt{gr-1}, label \texttt{1110}).
+  k-DPI Auto produced four non-noise clusters (\texttt{cl-4}) plus one noise tip:
   tip diamonds and cluster bars use palette colours~$1$--$4$;
   noise diamonds are grey.
   Each cluster has a solid target bar at $\mathrm{lca}+\tau$ and a dashed
@@ -833,6 +844,24 @@ $\vdots$ & powers-of-two intervals \\
 \end{tabular}
 \end{center}
 Only non-empty bins appear as pie slices, ordered by lower endpoint.
+The chart is written to \texttt{OUTPUT\_DIR/housekeeping.svg} after the batch
+run (alongside \texttt{housekeeping.csv}).
+
+\begin{figure}[htbp]
+\centering
+\adjustbox{max height=0.42\textheight, max width=\textwidth, center}{%
+  \includegraphics{images/housekeeping.pdf}%
+}
+\caption{Example housekeeping pie chart
+  (\texttt{housekeeping.svg}) for a batch of $n{=}111$ CAP samples.
+  Each sample is placed in a power-of-two cluster-count bin
+  ($1$, $2$, $3$--$4$, $5$--$8$, \ldots); empty bins are omitted.
+  Here most samples remain a single cluster ($75\%$), with smaller slices for
+  $2$, $3$--$4$, $5$--$8$, $9$--$16$, and $17$--$32$ clusters.
+  Slice colours follow the same palette as the tree SVGs; the legend lists
+  count and percentage per bin.}
+\label{fig:housekeeping}
+\end{figure}
 
 % -----------------------------------------------------------------------------
 \section{Default parameters (summary)}
