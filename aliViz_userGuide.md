@@ -10,9 +10,9 @@ Toolbar controls below appear in the **same left-to-right order** as in the app.
 
 These values appear in the Phylogeny header and in several tools:
 
-- **target-dpi** — Days post infection used for **etd**, k-DPI Auto stopping, and SVG **cluster target bars**. Defaults from the alignment **filename** (`dpi+N` / `dpi-N`, case-insensitive; largest `N` if several; default **14** if none). After a successful **k-DPIs → Accept**, the dialog’s **Target DPI** is remembered for subsequent SVG plots (and shown in the Phylogeny header). Also updates on prune, NT→AA conversion, and when you edit DPI days in the SVG export dialog (until the next k-DPI Accept overrides it).
+- **target-dpi** — Days post infection used for **etd**, k-DPI Auto stopping, and SVG **cluster target bars**. Defaults from the alignment **filename** (`dpi+N` / `dpi-N`, case-insensitive; largest `N` if several; default **14** if none). After a successful **k-DPI → Accept**, the dialog’s **Target DPI** is remembered for subsequent SVG plots (and shown in the Phylogeny header). Also updates on prune, NT→AA conversion, and when you edit DPI days in the SVG export dialog (until the next k-DPI Accept overrides it).
 - **dsr** — Daily substitution rate (default **6.5×10⁻⁵** substitutions/site/day). Resets on page reload. Set with the **dsr** button. Used for tree-based DPI, **etd**, and SVG target-bar length **τ = target-dpi × dsr**.
-- **etd** — Expected mean pairwise tip distance under an early-infection / strict-clock star model: **etd = 2 × dsr × target-dpi**. Used as the long-branch noise threshold in k-DPIs (incoming branch **> etd**).
+- **etd** — Expected mean pairwise tip distance under an early-infection / strict-clock star model: **etd = 2 × dsr × target-dpi**. Used as the long-branch noise threshold in k-DPI (incoming branch **> etd**).
 - **Tree-based DPI** — For a set of tips: **dpi = mean pairwise tree path distance / (2 × dsr)** (rounded to nearest day for labels). **Alignment sequence distances are never used for DPI.**
 - **Default dsr** — The built-in **6.5×10⁻⁵** comes from early-infection parameters assembled by Keele *et al.* (2008): reverse-transcriptase error rate **μ = 2.16×10⁻⁵** per site per replication, generation time **t_gen = 2** days, and basic reproductive ratio **R₀ = 6**, via
 
@@ -69,7 +69,7 @@ These values appear in the Phylogeny header and in several tools:
 - **Founder source (default: Medoid):**
   - **Consensus of a group** — New majority-per-column sequence named `consensus_of_<label>` (or `consensus_of_subtype`).
   - **Medoid sequence of a group** — Existing sequence minimizing total padded Hamming distance to others in the group; keeps its name; shown as **[Founder]**.
-- Clears any existing tree. **Infer** enables once a founder is set. The founder is not forced into cluster 0; cluster 0 is reserved for subtype when present.
+- Clears any existing tree. **Infer** is available once an alignment is loaded (a founder is optional). The founder is not forced into cluster 0; cluster 0 is reserved for subtype when present.
 
 ---
 
@@ -80,31 +80,31 @@ Header shows **`dsr=…, target-dpi=…`**.
 ### dsr
 - Set the session daily substitution rate. **Use default** restores **6.5×10⁻⁵** (Keele *et al.* 2008; see Shared concepts). Applying refreshes tree-based group/cluster DPI labels when a tree is present, and reseeds SVG Mutations/day from the new dsr.
 ### Infer
-- **Requires a founder** (button stays disabled until then).
-- Builds or loads a phylogeny for sample sequences (excludes REF, subtype when present, and PDB chains; includes founder).
+- Builds or loads a phylogeny for sample sequences (excludes REF, subtype when present, and PDB chains; includes founder if one is set). A founder is **not** required.
 - **Methods:**
   - **Load inferred tree (Newick)** (dialog default) — `.nwk`, `.newick`, `.tree`, `.tre`, `.treefile`, `.txt`. Leaf names must match the alignment after normalization (`_cl-*` ignored).
   - **FastTree (bioWASM)** — NT/AA model and speed options.
   - **Neighbor-Joining (Internal)** — PhyloTools pairwise distances → NJ.
-- **Root & ladderize** (checked by default): after infer/load, reroot on the **founder** then ladderize **by depth**. Uncheck to do those steps manually.
+- **Root & ladderize** (checked by default): after infer/load, reroot on the **founder** if one is set, then ladderize **by depth**. Without a founder, only ladderize runs. Uncheck to do those steps manually.
+- **Ladderize**, **Cluster**, **Histogram**, and tree/SVG download are enabled as soon as a tree exists (reroot / ladderize are optional).
 - After a tree exists: if sequences are grouped, legend gains tree-based **dpi** per group.
 
 ### Reroot
-- Reroot on **[SUBTYPE]** or **[Founder]** (dialog). Topology and branch lengths are preserved; only the root moves.
+- Reroot on **[SUBTYPE]** or **[Founder]** (dialog). Inserts a new root on the midpoint of the target leaf’s incoming edge (same as `tree_clustering.py`): both the leaf and the rest of the tree get half of that edge. Pairwise tip path distances are preserved.
 
 ### Ladderize
+- Available as soon as a tree exists (no founder or prior reroot required).
 - Reorder tree children and the sequence list to match leaf order.
 - **By Depth** (default): sort children by max root-to-leaf depth in the subtree.
 - **By Weight:** sort by leaf count.
-- Enables Histogram, Cluster, and tree downloads after ladderizing.
 
 ### Histogram
-- Histogram of **root-to-leaf** branch-length distances. Requires a ladderized tree.
+- Histogram of **root-to-leaf** branch-length distances. Available once a tree exists (ladderize is not required).
 
 ### Cluster
-Opens a method selector, then the chosen interface. Sample sequences only (REF / subtype / PDB excluded).
+Opens a method selector, then the chosen interface. Requires a phylogeny; **ladderize is not required**. Sample sequences only (REF / subtype / PDB excluded).
 
-**Methods:** **None**, **Hierarchical (tree-clade)**, **Hierarchical (tree-cut)**, **k-DPIs (divisive max-depth)**, **UMAP**, **MDS** (default).
+**Methods:** **None**, **Hierarchical (tree-clade)**, **Hierarchical (tree-cut)**, **k-DPI (divisive max-depth)**, **UMAP**, **MDS** (default).
 
 #### None
 - Clears clustering, strips `_cl-*` from names and tree nodes. Group colours remain.
@@ -122,7 +122,7 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 #### Hierarchical (tree-cut)
 - Three **depth** cutoffs (Level 1 ≤ 2 ≤ 3). Leaves assigned by crossing depth lines (BFS). Min leaves → noise. Accept / Cancel as above.
 
-#### k-DPIs (divisive max-depth)
+#### k-DPI (divisive max-depth)
 - Repeatedly split clusters on the **phylogeny**. Each candidate cut uses an **internal node**: **right** = descendant tips in the cluster, **left** = remainder. Choose the cut that minimises **max(depth₁, depth₂)** (LCA-subtree height). Only cuts where **both** children have size ≥ **min cluster size** are considered (a peel of a single tip therefore requires leaf size ≥ **2 × min size**).
 - **Target DPI** (dialog field; default from filename `dpi±N` or **14**): **Auto** only splits leaves with **dpi > Target DPI** and stops when every remaining cluster has **dpi ≤ Target DPI** (or **Max splits** is reached). Changing Target DPI does **not** recluster by itself — use **Reset**, then **Auto** (or **+**) with the new target, then **Accept**.
 - **+** / **−** change k; **Max splits** (default **9**) caps **+** and **Auto**. Both apply the best depth bipartition when one exists. **+** picks the non-noise leaf with largest **DPI** that can still yield two min-sized children.
@@ -153,10 +153,10 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 - Download the current view (NT or AA). Filename: **`<alignment>_gr-<n>_cl-<n>.fasta`** (clusters exclude noise).
 
 ### tree
-- Export Newick. Filename: **`<alignment>_gr-<n>_cl-<n>.nwk`**. Requires a ladderized tree.
+- Export Newick. Filename: **`<alignment>_gr-<n>_cl-<n>.nwk`**. Available once a tree exists (ladderize is not required).
 
 ### svg
-- Export a vector tree figure. Same filename stem with **`.svg`**. Dialog: **Geometry** (linear / circular) and **Scale**, then Export.
+- Export a vector tree figure. Same filename stem with **`.svg`**. Available once a tree exists (ladderize is not required). Dialog: **Geometry** (linear / circular) and **Scale**, then Export.
 
 **Geometry**
 - **Linear** — Rectangular cladogram.
@@ -256,14 +256,14 @@ Opens a method selector, then the chosen interface. Sample sequences only (REF /
 | Group | Name field → group; legend gains tree DPI after phylogeny. |
 | Collapse | Integer count from name field; weights consensus/medoid. |
 | Founder | Consensus (new row) or medoid (existing name + `[Founder]`). |
-| Infer | NJ / FastTree / Load Newick; optional root on founder + ladderize by depth. |
-| Reroot | On subtype or founder. |
+| Infer | NJ / FastTree / Load Newick; founder optional; optional reroot on founder (if set) + ladderize by depth. |
+| Reroot | On subtype or founder; bisect target edge (ℓ/2); pairwise distances preserved. |
 | Ladderize | By depth or by weight. |
 | SVG scale | Auto fit (+ optional filename DPI overlay); Fixed length/cm; DPI at 1/16 mark (clip, half diamond). |
 | SVG cluster bars | Linear: solid LCA + τ (τ = target-dpi × dsr); dashed LCA + δ̄/2 (mean pairwise). Finished clusters have dashed at or left of solid. |
 | Tree-clade | Edge length threshold; min leaves → noise. |
 | Tree-cut | Three depth cuts; min leaves → noise. |
-| k-DPIs | Min max-child depth; Target DPI field; Auto only splits DPI &gt; target; Reset+recluster after changing target; Accept remembers target for SVG bars; min size default 1 → noise; long-branch pre-noise via etd; bubble tree root-left. |
+| k-DPI | Min max-child depth; Target DPI field; Auto only splits DPI &gt; target; Reset+recluster after changing target; Accept remembers target for SVG bars; min size default 1 → noise; long-branch pre-noise via etd; bubble tree root-left. |
 | MDS / UMAP | Tree distances → 2D → DBSCAN; CH / Ball-Hall Auto on eps. |
 | CH | Tree MRCA/root form; ÷ 2<sup>k</sup>. |
 | Ball-Hall-Adapted | BH(1)/BH(k) ÷ 2<sup>k</sup>. |

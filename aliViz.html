@@ -261,9 +261,9 @@
             </label>
             <div style="display:flex; gap:5px; align-items:center;">
                 <button id="btn-dsr" type="button" title="Set daily substitution rate used for DPI estimates">dsr</button>
-                <button id="btn-infer-tree" title="Infer phylogeny (requires a founder)">Infer</button>
+                <button id="btn-infer-tree" title="Infer or load a phylogeny">Infer</button>
                 <input type="file" id="inp-tree" accept=".nwk,.newick,.tree,.tre,.treefile,.txt" style="display:none;">
-                <button id="btn-reroot-tree" title="Reroot tree on subtype sequence">Reroot</button>
+                <button id="btn-reroot-tree" title="Reroot on founder or subtype (bisect target edge)">Reroot</button>
                 <button id="btn-ladderize-tree" title="Ladderize tree and reorder sequences">Ladderize</button>
                 <button id="btn-histogram" title="Show histogram of root-to-leaf distances" disabled>Histogram</button>
                 <button id="btn-mds" title="Show 2D projection and clustering of pairwise leaf distances" disabled>Cluster</button>
@@ -450,7 +450,7 @@
 
         <label style="display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: #374151; cursor: pointer;">
             <input type="checkbox" id="chk-infer-root-ladderize" checked>
-            Root &amp; ladderize (reroot on founder, then ladderize by depth)
+            Root &amp; ladderize (reroot on founder if set, then ladderize by depth)
         </label>
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -481,7 +481,7 @@
                 <option value="none">None</option>
                 <option value="hierarchical-clade">Hierarchical (tree-clade clustering)</option>
                 <option value="hierarchical">Hierarchical (tree-cut clustering)</option>
-                <option value="k-dpis">k-DPIs (divisive max-depth clustering)</option>
+                <option value="k-dpis">k-DPI (divisive max-depth clustering)</option>
                 <option value="umap">UMAP (Uniform Manifold Approximation and Projection)</option>
                 <option value="mds" selected>MDS (Classical Multidimensional Scaling)</option>
             </select>
@@ -645,8 +645,10 @@
 
 <div id="kdpis-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; pointer-events: none;">
     <div class="help-box" style="width: 720px; max-width: 92vw; pointer-events: auto; position: relative;">
-        <h2>k-DPIs Clustering</h2>
-        <p style="font-size: 12px; color: #6b7280; margin: 0 0 12px 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). Only cuts where <strong>both</strong> children have size ≥ <strong>min cluster size</strong> are considered. <strong>+</strong> and <strong>Auto</strong> apply that cut when a bipartition exists. <strong>Auto</strong> only splits leaves with <strong>DPI &gt; target</strong> and stops when none remain (or max splits); <strong>+</strong> splits the largest-DPI leaf that can still yield two min-sized children. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 10px;">
+            <h2 style="margin: 0; border: none; padding: 0;">k-DPI Clustering</h2>
+            <button type="button" id="btn-kdpis-help" class="btn-icon" title="How k-DPI clustering works" onclick="document.getElementById('kdpis-help-overlay').style.display='flex'">?</button>
+        </div>
         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label style="font-size: 12px; color: #374151;">k (clusters):</label>
@@ -683,6 +685,14 @@
             <div class="spinner"></div>
             <div id="kdpis-busy-msg" style="font-size: 13px; font-weight: 500; color: #374151;">Working...</div>
         </div>
+    </div>
+</div>
+
+<div id="kdpis-help-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 10080;" onclick="if (event.target === this) this.style.display='none'">
+    <div class="help-box" style="width: 640px; max-width: 92vw;" onclick="event.stopPropagation()">
+        <h2>k-DPI Clustering</h2>
+        <p style="font-size: 13px; color: #374151; line-height: 1.5; margin: 8px 0 0 0;">Splits at <strong>internal phylogeny nodes</strong>: each candidate puts the descendant tip set on the <strong>right</strong> and the remainder on the <strong>left</strong>; choose the cut that minimises <strong>max(depth₁, depth₂)</strong> (depth = height from the cluster LCA). Only cuts where <strong>both</strong> children have size ≥ <strong>min cluster size</strong> are considered. <strong>+</strong> and <strong>Auto</strong> apply that cut when a bipartition exists. <strong>Auto</strong> only splits leaves with <strong>DPI &gt; target</strong> and stops when none remain (or max splits); <strong>+</strong> splits the largest-DPI leaf that can still yield two min-sized children. Bubble labels show <strong>DPI</strong> from mean pairwise <strong>tree</strong> path distance (`d / (2×dsr)`). <strong>+</strong> / <strong>−</strong> adjust k; <strong>Reset</strong> returns to one cluster. Optional removal flags tips whose incoming branch exceeds the target depth (<strong>etd = 2×dsr×DPI</strong>) at startup / reset.</p>
+        <button type="button" class="close-help" onclick="document.getElementById('kdpis-help-overlay').style.display='none'">Close</button>
     </div>
 </div>
 
@@ -937,14 +947,14 @@
         <div class="help-row"><span class="help-key">Prune</span> <span>Remove sequences from deselected groups</span></div>
         <div class="help-row"><span class="help-key">Add Founder</span> <span>Set a Founder from a group (default: smallest group id; medoid or consensus)</span></div>
         <div class="help-row"><span class="help-key">dsr</span> <span>Set daily substitution rate used for tree-based DPI estimates</span></div>
-        <div class="help-row"><span class="help-key">Infer</span> <span>Infer a phylogeny (requires founder; optional root &amp; ladderize)</span></div>
-        <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot tree on subtype sequence</span></div>
+        <div class="help-row"><span class="help-key">Infer</span> <span>Infer or load a phylogeny (founder optional; optional root &amp; ladderize)</span></div>
+        <div class="help-row"><span class="help-key">Reroot</span> <span>Reroot on founder or subtype (bisect the target edge; pairwise distances preserved)</span></div>
         <div class="help-row"><span class="help-key">Ladderize</span> <span>Ladderize tree and reorder sequences</span></div>
-        <div class="help-row"><span class="help-key">Histogram</span> <span>Show histogram of root-to-leaf distances</span></div>
-        <div class="help-row"><span class="help-key">Cluster</span> <span>Cluster sequences (tree-clade, tree-cut, k-DPIs, UMAP, or MDS)</span></div>
+        <div class="help-row"><span class="help-key">Histogram</span> <span>Show histogram of root-to-leaf distances (available once a tree exists)</span></div>
+        <div class="help-row"><span class="help-key">Cluster</span> <span>Cluster sequences once a tree exists (tree-clade, tree-cut, k-DPI, UMAP, or MDS)</span></div>
         <div class="help-row"><span class="help-key">fasta</span> <span>Download current view (NT or AA) as FASTA (Download group)</span></div>
-        <div class="help-row"><span class="help-key">tree</span> <span>Export current tree as Newick format (Download group)</span></div>
-        <div class="help-row"><span class="help-key">svg</span> <span>Export current tree as SVG (Download group; linear or circular; Auto, Fixed, or DPI scale)</span></div>
+        <div class="help-row"><span class="help-key">tree</span> <span>Export current tree as Newick (available once a tree exists)</span></div>
+        <div class="help-row"><span class="help-key">svg</span> <span>Export current tree as SVG (available once a tree exists; linear or circular; Auto, Fixed, or DPI scale)</span></div>
         <div class="help-row"><span class="help-key">Clear Alignment</span> <span>Remove all sequences</span></div>
         <div class="help-row"><span class="help-key">Clear Tree</span> <span>Remove current tree</span></div>
         <div class="help-row"><span class="help-key">View Mode</span> <span>Switch between Nucleotide (NT) and Amino Acid (AA) view</span></div>
@@ -1187,7 +1197,7 @@ const state = {
     aioliCLI: null,
     isAASequence: false, // Flag to track if sequences are already amino acids (not DNA to be translated)
     leafClusters: null, // Map from leaf name to cluster ID (from MDS clustering)
-    lastAcceptedClusterMethod: null, // 'Hierarchical', 'Hierarchical-clade', 'k-DPIs', 'UMAP', or 'MDS'
+    lastAcceptedClusterMethod: null, // 'Hierarchical', 'Hierarchical-clade', 'k-DPI', 'UMAP', or 'MDS'
     hierarchicalActive: false, // Whether hierarchical clustering modal is active
     hierarchicalDepths: [0, 0, 0], // Current depth values for hierarchical clustering sliders
     sequenceGroups: null, // Map from sequence name to group ID (from grouping by name field)
@@ -1344,22 +1354,21 @@ function enableButtonsAfterLoad() {
     if (dom.btnClearAlignment) dom.btnClearAlignment.disabled = false;
     if (dom.selHighlight) dom.selHighlight.disabled = false;
     if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = false;
-    // Infer remains disabled until a founder is settled
-    syncInferButtonWithFounder();
+    // Infer enables once an alignment is loaded (founder optional)
+    syncInferButtonEnabled();
     // Add Founder and Sort remain disabled until grouping is done
-    // Histogram, Cluster, and tree export remain disabled until ladderize is done
+    // Histogram, Cluster, and tree/SVG export enable once a tree exists
 }
 
-/** Enable Infer only when an alignment is loaded and a founder has been designated. */
-function syncInferButtonWithFounder() {
+/** Enable Infer when an alignment with at least two sequences is loaded (founder optional). */
+function syncInferButtonEnabled() {
     if (!dom.btnInferTree) return;
     const hasAlignment = !!(state.rawSequences && state.rawSequences.length >= 2);
-    const hasFounder = !!state.founderSequenceName;
-    dom.btnInferTree.disabled = !(hasAlignment && hasFounder);
+    dom.btnInferTree.disabled = !hasAlignment;
 }
 
 function enableButtonsAfterFounder() {
-    syncInferButtonWithFounder();
+    syncInferButtonEnabled();
 }
 
 function enableButtonsAfterGrouping() {
@@ -1370,8 +1379,13 @@ function enableButtonsAfterGrouping() {
 }
 
 function enableButtonsAfterInference() {
-    // Enable Reroot and Clear Tree buttons after successful tree inference
+    // Enable all tree-dependent tools once a phylogeny exists (ladderize not required)
     if (dom.btnRerootTree) dom.btnRerootTree.disabled = false;
+    if (dom.btnLadderizeTree) dom.btnLadderizeTree.disabled = false;
+    if (dom.btnMds) dom.btnMds.disabled = false;
+    if (dom.btnHistogram) dom.btnHistogram.disabled = false;
+    if (dom.btnExportTree) dom.btnExportTree.disabled = false;
+    if (dom.btnExportTreeSvg) dom.btnExportTreeSvg.disabled = false;
     if (dom.btnClearTree) dom.btnClearTree.disabled = false;
 }
 
@@ -1381,9 +1395,8 @@ function enableButtonsAfterReroot() {
 }
 
 function enableButtonsAfterLadderize() {
-    // Enable Histogram, Cluster, and tree export buttons after successful ladderize
+    // Enable Histogram and tree export after successful ladderize
     if (dom.btnHistogram) dom.btnHistogram.disabled = false;
-    if (dom.btnMds) dom.btnMds.disabled = false;
     if (dom.btnExportTree) dom.btnExportTree.disabled = false;
     if (dom.btnExportTreeSvg) dom.btnExportTreeSvg.disabled = false;
 }
@@ -2468,7 +2481,7 @@ function undo() {
     state.founderSequenceName = prev.founderName || null;
     if(prev.refIdx < state.rawSequences.length) state.refIndex = prev.refIdx;
     else state.refIndex = 0;
-    syncInferButtonWithFounder();
+    syncInferButtonEnabled();
     
     recalc();
 }
@@ -2666,7 +2679,7 @@ function dpiDaysFromTreeDiameter(diameter, dsr = getGroupDpiDailySubstitutionRat
     return Math.round(diameter / (2 * dsr));
 }
 
-/** Snapshot current etd for k-DPIs target max-depth default (alignment load / dsr dialog).
+/** Snapshot current etd for k-DPI target max-depth default (alignment load / dsr dialog).
  *  Also seeds tree-SVG Mutations/day (MPD) from the session dsr. */
 function snapshotEtdAtLoad() {
     const dsr = getGroupDpiDailySubstitutionRate();
@@ -2675,7 +2688,7 @@ function snapshotEtdAtLoad() {
     return state.etdAtLoad;
 }
 
-/** Default k-DPIs target max depth: etd from load, else live etd. */
+/** Default k-DPI target max depth: etd from load, else live etd. */
 function getDefaultKDpisTargetDiameter() {
     if (state.etdAtLoad != null && Number.isFinite(state.etdAtLoad) && state.etdAtLoad >= 0) {
         return state.etdAtLoad;
@@ -4638,10 +4651,6 @@ function showInferModal() {
         alert("Need at least 2 sequences to infer a tree.");
         return;
     }
-    if (!state.founderSequenceName) {
-        alert("Please add a founder before inferring a tree.");
-        return;
-    }
     state.pendingRootAndLadderize = false;
     document.getElementById('infer-overlay').style.display = 'flex';
 }
@@ -4662,7 +4671,7 @@ function runInferTask() {
         return;
     }
 
-    // Disable buttons that require ladderize (will be re-enabled after ladderize)
+    // Temporarily disable tree-dependent tools while a new tree is inferred
     if (dom.btnHistogram) dom.btnHistogram.disabled = true;
     if (dom.btnMds) dom.btnMds.disabled = true;
     if (dom.btnExportTree) dom.btnExportTree.disabled = true;
@@ -4730,11 +4739,9 @@ function maybeRootAndLadderizeAfterInfer() {
     if (!state.pendingRootAndLadderize) return;
     state.pendingRootAndLadderize = false;
     if (!state.tree || !state.tree.root) return;
-    if (!state.founderSequenceName) {
-        console.warn('Root & ladderize skipped: no founder designated.');
-        return;
+    if (state.founderSequenceName) {
+        rerootTreeOnTarget('founder', { skipSave: true });
     }
-    rerootTreeOnTarget('founder', { skipSave: true });
     if (state.tree && state.tree.root) {
         ladderizeTree('depth', { skipSave: true });
     }
@@ -5191,8 +5198,8 @@ function getSvgTreeTitleLines() {
             clusterLabel = 'UMAP';
         } else if (m === 'mds' || m === 'MDS') {
             clusterLabel = 'MDS';
-        } else if (m === 'k-dpis' || m === 'k-DPIs' || m === 'kDPIs') {
-            clusterLabel = 'k-DPIs';
+        } else if (m === 'k-dpis' || m === 'k-DPI' || m === 'k-DPIs' || m === 'kDPIs') {
+            clusterLabel = 'k-DPI';
         } else {
             clusterLabel = m;
         }
@@ -6277,10 +6284,10 @@ function rerootTreeOnTarget(targetType, options = {}) {
         alert("Please load or infer a tree first.");
         return;
     }
-    
+
     let targetName;
     let targetIndex;
-    
+
     if (targetType === 'subtype') {
         if (state.subtypeIndex >= state.rawSequences.length) {
             alert("No subtype sequence found. Subtype should be the second sequence in the alignment.");
@@ -6289,7 +6296,6 @@ function rerootTreeOnTarget(targetType, options = {}) {
         targetIndex = state.subtypeIndex;
         targetName = state.rawSequences[targetIndex].name;
     } else if (targetType === 'founder') {
-        // Find founder sequence
         targetIndex = -1;
         for (let i = 0; i < state.rawSequences.length; i++) {
             if (isFounderSequenceName(state.rawSequences[i].name)) {
@@ -6307,418 +6313,130 @@ function rerootTreeOnTarget(targetType, options = {}) {
         return;
     }
     if (!options.skipSave) saveState();
-    
-    // Find the subtype node first - prefer leaf nodes (actual sequences) over internal nodes with same name
-    // Collect all nodes with matching name, then return the leaf one
-    function findAllNodes(node, name, depth = 0, results = []) {
-        if (node.name === name) {
-            const isLeaf = !node.children || node.children.length === 0;
-            results.push({ node, depth, isLeaf });
-        }
-        for (const child of node.children) {
-            findAllNodes(child, name, depth + 1, results);
-        }
-        return results;
-    }
-    
-    const allTargetNodes = findAllNodes(state.tree.root, targetName);
-    
-    // Prefer the leaf node (actual sequence)
-    const leafTarget = allTargetNodes.find(r => r.isLeaf);
-    const targetResult = leafTarget || allTargetNodes[0];
-    
-    if (!targetResult) {
+
+    if (!findTreeLeafByName(state.tree.root, targetName)) {
         const targetLabel = targetType === 'subtype' ? 'Subtype' : 'Founder';
         alert(`${targetLabel} sequence "${targetName}" not found in tree.`);
         return;
     }
-    
-    const targetNode = targetResult.node;
-    const targetDepth = targetResult.depth;
-    const isLeaf = targetResult.isLeaf;
-    
-    if (!isLeaf) {
-        const targetLabel = targetType === 'subtype' ? 'Subtype' : 'Founder';
-        console.warn(`WARNING: ${targetLabel} "${targetName}" is an internal node, not a leaf! This may cause issues.`);
-        console.warn(`${targetLabel} node children: ${targetNode.children.map(c => `${c.name || '(unnamed)'}`).join(', ')}`);
+
+    const newRoot = rerootTree(state.tree.root, targetName);
+    if (!newRoot) return;
+    state.tree.root = newRoot;
+
+    function checkLen(n) {
+        totalLen += (n.len || 0);
+        if (n.children) n.children.forEach(checkLen);
     }
-    
-    // Find the actual parent by traversing the tree structure (don't trust parent reference)
-    function findActualParent(node, target, currentParent = null, depth = 0) {
-        if (node === target) {
-            return { parent: currentParent, depth };
-        }
-        for (const child of node.children) {
-            const found = findActualParent(child, target, node, depth + 1);
-            if (found !== null) return found;
-        }
-        return null;
-    }
-    
-    const actualParentResult = findActualParent(state.tree.root, targetNode);
-    if (!actualParentResult) {
-        const targetLabel = targetType === 'subtype' ? 'Subtype' : 'Founder';
-        console.error(`ERROR: Could not find actual parent of ${targetLabel.toLowerCase()} by tree traversal!`);
-        alert(`Could not determine ${targetLabel.toLowerCase()}'s parent in tree structure.`);
-        return;
-    }
-    
-    const actualParent = actualParentResult.parent;
-    const parentDepth = actualParentResult.depth;
-    
-    if (actualParent) {
-        // Update parent reference to match actual structure
-        if (targetNode.parent !== actualParent) {
-            targetNode.parent = actualParent;
-        }
-    }
-    
-    // Check if target is actually in root's children
-    const targetInRoot = state.tree.root.children.some(c => c === targetNode);
-    
-    if (targetInRoot) {
-        // Target is a direct child of root - just adjust branch lengths, no rerooting needed
-        const targetBranchLength = targetNode.len || 0;
-        const otherChildren = state.tree.root.children.filter(c => c !== targetNode);
-        
-        if (otherChildren.length > 0 && targetBranchLength > 0) {
-            // Distribute 1% of target's branch length evenly among other children
-            const lengthToDistribute = targetBranchLength * 0.01;
-            const lengthPerChild = lengthToDistribute / otherChildren.length;
-            otherChildren.forEach(child => {
-                child.len = (child.len || 0) + lengthPerChild;
-            });
-        }
-        
-        // Set target's branch length to 0
-        targetNode.len = 0;
-        
-        // Recalculate tree layout
-        let totalLen = 0;
-        function checkLen(n) { totalLen += (n.len || 0); n.children.forEach(checkLen); }
-        checkLen(state.tree.root);
-        
-        const useCladogram = (totalLen === 0);
-        let maxDepth = 0;
-        
-        function layoutX(node, currentDepth) {
-            let dist = useCladogram ? (node === state.tree.root ? 0 : 1) : (node.len || 0);
-            node.xDepth = currentDepth + dist;
-            if(node.xDepth > maxDepth) maxDepth = node.xDepth;
-            node.children.forEach(c => layoutX(c, node.xDepth));
-        }
-        
-        layoutX(state.tree.root, 0);
-        state.tree.maxDepth = maxDepth;
-        state.tree.useCladogram = useCladogram;
-        
-        // Enable Ladderize button after successful rerooting (even if just adjusting branch lengths)
-        enableButtonsAfterReroot();
-        
-        recalc();
-        return; // Exit early since we've handled this case
-    }
-    
-    // Reroot on the parent of the subtype node (avoid rerooting on a leaf)
-    if (!actualParent || actualParent === state.tree.root) {
-        // If actual parent is root, we can't reroot on it
-        // Just adjust branch lengths
-    }
-    
-    const parentNode = actualParent;
-    const parentName = parentNode.name || '(unnamed internal node)';
-    
-    let newRoot;
-    
-    // If parent is already the root, we can't reroot on it (would do nothing)
-    if (parentNode === state.tree.root) {
-        newRoot = state.tree.root;
-    } else {
-        // Reroot directly on the parent node object (not by name, since it may be unnamed)
-        try {
-            newRoot = rerootTree(state.tree.root, parentNode, targetType);
-            state.tree.root = newRoot;
-        } catch (error) {
-            console.error(`ERROR in rerootTree:`, error);
-            alert(`Error during rerooting: ${error.message}`);
-            return;
-        }
-    }
-    
-    // Recalculate tree layout
     let totalLen = 0;
-    function checkLen(n) { totalLen += (n.len || 0); n.children.forEach(checkLen); }
     checkLen(newRoot);
-    
+
     const useCladogram = (totalLen === 0);
     let maxDepth = 0;
-    
     function layoutX(node, currentDepth) {
-        let dist = useCladogram ? (node === newRoot ? 0 : 1) : (node.len || 0);
+        const dist = useCladogram ? (node === newRoot ? 0 : 1) : (node.len || 0);
         node.xDepth = currentDepth + dist;
-        if(node.xDepth > maxDepth) maxDepth = node.xDepth;
-        node.children.forEach(c => layoutX(c, node.xDepth));
+        if (node.xDepth > maxDepth) maxDepth = node.xDepth;
+        if (node.children) node.children.forEach(c => layoutX(c, node.xDepth));
     }
-    
     layoutX(newRoot, 0);
     state.tree.maxDepth = maxDepth;
     state.tree.useCladogram = useCladogram;
-    
-    // Adjust branch lengths: find target and if it's a direct child of new root,
-    // set its branch length to 0 and distribute 1% of its length to other children
-    function findTargetNodeInTree(node) {
-        if (node.name === targetName && (!node.children || node.children.length === 0)) {
-            return node; // Found leaf node with target name
-        }
-        for (const child of node.children) {
-            const found = findTargetNodeInTree(child);
-            if (found) return found;
-        }
-        return null;
-    }
-    
-    const targetNodeAfterReroot = findTargetNodeInTree(newRoot);
-    if (targetNodeAfterReroot && targetNodeAfterReroot.parent === newRoot) {
-        const targetBranchLength = targetNodeAfterReroot.len || 0;
-        const otherChildren = newRoot.children.filter(c => c !== targetNodeAfterReroot);
-        
-        if (otherChildren.length > 0 && targetBranchLength > 0) {
-            // Distribute 1% of target's branch length evenly among other children
-            const lengthToDistribute = targetBranchLength * 0.01;
-            const lengthPerChild = lengthToDistribute / otherChildren.length;
-            otherChildren.forEach(child => {
-                child.len = (child.len || 0) + lengthPerChild;
-            });
-        }
-        
-        // Set target's branch length to 0
-        targetNodeAfterReroot.len = 0;
-        
-        // Recalculate layout again after branch length adjustment
-        totalLen = 0;
-        checkLen(newRoot);
-        const useCladogram2 = (totalLen === 0);
-        maxDepth = 0;
-        layoutX(newRoot, 0);
-        state.tree.maxDepth = maxDepth;
-        state.tree.useCladogram = useCladogram2;
-    }
-    
-    // Enable Ladderize button after successful rerooting
+    state.treeDiameter = computePhylogenyTreeDiameter(newRoot);
+    updatePhylogenyDiameterDisplay(state.treeDiameter);
+
     enableButtonsAfterReroot();
-    
+    refreshGroupDpiEstimates();
+    if (state.leafClusters && state.leafClusters.size > 0) {
+        refreshClusterDpiEstimates();
+    }
+    updateColorLegend();
     recalc();
 }
 
-function rerootTree(root, targetNode, targetType = 'subtype') {
-    // If targetNode is a string (name), find the node first
-    if (typeof targetNode === 'string') {
-        function findNode(node, name) {
-            if (node.name === name) {
-                return node;
-            }
-            for (const child of node.children) {
-                const found = findNode(child, name);
-                if (found) return found;
-            }
-            return null;
+function setTreeParentReferences(node, parent) {
+    if (!node) return;
+    node.parent = parent || null;
+    if (!node.children) node.children = [];
+    for (let i = 0; i < node.children.length; i++) {
+        setTreeParentReferences(node.children[i], node);
+    }
+}
+
+function findTreeLeafByName(root, name) {
+    const matches = [];
+    function walk(node) {
+        if (!node) return;
+        if (node.name === name) matches.push(node);
+        if (node.children) {
+            for (let i = 0; i < node.children.length; i++) walk(node.children[i]);
         }
-        const foundNode = findNode(root, targetNode);
-        if (!foundNode) {
-            console.warn(`Node "${targetNode}" not found in tree. Tree not rerooted.`);
+    }
+    walk(root);
+    const leaf = matches.find(n => !n.children || n.children.length === 0);
+    return leaf || matches[0] || null;
+}
+
+/**
+ * Reroot so the target leaf is an outgroup child of a new root.
+ * The edge to that leaf is bisected (ℓ/2 on both sides), matching tree_clustering.py.
+ * Pairwise tip path distances are preserved.
+ * @param {object} root
+ * @param {object|string} leafOrName Leaf node or leaf name
+ * @returns {object} new root
+ */
+function rerootTree(root, leafOrName) {
+    if (!root) return root;
+    let leaf = leafOrName;
+    if (typeof leafOrName === 'string') {
+        leaf = findTreeLeafByName(root, leafOrName);
+        if (!leaf) {
+            console.warn(`Node "${leafOrName}" not found in tree. Tree not rerooted.`);
             return root;
         }
-        targetNode = foundNode;
-    }
-    
-    // If target is already the root, no need to reroot
-    if (targetNode === root) {
-        return root;
-    }
-    
-    // Ensure parent references are set correctly by traversing the tree
-    function setParentReferences(node, parent = null) {
-        node.parent = parent;
-        if (node.children) {
-            for (const child of node.children) {
-                setParentReferences(child, node);
-            }
+        if (leaf.children && leaf.children.length > 0) {
+            console.warn(`WARNING: "${leafOrName}" is an internal node, not a leaf.`);
         }
     }
-    setParentReferences(root, null);
-    
-    // Build path from target to root using tree traversal (more reliable than parent chain)
-    function findPathToRoot(target, rootNode) {
-        // First, find the path by traversing from root to target
-        function findPathFromRoot(node, targetNode, currentPath = []) {
-            if (node === targetNode) {
-                return [...currentPath, node];
-            }
-            if (node.children) {
-                for (const child of node.children) {
-                    const result = findPathFromRoot(child, targetNode, [...currentPath, node]);
-                    if (result) {
-                        return result;
-                    }
-                }
-            }
-            return null;
-        }
-        
-        const pathFromRoot = findPathFromRoot(rootNode, target);
-        if (!pathFromRoot) {
-            console.error(`ERROR: Could not find path from root to target node: ${target.name || '(unnamed)'}`);
-            return null;
-        }
-        
-        // Reverse the path to get path from target to root
-        return pathFromRoot.reverse();
+    if (!leaf) return root;
+    setTreeParentReferences(root, null);
+    if (!leaf.parent) return root;
+
+    const path = [];
+    let cur = leaf;
+    while (cur) {
+        path.push(cur);
+        cur = cur.parent;
     }
-    
-    const path = findPathToRoot(targetNode, root);
-    if (!path) {
-        return root; // Can't reroot if path not found
-    }
-    
-    // Verify path is valid (target should be first, root should be last)
-    if (path[0] !== targetNode || path[path.length - 1] !== root) {
-        console.error(`ERROR: Invalid path structure! Path length: ${path.length}`);
-        return root;
-    }
-    
-    // Reverse the path to reroot, preserving branch lengths and all connections
-    // We need to reverse each edge in the path while preserving all other children
-    // Process from target (path[0]) to root (path[path.length-1])
-    for (let i = 0; i < path.length - 1; i++) {
-        const node = path[i];        // Current node in path
-        const parent = path[i + 1]; // Parent of current node
-        
-        // Store the branch length from node to parent
-        const branchLength = node.len || 0;
-        
-        // Remove node from parent's children array (if it's there)
-        if (parent.children) {
-        const parentChildIndex = parent.children.indexOf(node);
-        if (parentChildIndex !== -1) {
-            parent.children.splice(parentChildIndex, 1);
-            }
-        }
-        
-        // Initialize node.children if it doesn't exist (for leaf nodes)
-        if (!node.children) {
-            node.children = [];
-        }
-        
-        // Add parent to node's children (this reverses the edge)
-        // But only if parent is not already a child (avoid duplicates)
-        if (!node.children.includes(parent)) {
-            node.children.push(parent);
-        }
-        
-        // Update branch lengths
-        parent.len = branchLength; // The branch from node to parent becomes parent's length
-        if (i === 0) {
-            node.len = 0; // The new root has no branch length
-        }
-    }
-    
-    // Now update all parent references in one pass
-    // The new root (targetNode) has no parent
-    targetNode.parent = null;
-    
-    // For each node in the path (except the first which is the new root),
-    // set its parent to be the previous node in the path
-    for (let i = 1; i < path.length; i++) {
+    const parent = path[1];
+    if (!parent) return root;
+
+    parent.children = (parent.children || []).filter(c => c !== leaf);
+    leaf.parent = null;
+    const origLens = path.map(n => n.len || 0);
+    const leafEdge = origLens[0];
+
+    // Invert the spine parent → … → old_root so `parent` roots the remaining tree.
+    for (let i = 1; i < path.length - 1; i++) {
         const node = path[i];
-        const newParent = path[i - 1];
-        node.parent = newParent;
+        const up = path[i + 1];
+        if (!node.children) node.children = [];
+        up.children = (up.children || []).filter(c => c !== node);
+        if (node.children.indexOf(up) === -1) node.children.push(up);
+        up.len = origLens[i];
+        up.parent = node;
     }
-    
-    // Rebuild parent references for the entire tree to ensure consistency
-    function rebuildAllParentReferences(node, parent = null) {
-        node.parent = parent;
-        if (node.children) {
-            for (const child of node.children) {
-                rebuildAllParentReferences(child, node);
-            }
-        }
-    }
-    rebuildAllParentReferences(targetNode, null);
-    
-    // Verify tree structure after rerooting (simplified - just check parent-child consistency)
-    // Note: We don't check for cycles here as the tree structure should be valid after rerooting
-    // The depth limit is just a safety check
-    function verifyTreeStructure(node, depth = 0, issues = []) {
-        if (depth > 1000) {
-            // This is a very deep tree, but not necessarily an error
-            return issues;
-        }
-        
-        // Check parent-child consistency
-        if (node.children) {
-            for (const child of node.children) {
-                if (child.parent !== node) {
-                    issues.push(`Child "${child.name || '(unnamed)'}" parent mismatch at depth ${depth}`);
-                }
-                // Recursively verify child
-                verifyTreeStructure(child, depth + 1, issues);
-            }
-        }
-        
-        return issues;
-    }
-    
-    const structureIssues = verifyTreeStructure(targetNode);
-    if (structureIssues.length > 0) {
-        console.warn(`Tree structure issues after rerooting:`, structureIssues);
-        // Don't fail - just warn, as the tree might still be usable
-    }
-    
-    // Move root closer to subtype by adjusting branch lengths
-    // Find subtype node and if it's a direct child, set its branch length to 0
-    // and distribute its original length among other children
-    const subtypeName = state.rawSequences[state.subtypeIndex]?.name;
-    if (subtypeName) {
-        function findSubtypeInTree(node, name) {
-            if (node.name === name) {
-                return node;
-            }
-            for (const child of node.children) {
-                const found = findSubtypeInTree(child, name);
-                if (found) return found;
-            }
-            return null;
-        }
-        
-        const subtypeNode = findSubtypeInTree(targetNode, subtypeName);
-        if (subtypeNode && subtypeNode.parent === targetNode) {
-            // Subtype is a direct child of the new root
-            const subtypeBranchLength = subtypeNode.len || 0;
-            
-            // Get all other children of the root (excluding subtype)
-            const otherChildren = targetNode.children.filter(c => c !== subtypeNode);
-            
-            if (otherChildren.length > 0 && subtypeBranchLength > 0) {
-                // Distribute 1% of subtype's branch length evenly among other children
-                const lengthToDistribute = subtypeBranchLength * 0.01;
-                const lengthPerChild = lengthToDistribute / otherChildren.length;
-                
-                otherChildren.forEach(child => {
-                    const oldLength = child.len || 0;
-                    child.len = oldLength + lengthPerChild;
-                });
-            }
-            
-            // Set subtype's branch length to 0 (moves it closer to root)
-            subtypeNode.len = 0;
-        } else if (subtypeNode) {
-            // Subtype found but not a direct child of root - no adjustment needed
-        }
-        // If subtype not found: expected when subtype was excluded from tree inference; no warning
-    }
-    
-    // The target node is now the root
-    return targetNode;
+
+    const rest = parent;
+    const newRoot = { children: [], name: null, len: 0, parent: null };
+    const half = leafEdge / 2;
+    leaf.len = half;
+    rest.len = half;
+    leaf.parent = newRoot;
+    rest.parent = newRoot;
+    newRoot.children = [leaf, rest];
+    setTreeParentReferences(newRoot, null);
+    return newRoot;
 }
 
 // --- Newick Parser ---
@@ -6965,7 +6683,7 @@ function parseTree(newick, isIndexed = false, shouldReroot = true) {
     state.treeDiameter = computePhylogenyTreeDiameter(root);
     updatePhylogenyDiameterDisplay(state.treeDiameter);
     setTreeWidth(200);
-    // Don't enable Histogram, Cluster, or tree export here - they require ladderize first
+    // Histogram, Cluster, and tree/SVG export are enabled via enableButtonsAfterInference
     
     // Enable Reroot button after successful tree inference/loading
     enableButtonsAfterInference();
@@ -7962,9 +7680,9 @@ function performUMAP(distanceMatrix, nNeighbors = 15, spread = 1.0, minDist = 0.
     }
 }
 
-// --- k-DPIs: divisive clustering by phylogeny-node bipartitions (max depth / LCA height) ---
+// --- k-DPI: divisive clustering by phylogeny-node bipartitions (max depth / LCA height) ---
 
-/** Session cache: tree path distances for k-DPIs splits and tree-based DPI. */
+/** Session cache: tree path distances for k-DPI splits and tree-based DPI. */
 let kDpisDistCache = null; // legacy sequence p-distance cache (unused for DPI)
 let kDpisTreeDistCache = null;
 
@@ -7973,7 +7691,7 @@ function clearKDpisDistCache() {
     kDpisTreeDistCache = null;
 }
 
-/** Build / replace the k-DPIs pairwise sequence p-distance cache (for DPI annotation). */
+/** Build / replace the k-DPI pairwise sequence p-distance cache (for DPI annotation). */
 function buildKDpisDistCache(entries) {
     const n = entries.length;
     const indexByName = new Map();
@@ -8005,7 +7723,7 @@ function ensureKDpisTreeParents(node, parent) {
 }
 
 /**
- * Build tree geometry cache for k-DPIs splits (leaf nodes, root distances, LCA).
+ * Build tree geometry cache for k-DPI splits (leaf nodes, root distances, LCA).
  * Pairwise path matrix is no longer required for splitting.
  * Returns null if the tree is missing or any entry has no matching leaf.
  */
@@ -8183,7 +7901,7 @@ function maxDepthFromTreeLeafNodes(leafNodes) {
     return maxD;
 }
 
-/** Max depth (LCA height) among entries; stored on k-DPIs nodes as `.diameter`. */
+/** Max depth (LCA height) among entries; stored on k-DPI nodes as `.diameter`. */
 function diameterForKDpisEntries(entries) {
     if (!entries || entries.length < 2) return 0;
     if (!kDpisTreeDistCache) {
@@ -8322,7 +8040,7 @@ function bestKDpisBipartition(entries, minSize, opts) {
     return { left: bestLeft, right: bestRight, score: bestMeta.score };
 }
 
-/** Create a k-DPIs tree node from sequence entries. */
+/** Create a k-DPI tree node from sequence entries. */
 function makeKDpisNode(entries) {
     return {
         entries: entries.slice(),
@@ -8488,7 +8206,7 @@ function buildKDpisPhyloTipYOrder() {
     return order;
 }
 
-/** Representative vertical position of a k-DPIs leaf (min tip yRow among members; lower = higher on tree). */
+/** Representative vertical position of a k-DPI leaf (min tip yRow among members; lower = higher on tree). */
 function kDpisLeafPhyloY(leaf, tipYOrder) {
     if (!leaf || !leaf.entries || leaf.entries.length === 0) return Infinity;
     let minY = Infinity;
@@ -8606,7 +8324,7 @@ function getKDpisLeafByNormName() {
     return leafByNormName;
 }
 
-/** Incoming branch length (node.len) for each k-DPIs entry from the current tree. */
+/** Incoming branch length (node.len) for each k-DPI entry from the current tree. */
 function getKDpisIncomingBranchLengths(entries) {
     if (!entries || entries.length === 0) return [];
     const leafByNormName = getKDpisLeafByNormName();
@@ -8649,7 +8367,7 @@ function partitionKDpisLongBranchNoise(entries, maxBranchLength) {
     return { clusterEntries, preNoiseEntries };
 }
 
-/** k-DPIs root with optional pre-noise entries excluded from splits but labelled noise on Accept. */
+/** k-DPI root with optional pre-noise entries excluded from splits but labelled noise on Accept. */
 function makeKDpisClusterRoot(clusterEntries, preNoiseEntries) {
     const root = makeKDpisNode(clusterEntries);
     root.preNoiseEntries = (preNoiseEntries && preNoiseEntries.length) ? preNoiseEntries.slice() : [];
@@ -8844,7 +8562,7 @@ function acceptKDpisClustering(nameToCluster, targetDpiDays) {
     });
     state.leafClusters = updatedLeafClusters;
     rekeySequenceGroupsToCurrentNames();
-    state.lastAcceptedClusterMethod = 'k-DPIs';
+    state.lastAcceptedClusterMethod = 'k-DPI';
     if (targetDpiDays != null && Number.isFinite(targetDpiDays) && targetDpiDays >= 0) {
         state.kDpiTargetDays = Math.round(targetDpiDays);
         const daysEl = document.getElementById('tree-svg-dpi-days');
@@ -8856,18 +8574,23 @@ function acceptKDpisClustering(nameToCluster, targetDpiDays) {
     recalc();
 }
 
+function hideKDpisHelpOverlay() {
+    const el = document.getElementById('kdpis-help-overlay');
+    if (el) el.style.display = 'none';
+}
+
 function showKDpisModal() {
     if (!state.rawSequences || state.rawSequences.length === 0) {
         alert('Load an alignment first.');
         return;
     }
     if (!state.tree || !state.tree.root) {
-        alert('Load or infer a tree first (k-DPIs splits use tree pairwise distances).');
+        alert('Load or infer a tree first (k-DPI splits use tree pairwise distances).');
         return;
     }
     const entries = collectKDpisEntries();
     if (entries.length < 1) {
-        alert('No sample sequences available for k-DPIs (REF / SubType / PDB excluded).');
+        alert('No sample sequences available for k-DPI (REF / SubType / PDB excluded).');
         return;
     }
     const noiseRemovalChk = document.getElementById('chk-kdpis-remove-branch-outliers');
@@ -9151,6 +8874,7 @@ function showKDpisModal() {
     document.getElementById('btn-kdpis-cancel').onclick = () => {
         if (busy) return;
         clearKDpisDistCache();
+        hideKDpisHelpOverlay();
         overlay.style.display = 'none';
         const clusterPattern = getClusterSuffixPattern();
         if (state.rawSequences) {
@@ -9184,9 +8908,11 @@ function showKDpisModal() {
         if (busy) return;
         acceptKDpisClustering(currentNameToCluster, readTargetDpi());
         clearKDpisDistCache();
+        hideKDpisHelpOverlay();
         overlay.style.display = 'none';
     };
 
+    hideKDpisHelpOverlay();
     overlay.style.display = 'flex';
     // Partition long-branch outliers as pre-noise first; caches/splits use remaining tips only
     (async () => {
@@ -9197,6 +8923,7 @@ function showKDpisModal() {
         try {
             root = buildClusterRoot();
             if (!root) {
+                hideKDpisHelpOverlay();
                 overlay.style.display = 'none';
                 clearKDpisDistCache();
                 return;
@@ -11083,7 +10810,7 @@ function ladderizeTree(mode, options = {}) {
     
     applyTreeOrder(state.tree.root);
     
-    // Enable Histogram, Cluster, and tree export buttons after successful ladderize
+    // Enable Histogram and tree export after successful ladderize
     enableButtonsAfterLadderize();
     
     recalc();
