@@ -51,7 +51,7 @@ These values appear in the Phylogeny header and in several tools:
 - Toggling after load **clears grouping, tree, and clustering**.
 
 ### Collapse
-- Read an integer **collapse count** from a field in each sequence name (delimiter + 1-based field number). Counts weight consensus, medoid, and related tallies.
+- Read an integer **collapse count** from a field in each sequence name (delimiter + 1-based field number). Counts weight consensus, medoid, logos, and related tallies.
 - Leave the field number empty to clear collapse.
 
 ### Group
@@ -214,7 +214,7 @@ Opens a method selector, then the chosen interface. Requires a phylogeny; **ladd
 - Restrict the alignment display to one epitope’s regions, or **None** for all columns.
 
 ### Show Logo
-- Sequence logo for the selected epitope (requires a selection).
+- Sequence logo for the selected epitope (requires a selection). When **Collapse** is active, letter heights use collapse-weighted frequencies within each group.
 
 ### Export Epitopes
 - Download current epitopes as CSV (same format as load). Disabled when empty.

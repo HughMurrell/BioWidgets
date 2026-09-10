@@ -14217,18 +14217,20 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
             
             // Count variants at this alignment column (only if different from bottom)
             // Include gaps as variants (represented by nabla character)
+            // Weight by collapse count when Collapse is active (else weight = 1)
             for (const seq of groupSeqs) {
                 if (col < seq.seq.length) {
+                    const w = getCollapseWeightForLeafName(seq.name);
                     const aa = seq.seq[col];
                     if (aa === '-') {
                         // Gap is a variant if bottom sequence doesn't have a gap
                         if (!bottomIsGap) {
-                            freqMap.set('∇', (freqMap.get('∇') || 0) + 1);
+                            freqMap.set('∇', (freqMap.get('∇') || 0) + w);
                         }
                     } else {
                         // Amino acid is a variant if different from bottom (or if bottom is a gap)
                         if (bottomIsGap || aa !== bottomAA) {
-                            freqMap.set(aa, (freqMap.get(aa) || 0) + 1);
+                            freqMap.set(aa, (freqMap.get(aa) || 0) + w);
                         }
                     }
                 }
@@ -14257,12 +14259,18 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
             }
         }
         
+        // Denominator for within-group frequencies (and row label): collapse-weighted size
+        let weightedCount = 0;
+        for (const seq of groupSeqs) {
+            weightedCount += getCollapseWeightForLeafName(seq.name);
+        }
+
         groupFrequencies.push({
             groupId,
             groupValue,
             frequencies, // Keep for compatibility
             columnFrequencies, // Per-column frequencies for accurate display
-            count: groupSeqs.length
+            count: weightedCount
         });
     }
     
