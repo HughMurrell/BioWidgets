@@ -209,12 +209,15 @@ Opens a method selector, then the chosen interface. Requires a phylogeny; **ladd
   `VRC01,197:198,230,276,278:282,365:371,427:428,430,455:463,465,469,471:474`
 
 - Merges with existing epitopes (same name overwrites). Loading in NT mode switches the view to AA.
+- Epitopes and the current selection **persist** across alignment loads (and Clear Alignment). After loading a new alignment you do not need to reload the CSV; Select / Export / Show Logo stay available, and the selected epitope is remapped to the new reference.
 
 ### Select Epitope
 - Restrict the alignment display to one epitope’s regions, or **None** for all columns.
 
 ### Show Logo
 - Sequence logo for the selected epitope (requires a selection). When **Collapse** is active, letter heights use collapse-weighted frequencies within each group.
+- **Palette** control on the logo display: **ALIGNMENT** or **BIOCHEMICAL** (default). Independent of the app-wide AA palette.
+- After a new alignment load, if an epitope was already selected, **Show Logo** remains enabled (grouping is still required).
 
 ### Export Epitopes
 - Download current epitopes as CSV (same format as load). Disabled when empty.

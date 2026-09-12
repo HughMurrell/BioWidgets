@@ -959,9 +959,9 @@
         <div class="help-row"><span class="help-key">Clear Tree</span> <span>Remove current tree</span></div>
         <div class="help-row"><span class="help-key">View Mode</span> <span>Switch between Nucleotide (NT) and Amino Acid (AA) view</span></div>
         <div class="help-row"><span class="help-key">Highlighter</span> <span>Highlight differences with respect to Reference, SubType, or Founder</span></div>
-        <div class="help-row"><span class="help-key">Load Epitopes</span> <span>Load epitope descriptions from CSV file</span></div>
+        <div class="help-row"><span class="help-key">Load Epitopes</span> <span>Load epitope descriptions from CSV (persist across alignment loads)</span></div>
         <div class="help-row"><span class="help-key">Select Epitope</span> <span>Select an epitope to restrict display</span></div>
-        <div class="help-row"><span class="help-key">Show Logo</span> <span>Generate sequence logo for selected epitope</span></div>
+        <div class="help-row"><span class="help-key">Show Logo</span> <span>Generate sequence logo for selected epitope (palette: ALIGNMENT / BIOCHEMICAL; selection persists)</span></div>
         <div class="help-row"><span class="help-key">3D Structure</span> <span>Load a PDB/CIF file, or enter a 4-character PDB ID and click Fetch to load from RCSB. Chains are added as sequences (xxxx_Chain_y [PDB_y]) and aligned to the reference (AA mode).</span></div>
         <div class="help-row"><span class="help-key">View 3D</span> <span>Display the loaded PDB structure in a 3D viewer window</span></div>
         <div class="help-row"><span class="help-key">IUPAC</span> <span>Full IUPAC ambiguity codes supported in Nucleotide view</span></div>
@@ -1224,7 +1224,8 @@ const state = {
     pdbFileContent: null, // Raw PDB/CIF text for 3D viewer (set when Load PDB/CIF or fetch by ID)
     pdbFileName: null,    // PDB/CIF file name for 3D overlay title
     pdbFormat: 'pdb',   // 'pdb' or 'cif' for 3Dmol addModel
-    logoCharWidth: 15   // Horizontal gap between logo characters (10–20); used for drawing and region separators
+    logoCharWidth: 15,  // Horizontal gap between logo characters (10–20); used for drawing and region separators
+    logoAAPalette: 'Biochemical'  // Logo-only AA palette (independent of app-wide AA palette)
 };
 
 // --- DOM ---
@@ -1356,8 +1357,48 @@ function enableButtonsAfterLoad() {
     if (dom.btnLoadEpitopes) dom.btnLoadEpitopes.disabled = false;
     // Infer enables once an alignment is loaded (founder optional)
     syncInferButtonEnabled();
+    // Epitopes (and selection) persist across alignment loads
+    syncEpitopeUiAfterAlignmentChange();
     // Add Founder and Sort remain disabled until grouping is done
     // Histogram, Cluster, and tree/SVG export enable once a tree exists
+}
+
+/**
+ * Keep loaded epitopes and the current selection across alignment changes.
+ * Re-enable Select / Export / Show Logo as appropriate, and remap epitope
+ * columns to the new reference so Show Logo works without reloading CSV.
+ */
+function syncEpitopeUiAfterAlignmentChange() {
+    const hasEpitopes = !!(state.epitopes && state.epitopes.length > 0);
+    if (!hasEpitopes) {
+        if (dom.btnSelectEpitope) dom.btnSelectEpitope.disabled = true;
+        if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
+        if (dom.btnExportEpitopes) dom.btnExportEpitopes.disabled = true;
+        state.selectedEpitope = null;
+        state.epitopeColumns = null;
+        return;
+    }
+
+    // Epitopes are AA-coordinate based; match loadEpitopes() behaviour
+    if (state.rawSequences && state.rawSequences.length > 0) {
+        if (!state.isAASequence) {
+            convertRawSequencesNTtoAA();
+            setMode('AA', true);
+        } else if (state.mode === 'NT') {
+            setMode('AA', state.isAASequence);
+        }
+    }
+
+    if (dom.btnSelectEpitope) dom.btnSelectEpitope.disabled = false;
+    if (dom.btnExportEpitopes) dom.btnExportEpitopes.disabled = false;
+
+    if (state.selectedEpitope) {
+        // Recompute alignment columns for the new refMap; enables Show Logo
+        selectEpitope(state.selectedEpitope);
+    } else {
+        state.epitopeColumns = null;
+        if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
+    }
 }
 
 /** Enable Infer when an alignment with at least two sequences is loaded (founder optional). */
@@ -11087,9 +11128,11 @@ function selectEpitope(epitopeName) {
     if (!epitopeName) {
         // Clear epitope selection - show all
         state.epitopeColumns = null;
-        // Disable Show Logo button when epitope selection is cleared
-    if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
-    if (dom.btnExportEpitopes) dom.btnExportEpitopes.disabled = true;
+        // Disable Show Logo when no epitope is selected; Export stays available if epitopes exist
+        if (dom.btnShowLogo) dom.btnShowLogo.disabled = true;
+        if (dom.btnExportEpitopes) {
+            dom.btnExportEpitopes.disabled = !(state.epitopes && state.epitopes.length > 0);
+        }
         recalc();
         return;
     }
@@ -13696,10 +13739,25 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                             var gapValue = document.createElement('span');
                             gapValue.textContent = String(state.logoCharWidth != null ? state.logoCharWidth : 15);
                             gapValue.style.cssText = 'font-size:12px;';
+                            var paletteLabel = document.createElement('label');
+                            paletteLabel.textContent = 'Palette: ';
+                            paletteLabel.style.cssText = 'margin-right:8px;font-size:12px;margin-left:12px;';
+                            var paletteSelect = document.createElement('select');
+                            paletteSelect.style.cssText = 'padding:2px 4px;font-size:12px;vertical-align:middle;';
+                            [
+                                { value: 'Alignment (IUPAC)', label: 'ALIGNMENT' },
+                                { value: 'Biochemical', label: 'BIOCHEMICAL' }
+                            ].forEach(function (opt) {
+                                var o = document.createElement('option');
+                                o.value = opt.value;
+                                o.textContent = opt.label;
+                                paletteSelect.appendChild(o);
+                            });
+                            paletteSelect.value = state.logoAAPalette || 'Biochemical';
                             function renderRegionLogo() {
                                 var oldSvg = clickPopupLogoContainer.querySelector('svg');
                                 if (oldSvg) oldSvg.remove();
-                                var svg = generateSequenceLogo(epitopeRegion, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
+                                var svg = generateSequenceLogo(epitopeRegion, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue, paletteSelect.value);
                                 clickPopupLogoContainer.appendChild(svg);
                             }
                             slider.addEventListener('input', function (e) {
@@ -13712,12 +13770,18 @@ function renderPdb3dWithChains(selectedChainIds, intrinsicChainIds) {
                                 gapValue.textContent = String(Math.round(state.logoCharWidth));
                                 renderRegionLogo();
                             });
+                            paletteSelect.addEventListener('change', function () {
+                                state.logoAAPalette = paletteSelect.value;
+                                renderRegionLogo();
+                            });
                             sliderContainer.appendChild(sliderLabel);
                             sliderContainer.appendChild(slider);
                             sliderContainer.appendChild(sliderValue);
                             sliderContainer.appendChild(gapLabel);
                             sliderContainer.appendChild(gapSlider);
                             sliderContainer.appendChild(gapValue);
+                            sliderContainer.appendChild(paletteLabel);
+                            sliderContainer.appendChild(paletteSelect);
                             clickPopupLogoContainer.innerHTML = '';
                             clickPopupLogoContainer.appendChild(sliderContainer);
                             renderRegionLogo();
@@ -14047,11 +14111,28 @@ function showSequenceLogo() {
         const gapValue = document.createElement('span');
         gapValue.textContent = String(state.logoCharWidth != null ? state.logoCharWidth : 15);
         gapValue.style.cssText = 'display: inline-block; min-width: 24px; font-weight: bold;';
+
+        const paletteLabel = document.createElement('label');
+        paletteLabel.textContent = 'Palette: ';
+        paletteLabel.style.cssText = 'display: inline-block; margin: 0 10px 0 20px; font-weight: bold;';
+
+        const paletteSelect = document.createElement('select');
+        paletteSelect.style.cssText = 'padding: 2px 6px; font-size: 13px;';
+        [
+            { value: 'Alignment (IUPAC)', label: 'ALIGNMENT' },
+            { value: 'Biochemical', label: 'BIOCHEMICAL' }
+        ].forEach(opt => {
+            const o = document.createElement('option');
+            o.value = opt.value;
+            o.textContent = opt.label;
+            paletteSelect.appendChild(o);
+        });
+        paletteSelect.value = state.logoAAPalette || 'Biochemical';
         
         function regenerateLogo() {
             const oldSvg = modal.querySelector('svg');
             if (oldSvg) oldSvg.remove();
-            const newSvg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
+            const newSvg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue, paletteSelect.value);
             modal.insertBefore(newSvg, sliderContainer.nextSibling);
         }
         
@@ -14066,6 +14147,11 @@ function showSequenceLogo() {
             gapValue.textContent = String(Math.round(state.logoCharWidth));
             regenerateLogo();
         });
+
+        paletteSelect.addEventListener('change', () => {
+            state.logoAAPalette = paletteSelect.value;
+            regenerateLogo();
+        });
         
         sliderContainer.appendChild(sliderLabel);
         sliderContainer.appendChild(slider);
@@ -14073,10 +14159,12 @@ function showSequenceLogo() {
         sliderContainer.appendChild(gapLabel);
         sliderContainer.appendChild(gapSlider);
         sliderContainer.appendChild(gapValue);
+        sliderContainer.appendChild(paletteLabel);
+        sliderContainer.appendChild(paletteSelect);
         modal.appendChild(sliderContainer);
         
-        // Generate the logo with initial power and gap values
-        const svg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue);
+        // Generate the logo with initial power, gap, and palette values
+        const svg = generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerValue, paletteSelect.value);
         modal.appendChild(svg);
         
         // Create button container
@@ -14135,10 +14223,14 @@ function showSequenceLogo() {
     document.body.appendChild(selectorOverlay);
 }
 
-function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerTransform = 1.0) {
-    // Use CONFIG.colors.AA (app-wide palette) so logo matches sequence panel and molecule viewer
+function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomLabel, powerTransform = 1.0, paletteName = null) {
+    // Logo palette is independent of the app-wide AA palette (default: Biochemical)
+    const paletteKey = paletteName || state.logoAAPalette || 'Biochemical';
+    const aaPalette = (CONFIG.colorPalettes && CONFIG.colorPalettes[paletteKey])
+        ? CONFIG.colorPalettes[paletteKey]
+        : (CONFIG.colors.AA || {});
     function aaFill(letter) {
-        return (CONFIG.colors.AA[letter] || CONFIG.colors.AA['default'] || '#000000');
+        return (aaPalette[letter] || aaPalette['default'] || '#000000');
     }
     // The app palette maps '-' to white (useful in the sequence panel background), but
     // the logo background is white too—so gaps would become invisible.
@@ -14748,7 +14840,7 @@ function generateSequenceLogo(epitope, bottomSeq, groupIds, bottomIndex, bottomL
                     ); // Font fallback so ∇ renders even if Courier lacks it
                     text.setAttribute('font-size', baseFontSize.toString());
                     text.setAttribute('font-weight', 'bold');
-                    // Handle gaps (nabla character) and AAs using CONFIG.colors.AA
+                    // Handle gaps (nabla character) and AAs using the selected logo palette
                     if (aa === '∇') {
                         text.setAttribute('fill', gapLogoFill);
                     } else {
