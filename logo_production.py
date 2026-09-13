@@ -72,7 +72,8 @@ COLOR_PALETTE = [
     "#64748b", "#fbbf24", "#a855f7", "#22c55e",
 ]
 
-GAP_LOGO_FILL = "#6b7280"  # nabla ∇
+GAP_LOGO_FILL = "#6b7280"  # nabla / gap glyph
+GAP_GLYPH = "∇"  # internal frequency key
 BOTTOM_LABEL_FILL = "#ff00ff"
 SEPARATOR_COLOR = "#d0d0d0"
 FONT_AA = (
@@ -250,7 +251,7 @@ def fit_font_size(text: str, available_width: float, start: float = 18.0, minimu
 
 
 def aa_fill(letter: str, palette: dict[str, str]) -> str:
-    if letter == "∇":
+    if letter == GAP_GLYPH:
         return GAP_LOGO_FILL
     return palette.get(letter, palette.get("default", "#000000"))
 
@@ -276,6 +277,47 @@ def bold_text_attrs(fill: str, stroke_width: float = 0.85) -> str:
     return (
         f'fill="{fill}" stroke="{fill}" stroke-width="{stroke_width}" '
         f'paint-order="stroke fill" stroke-linejoin="round"'
+    )
+
+
+# Cap-height fraction of font-size for Courier-like capitals (ink height, not
+# the 0.68 stacking advance used between stacked letters in aliViz).
+COURIER_CAP_RATIO = 0.52
+
+
+def nabla_polygon_svg(
+    cx: float,
+    y_base: float,
+    scale_y: float,
+    base_font_size: float,
+    fill: str,
+    stroke_width: float = 0.6,
+) -> str:
+    """
+    Draw nabla as an outlined (unfilled) triangle.
+
+    Height matches Courier capital ink after the same vertical scale used for AA
+    letters (`unit_cap_height * scale_y`). Drawn in final coordinates (no
+    scale transform) so the stroke stays even.
+    """
+    if scale_y <= 0 or base_font_size <= 0:
+        return ""
+    # Same vertical sizing as AA: cap ink at font-size, then × scale_y
+    height = base_font_size * COURIER_CAP_RATIO * scale_y
+    # AA letters use scale(1, sy) so width is not vertically coupled; keep letter-like width
+    width = base_font_size * 0.62
+    half = width / 2.0
+    top_y = y_base - height
+    points = (
+        f"{cx - half:.2f},{top_y:.2f} "
+        f"{cx + half:.2f},{top_y:.2f} "
+        f"{cx:.2f},{y_base:.2f}"
+    )
+    # Outline only — not a solid wedge; stroke scales gently with letter size
+    sw = max(1.25, 0.55 * scale_y + 0.9)
+    return (
+        f'<polygon points="{points}" fill="none" stroke="{fill}" '
+        f'stroke-width="{sw:.2f}" stroke-linejoin="round" stroke-linecap="round"/>'
     )
 
 
@@ -377,8 +419,8 @@ def build_logo_svg(
                 w = weight_for(i)
                 aa = seq[col]
                 if aa == "-":
-                    if not bottom_is_gap:
-                        freq_map["∇"] += w
+                        if not bottom_is_gap:
+                            freq_map[GAP_GLYPH] += w
                 else:
                     if bottom_is_gap or aa != bottom_aa:
                         freq_map[aa] += w
@@ -445,6 +487,7 @@ def build_logo_svg(
     svg_height = title_height + num_groups * group_logo_height + logo_height + pad_v * 2
 
     parts: list[str] = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{svg_width:.2f}" '
         f'height="{svg_height:.2f}" style="background:white;border:1px solid #ccc">',
         f'<text x="{pad_h + 10}" y="{pad_v + font_size}" font-family="sans-serif" '
@@ -519,17 +562,33 @@ def build_logo_svg(
         cx = x_offset + char_w / 2
         if is_gap or is_dot or bottom_aa:
             if is_gap:
-                fill, ch = deepen_hex(GAP_LOGO_FILL), "∇"
+                fill = deepen_hex(GAP_LOGO_FILL)
+                parts.append(
+                    nabla_polygon_svg(
+                        cx,
+                        bottom_logo_y,
+                        scale_y=1.0,
+                        base_font_size=base_font_size,
+                        fill=fill,
+                        stroke_width=0.9,
+                    )
+                )
             elif is_dot:
                 fill, ch = deepen_hex(aa_fill("default", palette)), "."
+                parts.append(
+                    f'<text x="{cx}" y="{bottom_logo_y}" text-anchor="middle" '
+                    f'dominant-baseline="alphabetic" font-family="{FONT_AA}" '
+                    f'font-size="16" font-weight="900" {bold_text_attrs(fill, 0.9)}>'
+                    f"{xmlesc.escape(ch)}</text>"
+                )
             else:
                 fill, ch = deepen_hex(aa_fill(bottom_aa, palette)), bottom_aa  # type: ignore[arg-type]
-            parts.append(
-                f'<text x="{cx}" y="{bottom_logo_y}" text-anchor="middle" '
-                f'dominant-baseline="alphabetic" font-family="{FONT_AA}" '
-                f'font-size="16" font-weight="900" {bold_text_attrs(fill, 0.9)}>'
-                f"{xmlesc.escape(ch)}</text>"
-            )
+                parts.append(
+                    f'<text x="{cx}" y="{bottom_logo_y}" text-anchor="middle" '
+                    f'dominant-baseline="alphabetic" font-family="{FONT_AA}" '
+                    f'font-size="16" font-weight="900" {bold_text_attrs(fill, 0.9)}>'
+                    f"{xmlesc.escape(ch)}</text>"
+                )
 
         # Region boundary coordinate labels
         for r in region_column_ranges:
@@ -587,19 +646,33 @@ def build_logo_svg(
                     char_height = base_height * freq * 3.0
                     if char_height <= 0:
                         continue
-                    scale_y = char_height / base_height
-                    # Stroke width scales inversely with scaleY so visual thickness stays even
-                    stroke_w = 0.9 / max(scale_y, 0.15)
+                    # Visual stacking advance (aliViz); ink height of AAs is shorter
+                    visual_h = cap_height_ratio * char_height
                     fill = deepen_hex(aa_fill(aa, palette))
-                    parts.append(
-                        f'<text x="{cx}" y="{y_cur}" text-anchor="middle" '
-                        f'dominant-baseline="alphabetic" font-family="{FONT_AA}" '
-                        f'font-size="{base_font_size}" font-weight="900" '
-                        f'{bold_text_attrs(fill, stroke_w)} '
-                        f'transform="translate({cx}, {y_cur}) scale(1, {scale_y}) '
-                        f'translate({-cx}, {-y_cur})">{xmlesc.escape(aa)}</text>'
-                    )
-                    y_cur = y_cur - cap_height_ratio * char_height
+                    scale_y = char_height / base_height
+                    stroke_w = 0.9 / max(scale_y, 0.15)
+                    if aa == GAP_GLYPH:
+                        # Same scaleY transform as AA text; unit size = Courier cap ink
+                        parts.append(
+                            nabla_polygon_svg(
+                                cx,
+                                y_cur,
+                                scale_y=scale_y,
+                                base_font_size=base_font_size,
+                                fill=fill,
+                                stroke_width=stroke_w,
+                            )
+                        )
+                    else:
+                        parts.append(
+                            f'<text x="{cx}" y="{y_cur}" text-anchor="middle" '
+                            f'dominant-baseline="alphabetic" font-family="{FONT_AA}" '
+                            f'font-size="{base_font_size}" font-weight="900" '
+                            f'{bold_text_attrs(fill, stroke_w)} '
+                            f'transform="translate({cx}, {y_cur}) scale(1, {scale_y}) '
+                            f'translate({-cx}, {-y_cur})">{xmlesc.escape(aa)}</text>'
+                        )
+                    y_cur = y_cur - visual_h
 
             x_offset += char_w
 
