@@ -84,8 +84,9 @@ For each Newick phylogeny in an input directory it parses days-post-infection
 (DPI) from the filename, groups tip names, selects a founder tip from the
 smallest group id, reroots and ladderizes the tree, runs automatic k-DPI
 bipartition clustering, and writes an annotated linear SVG tree plot.
-With \texttt{--as-is}, founder selection, reroot, and ladderize are skipped so
-clustering uses the loaded topology unchanged.
+\texttt{--no-reroot} skips founder identification and reroot;
+\texttt{--no-ladderize} skips ladderizing. Together they leave the loaded
+topology unchanged.
 Optionally it annotates a matching FASTA alignment.
 After processing a directory it writes a housekeeping CSV and a pie-chart SVG
 summarising cluster-count distributions across CAP samples.
@@ -198,9 +199,11 @@ python3 tree_clustering.py INPUT_DIR OUTPUT_DIR [options]
   Disable removal of tips whose incoming branch exceeds
   $\mathrm{etd}$ (expected pairwise tip distance;
   $\mathrm{etd}=2\times\mathrm{dsr}\times\mathrm{DPI}$). \\
-\texttt{--as-is} & off &
-  Skip founder selection, reroot, and ladderize; cluster and draw the input
-  tree topology as loaded (no \texttt{[Founder]} highlight). \\
+\texttt{--no-reroot} & off &
+  Skip founder identification and reroot; cluster the loaded rooting
+  (no \texttt{[Founder]} highlight). \\
+\texttt{--no-ladderize} & off &
+  Skip ladderize by depth; keep the loaded (or post-reroot) tip order. \\
 \bottomrule
 \end{longtable}
 
@@ -218,8 +221,14 @@ python3 tree_clustering.py trees_in/ trees_out/ \
 python3 tree_clustering.py trees_in/ trees_out/ \
   --scale dpi --no-long-branch-noise
 
-# Cluster without founder / reroot / ladderize
-python3 tree_clustering.py trees_in/ trees_out/ --as-is
+# Skip founder identification and reroot (still ladderize)
+python3 tree_clustering.py trees_in/ trees_out/ --no-reroot
+
+# Skip ladderize (still reroot on founder)
+python3 tree_clustering.py trees_in/ trees_out/ --no-ladderize
+
+# Cluster the loaded topology unchanged (former --as-is)
+python3 tree_clustering.py trees_in/ trees_out/ --no-reroot --no-ladderize
 \end{lstlisting}
 
 % -----------------------------------------------------------------------------
@@ -286,9 +295,11 @@ After all trees are processed:
 % -----------------------------------------------------------------------------
 
 For each tree file the script executes the following stages in order.
-With \texttt{--as-is}, the founder, reroot, and ladderize stages are omitted
-(Sections~\ref{sec:founder}--\ref{sec:ladder}); layout, clustering, annotation,
-and SVG export still run on the loaded rooting and tip order.
+\texttt{--no-reroot} omits founder selection and reroot
+(Sections~\ref{sec:founder}--\ref{sec:reroot});
+\texttt{--no-ladderize} omits ladderize (Section~\ref{sec:ladder}).
+Used together they leave the loaded rooting and tip order unchanged.
+Layout, clustering, annotation, and SVG export still run.
 
 \begin{enumerate}
   \item \textbf{Parse} Newick into an in-memory tree; set parent pointers.
@@ -296,11 +307,11 @@ and SVG export still run on the loaded rooting and tip order.
   \item \textbf{Group} tip names (Section~\ref{sec:group}).
   \item \textbf{Founder}: take the group with the smallest group id; choose the
         tree-path medoid (Section~\ref{sec:founder})
-        (\emph{skipped} if \texttt{--as-is}).
+        (\emph{skipped} if \texttt{--no-reroot}).
   \item \textbf{Reroot} on the founder (Section~\ref{sec:reroot})
-        (\emph{skipped} if \texttt{--as-is}).
+        (\emph{skipped} if \texttt{--no-reroot}).
   \item \textbf{Ladderize} by subtree depth, ascending (Section~\ref{sec:ladder})
-        (\emph{skipped} if \texttt{--as-is}).
+        (\emph{skipped} if \texttt{--no-ladderize}).
   \item \textbf{Layout} assign root-to-node depths and tip row indices.
   \item \textbf{k-DPI Auto} clustering (Section~\ref{sec:kdpis}).
   \item \textbf{Assign} cluster IDs; reclassify singletons as noise;
@@ -356,8 +367,8 @@ Finally, write housekeeping CSV and pie chart.
   \draw[arr] (n4.south) -- ++(0,-0.38) -| (n5.north);
 \end{tikzpicture}
 \caption{High-level data flow of \texttt{tree\_clustering.py}
-  (default path). With \texttt{--as-is}, the founder medoid and
-  reroot\,+\,ladderize stages are skipped.}
+  (default path). \texttt{--no-reroot} skips founder medoid and reroot;
+  \texttt{--no-ladderize} skips ladderize.}
 \label{fig:pipeline}
 \end{figure}
 
@@ -487,10 +498,11 @@ founders).
 \label{sec:founder}
 % -----------------------------------------------------------------------------
 
-Unless \texttt{--as-is} is set, the script chooses a founder tip and then
-reroots and ladderizes (Sections~\ref{sec:reroot}--\ref{sec:ladder}).
-With \texttt{--as-is}, those steps are skipped and clustering proceeds on the
-loaded topology.
+Unless \texttt{--no-reroot} is set, the script chooses a founder tip and then
+reroots on that founder (Section~\ref{sec:reroot}).
+Unless \texttt{--no-ladderize} is set, it then ladderizes by depth
+(Section~\ref{sec:ladder}).
+With both flags, clustering proceeds on the loaded topology.
 
 Let $G^\star$ be the group with the smallest group id
 (group ids are unique, so this choice is unambiguous).
@@ -506,7 +518,8 @@ If $|T^\star|=1$, that tip is the founder.
 \label{sec:reroot}
 % -----------------------------------------------------------------------------
 
-Rerooting places the founder as an outgroup child of a new root:
+Rerooting is omitted when \texttt{--no-reroot} is set.
+Otherwise rerooting places the founder as an outgroup child of a new root:
 \begin{enumerate}
   \item Walk the path from founder leaf to the old root.
   \item Detach the founder from its parent; let $\ell_{f}$ be the founder edge length.
@@ -523,7 +536,8 @@ Pairwise tip path distances are preserved under this reroot (undirected metric).
 \label{sec:ladder}
 % -----------------------------------------------------------------------------
 
-For each node $u$, define subtree max depth recursively:
+Ladderizing is omitted when \texttt{--no-ladderize} is set.
+Otherwise, for each node $u$, define subtree max depth recursively:
 \[
   D(u)=
   \begin{cases}

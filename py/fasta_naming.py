@@ -66,6 +66,53 @@ OPTIONAL_FIELD_FLAGS = {
     'r': 'reviewed'
 }
 
+# ============================================================================
+# Naming Convention Definitions (Data-Driven)
+# ============================================================================
+
+# Each convention defines how to format filenames and sequence IDs
+NAMING_CONVENTIONS = {
+    'standard': {
+        'name': 'Standard',
+        'filename': {
+            'fields': ['networkProtocol', 'ptid', 'visit', 'region', 'molecule'],
+            'separator': '_',
+            'includeOptional': True,  # Can be True, False, or list of flags
+        },
+        'sequence': {
+            'fields': ['networkCohort', 'ptid', 'visit', 'region', 'sequencingMethodId'],
+            'separator': '_',
+            'includeOptional': True,  # Include optional fields like processing, modifiers, etc.
+        }
+    },
+    'hvtn': {
+        'name': 'HVTN',
+        'filename': {
+            'fields': ['protocol', 'ptid', 'visit', 'region', 'molecule'],
+            'separator': '_',
+            'includeOptional': False
+        },
+        'sequence': {
+            'fields': ['ptid', 'visit', 'region', 'sequenceId'],
+            'separator': '.',
+            'includeOptional': False
+        }
+    },
+    'caprisa': {
+        'name': 'CAPRISA',
+        'filename': {
+            'fields': ['ptid', 'visit', 'region', 'molecule'],
+            'separator': '_',
+            'includeOptional': False
+        },
+        'sequence': {
+            'fields': ['ptid', 'visit', 'region', 'sequencingMethod', 'sequenceId'],
+            'separator': '_',
+            'includeOptional': False
+        }
+    }
+}
+
 
 # ============================================================================
 # Data Classes for Structured Naming
@@ -219,37 +266,44 @@ class FastaFileName:
         if self.molecule.lower() not in VALID_MOLECULES:
             raise ValueError(f"Invalid molecule '{self.molecule}': must be one of {VALID_MOLECULES}")
     
-    def to_filename(self) -> str:
-        """Generate filename string from components."""
-        parts = [
-            f"{self.network}{self.protocol}",
-            self.ptid,
-            self.visit,
-            self.region,
-            self.molecule
-        ]
+    def to_filename(self, convention: str = 'standard', include_optional: Union[bool, str] = False) -> str:
+        """Generate filename string from components using specified convention."""
+        if convention not in NAMING_CONVENTIONS:
+            raise ValueError(f"Unknown naming convention: {convention}")
         
-        # Add optional fields if present
-        if self.alignment:
-            parts.append(_format_optional_field('a', self.alignment))
-        if self.filters:
-            parts.append(_format_optional_field('f', self.filters))
-        if self.modifiers:
-            parts.append(_format_optional_field('m', self.modifiers))
-        if self.additions:
-            parts.append(_format_optional_field('w', self.additions))
-        if self.removals:
-            parts.append(_format_optional_field('o', self.removals))
-        if self.sequencing:
-            parts.append(_format_optional_field('s', self.sequencing))
-        if self.processing:
-            parts.append(_format_optional_field('p', self.processing))
-        if self.extras:
-            parts.append(_format_optional_field('e', self.extras))
-        if self.reviewed:
-            parts.append(_format_optional_field('r', self.reviewed))
+        conv = NAMING_CONVENTIONS[convention]
+        parts = []
         
-        return "_".join(parts) + ".fasta"
+        # Build parts based on convention definition
+        for field_name in conv['filename']['fields']:
+            if field_name == 'networkProtocol':
+                value = f"{self.network}{self.protocol}"
+            else:
+                value = getattr(self, field_name, None)
+            
+            if value is not None and value != '':
+                parts.append(str(value))
+        
+        # Add optional fields if specified
+        if conv['filename']['includeOptional']:
+            include_flags = (conv['filename']['includeOptional'] if isinstance(conv['filename']['includeOptional'], list)
+                           else (list(OPTIONAL_FIELD_FLAGS.keys()) if conv['filename']['includeOptional'] is True else []))
+            
+            if include_optional is True or (isinstance(include_optional, str) and include_optional):
+                if include_optional is True:
+                    flags_to_include = include_flags
+                else:
+                    # Parse comma-separated flags
+                    flags_to_include = [f.strip() for f in include_optional.split(',') if f.strip() in include_flags]
+                
+                for flag in ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r']:
+                    if flag in flags_to_include:
+                        field_name = OPTIONAL_FIELD_FLAGS[flag]
+                        field_value = getattr(self, field_name, None)
+                        if field_value:
+                            parts.append(_format_optional_field(flag, field_value))
+        
+        return conv['filename']['separator'].join(parts) + ".fasta"
     
     def get_optional_field(self, field_name: str, subcategory: Optional[str] = None) -> any:
         """
@@ -360,27 +414,38 @@ class SequenceName:
             if not re.match(SEQUENCE_ID_PATTERN, self.sequence_id):
                 raise ValueError(f"Invalid sequence ID '{self.sequence_id}': must be 8 characters")
     
-    def to_sequence_id(self) -> str:
-        """Generate sequence ID string from components."""
-        parts = [
-            f"{self.network}{self.cohort}",
-            self.ptid,
-            self.visit,
-            self.region,
-            f"{self.sequencing_method}-{self.sequence_id}" if self.sequence_id else self.sequencing_method
-        ]
+    def to_sequence_id(self, convention: str = 'standard') -> str:
+        """Generate sequence ID string from components using specified convention."""
+        if convention not in NAMING_CONVENTIONS:
+            raise ValueError(f"Unknown naming convention: {convention}")
         
-        # Add optional fields
-        if self.collapsed:
-            parts.append(self.collapsed)
-        if self.processing:
-            parts.append(self.processing)
-        if self.modifiers:
-            parts.append(self.modifiers)
-        if self.extras:
-            parts.append(self.extras)
+        conv = NAMING_CONVENTIONS[convention]
+        parts = []
         
-        return "_".join(parts)
+        # Build parts based on convention definition
+        for field_name in conv['sequence']['fields']:
+            if field_name == 'networkCohort':
+                value = f"{self.network}{self.cohort}"
+            elif field_name == 'sequencingMethodId':
+                value = f"{self.sequencing_method}-{self.sequence_id}" if self.sequence_id else self.sequencing_method
+            else:
+                value = getattr(self, field_name, None)
+            
+            if value is not None and value != '':
+                parts.append(str(value))
+        
+        # Add optional fields if specified
+        if conv['sequence']['includeOptional']:
+            if self.collapsed:
+                parts.append(self.collapsed)
+            if self.processing:
+                parts.append(self.processing)
+            if self.modifiers:
+                parts.append(self.modifiers)
+            if self.extras:
+                parts.append(self.extras)
+        
+        return conv['sequence']['separator'].join(parts)
 
 
 # ============================================================================
@@ -1111,7 +1176,7 @@ def write_fasta_with_naming(
 
 def _apply_naming_convention(seq_name: SequenceName, convention: str) -> str:
     """
-    Apply naming convention to generate sequence ID.
+    Apply naming convention to generate sequence ID (data-driven).
     
     Args:
         seq_name: SequenceName object
@@ -1120,40 +1185,13 @@ def _apply_naming_convention(seq_name: SequenceName, convention: str) -> str:
     Returns:
         Formatted sequence ID string
     """
-    if convention == 'standard':
-        # Default convention: Network-Cohort_PTID_Visit_Region_Method-SeqID
-        return seq_name.to_sequence_id()
-    
-    elif convention == 'hvtn':
-        # HVTN convention: PTID.Visit.Region.SeqID
-        parts = [
-            seq_name.ptid,
-            seq_name.visit,
-            seq_name.region,
-        ]
-        if seq_name.sequence_id:
-            parts.append(seq_name.sequence_id)
-        return ".".join(parts)
-    
-    elif convention == 'caprisa':
-        # CAPRISA convention: PTID_Visit_Region_Method_SeqID
-        parts = [
-            seq_name.ptid,
-            seq_name.visit,
-            seq_name.region,
-            seq_name.sequencing_method
-        ]
-        if seq_name.sequence_id:
-            parts.append(seq_name.sequence_id)
-        return "_".join(parts)
-    
-    else:
-        raise ValueError(f"Unknown naming convention: {convention}")
+    # Use data-driven convention definition instead of procedural if/elif
+    return seq_name.to_sequence_id(convention)
 
 
 def _generate_filename(filename: FastaFileName, convention: str, include_optional: Union[bool, str] = False) -> str:
     """
-    Generate filename based on naming convention.
+    Generate filename based on naming convention (data-driven).
     
     Args:
         filename: FastaFileName object
@@ -1166,53 +1204,8 @@ def _generate_filename(filename: FastaFileName, convention: str, include_optiona
     Returns:
         Formatted filename string
     """
-    if convention == 'standard':
-        # Determine which optional fields to include
-        if include_optional is False:
-            # Only obligate fields
-            parts = [
-                f"{filename.network}{filename.protocol}",
-                filename.ptid,
-                filename.visit,
-                filename.region,
-                filename.molecule
-            ]
-        elif include_optional is True:
-            # All available optional fields
-            return filename.to_filename()
-        else:
-            # Parse flags string
-            flags = [f.strip() for f in include_optional.split(',')]
-            
-            # Start with obligate fields
-            parts = [
-                f"{filename.network}{filename.protocol}",
-                filename.ptid,
-                filename.visit,
-                filename.region,
-                filename.molecule
-            ]
-            
-            # Add requested optional fields in standard order
-            for flag in ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r']:
-                if flag in flags:
-                    field_name = OPTIONAL_FIELD_FLAGS[flag]
-                    field_value = getattr(filename, field_name, None)
-                    if field_value:
-                        parts.append(_format_optional_field(flag, field_value))
-        
-        return "_".join(parts) + ".fasta"
-    
-    elif convention == 'hvtn':
-        # HVTN convention: Protocol_PTID_Visit_Region_Molecule.fasta
-        return f"{filename.protocol}_{filename.ptid}_{filename.visit}_{filename.region}_{filename.molecule}.fasta"
-    
-    elif convention == 'caprisa':
-        # CAPRISA convention: PTID_Visit_Region_Molecule.fasta
-        return f"{filename.ptid}_{filename.visit}_{filename.region}_{filename.molecule}.fasta"
-    
-    else:
-        raise ValueError(f"Unknown naming convention: {convention}")
+    # Use data-driven convention definition instead of procedural if/elif
+    return filename.to_filename(convention, include_optional)
 
 
 # ============================================================================

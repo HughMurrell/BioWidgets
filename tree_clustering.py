@@ -7,7 +7,7 @@ For each Newick tree in an input directory:
   2. Group tip names by delimiter/field (defaults match aliViz: '_' field 3)
   3. Pick the group with the smallest group id; choose a founder as the tree-path medoid
   4. Reroot on the founder; ladderize by depth (shallow subtrees first)
-     (skipped with --as-is: cluster the input tree topology unchanged)
+     (--no-reroot skips founder and reroot; --no-ladderize skips ladderize)
   5. Run k-DPIs Auto clustering (same bipartition / DPI rules as aliViz)
   6. Write a linear SVG (default: AUTO scale with DPI overlay when dpi±N is in
      the filename; legacy DPI 1/16 scale via --scale dpi)
@@ -21,7 +21,9 @@ Usage:
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --delimiter _ --field 3
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --scale dpi   # legacy DPI scale
   python tree_clustering.py INPUT_DIR OUTPUT_DIR --fasta-dir FASTA_DIR
-  python tree_clustering.py INPUT_DIR OUTPUT_DIR --as-is   # skip founder/reroot/ladderize
+  python tree_clustering.py INPUT_DIR OUTPUT_DIR --no-reroot
+  python tree_clustering.py INPUT_DIR OUTPUT_DIR --no-ladderize
+  python tree_clustering.py INPUT_DIR OUTPUT_DIR --no-reroot --no-ladderize
 """
 
 from __future__ import annotations
@@ -1346,7 +1348,8 @@ def process_tree_file(
     remove_long_branches: bool,
     scale_mode: str = DEFAULT_SCALE_MODE,
     fasta_dir: Optional[Path] = None,
-    as_is: bool = False,
+    no_reroot: bool = False,
+    no_ladderize: bool = False,
 ) -> tuple[Path, dict[str, object]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     tree = parse_newick(text)
@@ -1360,12 +1363,7 @@ def process_tree_file(
         raise ValueError(f"No tips could be grouped with delimiter={delimiter!r} field={field}")
 
     founder_name: Optional[str] = None
-    if as_is:
-        # Cluster the loaded topology: no founder medoid, reroot, or ladderize.
-        max_depth = layout_tree(tree)
-        set_parents(tree.root)
-        root_dist = node_to_root_distance(tree.root)
-    else:
+    if not no_reroot:
         # Founder = tree-path medoid of the group with the smallest group id
         sgid = smallest_group_id(members)
         assert sgid is not None
@@ -1376,12 +1374,15 @@ def process_tree_file(
         root_dist = node_to_root_distance(tree.root)
         founder = tree_medoid(group_nodes, root_dist)
         founder_name = founder.name
-
         tree = reroot_on_leaf(tree, founder)
-        ladderize_by_depth(tree)
-        max_depth = layout_tree(tree)
         set_parents(tree.root)
-        root_dist = node_to_root_distance(tree.root)
+
+    if not no_ladderize:
+        ladderize_by_depth(tree)
+
+    max_depth = layout_tree(tree)
+    set_parents(tree.root)
+    root_dist = node_to_root_distance(tree.root)
 
     # Group DPI (after optional reroot/ladderize)
     tip_by_name = {normalize_tip_name(t.name): t for t in tree.tips() if t.name}
@@ -1673,9 +1674,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Disable removal of tips with incoming branch > etd",
     )
     ap.add_argument(
-        "--as-is",
+        "--no-reroot",
         action="store_true",
-        help="Skip founder selection, reroot, and ladderize; cluster the input tree as loaded",
+        help="Skip founder identification and reroot; cluster the loaded rooting",
+    )
+    ap.add_argument(
+        "--no-ladderize",
+        action="store_true",
+        help="Skip ladderize by depth; keep the loaded (or post-reroot) tip order",
     )
     ap.add_argument(
         "--fasta-dir",
@@ -1718,7 +1724,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 remove_long_branches=not args.no_long_branch_noise,
                 scale_mode=args.scale,
                 fasta_dir=fasta_dir,
-                as_is=args.as_is,
+                no_reroot=args.no_reroot,
+                no_ladderize=args.no_ladderize,
             )
             records.append(record)
             extra = ""
